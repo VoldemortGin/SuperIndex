@@ -32,6 +32,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))       # so `extractors` and `nav` are importable
 load_dotenv(ROOT / ".env")
 
 DATA_DIR = ROOT / "data" / "aia_reports"
@@ -152,8 +154,32 @@ def main() -> int:
                     help="max simultaneous summary calls (default 8; PageIndex's own default is 64)")
     ap.add_argument("--questions", default="questions.json",
                     help="question file under scripts/ (e.g. questions_3docs.json)")
+    ap.add_argument("--extractor", choices=["auto", "azure-di", "text-layer"],
+                    default="auto",
+                    help="which PDF text extractor to use. 'auto' (default) picks "
+                         "Azure Document Intelligence whenever AZURE_DI_ENDPOINT "
+                         "and AZURE_DI_KEY are set in .env, otherwise the PDF text "
+                         "layer. Force one explicitly to compare.")
     ap.add_argument("--out", default="qa_results.json")
     args = ap.parse_args()
+
+    # Resolve the extractor BEFORE the client is built, because indexing reads
+    # text through PageIndex's LocalAPI and we swap its extractor out here.
+    if args.extractor == "text-layer":
+        # blank the Azure vars for this process only
+        for var in ("AZURE_DI_ENDPOINT", "AZURE_DI_KEY",
+                    "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT",
+                    "AZURE_DOCUMENT_INTELLIGENCE_KEY"):
+            os.environ.pop(var, None)
+    elif args.extractor == "azure-di":
+        from extractors.backend import is_azure_configured
+        if not is_azure_configured():
+            print("--extractor azure-di 需要 AZURE_DI_ENDPOINT 与 AZURE_DI_KEY，"
+                  "但 .env 里没有配置。", file=sys.stderr)
+            return 1
+    from extractors.backend import install_into_pageindex
+    backend = install_into_pageindex()
+    print()
 
     qfile = Path(__file__).resolve().parent / args.questions
     spec = json.loads(qfile.read_text(encoding="utf-8"))
@@ -225,6 +251,8 @@ def main() -> int:
         "index_model": args.index_model,
         "chat_model": args.chat_model,
         "base_url": args.base_url,
+        "extractor": backend.name,
+        "extractor_detail": backend.detail,
         "documents": doc_ids,
         "results": records,
     }, indent=2, ensure_ascii=False), encoding="utf-8")
