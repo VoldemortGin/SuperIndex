@@ -3,6 +3,17 @@
 > 面向接手同事。读完这份文档 + `README.md` + `nav/README.md`，
 > 应该能独立跑起来、看懂每个设计决策的理由、并知道坑在哪。
 
+**代码仓库**：https://github.com/yongsoft/SuperIndex （私有，需授权访问）
+
+```bash
+git clone https://github.com/yongsoft/SuperIndex.git
+cd SuperIndex
+# 仓库里没有 PageIndex/ 和 PDF，先按 README「§0」把它们拉下来
+```
+
+> ⚠️ 仓库**不包含** `.env`（含密钥）、`PageIndex/`（上游克隆）、
+> `data/*.pdf`、`results/` 下的生成物。README §0 有获取步骤。
+
 ---
 
 ## 一、这个项目是什么
@@ -458,11 +469,21 @@ pkill -f "webapp/server.py" && nohup $PY -u webapp/server.py > results/webapp.lo
 | `.workbuddy-ai/` | 保留 | 项目记忆，含大量决策记录 |
 | `.DS_Store` | 删除 | macOS 垃圾文件 |
 
-### 建议先做的事
+### 已完成 / 待办
 
-1. **建 git 仓库**（当前不是）—— 没有版本控制是最大的工程风险
-2. 加 `.gitignore`：`.env`、`.DS_Store`、`__pycache__`、`results/*.log`
-3. 把 `PageIndex/` 作为 submodule 或干脆写进 README 让对方自己 clone
+✅ **已建 git 仓库并推送到 GitHub**：https://github.com/yongsoft/SuperIndex（私有）
+✅ **已加 `.gitignore`**：排除 `.env`、`PageIndex/`、`data/*.pdf`、`results/*`、
+`__pycache__`、`.DS_Store`
+✅ **`PageIndex/` 不 vendor，README §0 给了 clone 步骤**
+
+待办：
+
+1. **加 CI**（可选）—— 至少跑一下 `python -m compileall` 和 `nav` 的导入检查
+2. **`scripts/01_build_index.py` 和 `scripts/02_qa.py` 是早期版本**，
+   已被 `01_build_trees.py` / `02_qa_test.py` 取代，可删
+3. **考虑把 `samples/test_index/` 也纳入生成物** —— 目前保留是因为
+   它让 `nav/` 能立刻演示（164 KB，带 LLM 摘要）。如果不想要，加进 `.gitignore`
+   然后重跑 `nav.build --summarize-files --summarize-chapters` 即可重建
 
 ---
 
