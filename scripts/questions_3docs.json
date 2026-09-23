@@ -1,0 +1,149 @@
+{
+  "_note": "Test questions scoped to the three documents that are actually indexed: Annual FY2021, Annual FY2022, Interim 1H2021. Ground truth was extracted independently of PageIndex, straight from each PDF's text layer with pypdfium2 (scripts/extract_text.py). 'source_page' is the 1-based physical PDF page where the fact appears.",
+  "questions": [
+    {
+      "id": "A01",
+      "doc": "AIA_Interim_Report_1H2021.pdf",
+      "type": "single-doc lookup",
+      "question": "What interim dividend per share did AIA declare for the first half of 2021, and by how much did it increase?",
+      "expected": "38.00 Hong Kong cents per share, an increase of 8.6 per cent",
+      "source_page": 9
+    },
+    {
+      "id": "A02",
+      "doc": "AIA_Interim_Report_1H2021.pdf",
+      "type": "single-doc lookup",
+      "question": "What was AIA's value of new business (VONB) in the first half of 2021 and how much did it grow?",
+      "expected": "US$1,814 million, up 22 per cent",
+      "source_page": 2
+    },
+    {
+      "id": "A03",
+      "doc": "AIA_Interim_Report_1H2021.pdf",
+      "type": "single-doc lookup",
+      "question": "What were the first half 2021 figures for annualised new premiums (ANP), VONB margin and operating profit after tax (OPAT)?",
+      "expected": "ANP US$3,060 million (up 13 per cent); VONB margin 59.0 per cent (up 4.2 pps); OPAT US$3,182 million (up 5 per cent)",
+      "source_page": 2
+    },
+    {
+      "id": "A04",
+      "doc": "AIA_Interim_Report_1H2021.pdf",
+      "type": "single-doc lookup",
+      "question": "What was AIA's free surplus and EV Equity at 30 June 2021?",
+      "expected": "Free surplus of US$17.9 billion, up US$4.4 billion from 31 December 2020; EV Equity of US$70.1 billion, up 5 per cent",
+      "source_page": 2
+    },
+    {
+      "id": "A05",
+      "doc": "AIA_Annual_Report_FY2021.pdf",
+      "type": "single-doc lookup",
+      "question": "What was AIA's total dividend per share for 2021, and what were the final and interim components?",
+      "expected": "Total 146.00 Hong Kong cents per share; final dividend 108.00 HK cents (up 8 per cent) plus the interim dividend of 38.00 HK cents",
+      "source_page": 15
+    },
+    {
+      "id": "A06",
+      "doc": "AIA_Annual_Report_FY2021.pdf",
+      "type": "single-doc lookup",
+      "question": "What were AIA's VONB, OPAT and underlying free surplus generation (UFSG) for 2021?",
+      "expected": "VONB US$3,366 million (up 18 per cent); OPAT US$6,409 million (up 6 per cent); UFSG US$6,451 million (up 8 per cent)",
+      "source_page": 15
+    },
+    {
+      "id": "A07",
+      "doc": "AIA_Annual_Report_FY2021.pdf",
+      "type": "single-doc lookup",
+      "question": "What was AIA's EV Equity at the end of 2021, and what was the Group LCSM cover ratio?",
+      "expected": "EV Equity reached a new high of US$75.0 billion; LCSM cover ratio 399 per cent at 31 December 2021",
+      "source_page": 15
+    },
+    {
+      "id": "A08",
+      "doc": "AIA_Annual_Report_FY2021.pdf",
+      "type": "entity lookup",
+      "question": "Who was AIA's Group Chief Financial Officer in the 2021 annual report?",
+      "expected": "Mr. Garth Jones",
+      "source_page": 24
+    },
+    {
+      "id": "A09",
+      "doc": "AIA_Annual_Report_FY2021.pdf",
+      "type": "single-doc lookup",
+      "question": "How did AIA's partnership distribution business perform in 2021 in terms of VONB and VONB margin?",
+      "expected": "Stable VONB of US$695 million, with ANP down 2 per cent and VONB margin up slightly to 39.1 per cent",
+      "source_page": 50
+    },
+    {
+      "id": "A10",
+      "doc": "AIA_Annual_Report_FY2021.pdf",
+      "type": "single-doc reasoning",
+      "question": "What was AIA's ranking on the Million Dollar Round Table (MDRT) in 2021, and how many consecutive years had it held that position?",
+      "expected": "The number one MDRT company globally, extending its record of leadership to seven consecutive years",
+      "source_page": 19
+    },
+    {
+      "id": "A11",
+      "doc": "AIA_Annual_Report_FY2022.pdf",
+      "type": "single-doc lookup",
+      "question": "What was AIA's total dividend per share for 2022, what was the final dividend, and by how much did each increase?",
+      "expected": "Total 153.68 Hong Kong cents per share, up 5.3 per cent; final dividend 113.40 HK cents, an increase of 5 per cent",
+      "source_page": 19
+    },
+    {
+      "id": "A12",
+      "doc": "AIA_Annual_Report_FY2022.pdf",
+      "type": "single-doc reasoning",
+      "question": "What was AIA's VONB in 2022 and how did the second half compare with the full year?",
+      "expected": "VONB of US$3,092 million, lower by 5 per cent for the full year, but up 6 per cent in the second half as the Omicron wave subsided",
+      "source_page": 22
+    },
+    {
+      "id": "A13",
+      "doc": "AIA_Annual_Report_FY2022.pdf",
+      "type": "single-doc lookup",
+      "question": "What were AIA's embedded value (EV) and EV Equity at the end of 2022?",
+      "expected": "EV grew 5 per cent to US$74,694 million; EV Equity grew 6 per cent to US$77,031 million before the payment of the 2022 final dividend",
+      "source_page": 29
+    },
+    {
+      "id": "A14",
+      "doc": "AIA_Annual_Report_FY2022.pdf",
+      "type": "single-doc lookup",
+      "question": "What share buy-back programme did AIA launch, and over what period?",
+      "expected": "A three-year, US$10.0 billion share buy-back programme",
+      "source_page": 8
+    },
+    {
+      "id": "A15",
+      "doc": "AIA_Annual_Report_FY2022.pdf",
+      "type": "single-doc lookup",
+      "question": "What was AIA's Group LCSM cover ratio at the end of 2022, and on what basis was it measured?",
+      "expected": "283 per cent, on the new prescribed capital requirement (PCR) basis",
+      "source_page": 19
+    },
+    {
+      "id": "A16",
+      "doc": "AIA_Annual_Report_FY2022.pdf",
+      "type": "single-doc reasoning",
+      "question": "How many consecutive years had AIA been the number one MDRT company as reported in the 2022 annual report?",
+      "expected": "Eight consecutive years",
+      "source_page": 8
+    },
+    {
+      "id": "A17",
+      "doc": "ALL",
+      "type": "cross-document comparison",
+      "question": "Compare AIA's full-year VONB and total dividend per share between FY2021 and FY2022. In which direction did each move?",
+      "expected": "VONB fell from US$3,366 million in 2021 to US$3,092 million in 2022 (reported as down 5 per cent on a constant exchange rate basis), while the total dividend per share rose from 146.00 to 153.68 Hong Kong cents (up 5.3 per cent)",
+      "source_page": null
+    },
+    {
+      "id": "A18",
+      "doc": "ALL",
+      "type": "cross-document arithmetic",
+      "question": "Using the 1H2021 interim report and the FY2021 annual report, show how the 2021 interim and final dividends add up to the total dividend for 2021.",
+      "expected": "Interim 38.00 + final 108.00 = 146.00 Hong Kong cents per share for the full year 2021",
+      "source_page": null
+    }
+  ]
+}

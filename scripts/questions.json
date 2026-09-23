@@ -1,0 +1,165 @@
+{
+  "_note": "Ground truth was extracted independently of PageIndex, straight from the PDF text layer with pypdfium2 (scripts/extract_text.py). 'source_page' is the 1-based physical PDF page where the fact appears. Corpus: 5 annual reports (FY2021-FY2025) + 5 interim reports (1H2021-1H2025), 2,640 pages total.",
+  "questions": [
+    {
+      "id": "Q01",
+      "doc": "AIA_Annual_Report_FY2025.pdf",
+      "type": "single-doc lookup",
+      "question": "What was the total dividend per share declared by AIA for 2025, and by how much did it increase?",
+      "expected": "193.08 Hong Kong cents per share, up 10 per cent",
+      "source_page": 17
+    },
+    {
+      "id": "Q02",
+      "doc": "AIA_Annual_Report_FY2025.pdf",
+      "type": "single-doc lookup",
+      "question": "What was the final dividend per share recommended for 2025?",
+      "expected": "144.08 Hong Kong cents per share",
+      "source_page": 17
+    },
+    {
+      "id": "Q03",
+      "doc": "AIA_Annual_Report_FY2025.pdf",
+      "type": "single-doc lookup",
+      "question": "How large is the new share buy-back programme approved by the Board, and what are its two components?",
+      "expected": "US$1.7 billion total: US$0.7 billion to meet the annual payout ratio target of 75 per cent of net free surplus generation, plus US$1.0 billion as a regular return of capital",
+      "source_page": 17
+    },
+    {
+      "id": "Q04",
+      "doc": "AIA_Annual_Report_FY2025.pdf",
+      "type": "single-doc lookup",
+      "question": "Who is AIA's Group Chief Executive and President, and who is the Group Chief Financial Officer?",
+      "expected": "Group Chief Executive and President: Mr. Lee Yuan Siong. Group Chief Financial Officer: Mr. Garth Jones",
+      "source_page": 14
+    },
+    {
+      "id": "Q05",
+      "doc": "AIA_Annual_Report_FY2025.pdf",
+      "type": "single-doc reasoning",
+      "question": "How did AIA Hong Kong's value of new business perform in 2025, and what was its VONB margin?",
+      "expected": "AIA Hong Kong achieved 28 per cent VONB growth in 2025; VONB margin increased 3.0 percentage points to 68.5 per cent",
+      "source_page": 57
+    },
+    {
+      "id": "Q06",
+      "doc": "AIA_Annual_Report_FY2025.pdf",
+      "type": "single-doc lookup",
+      "question": "What was the value of new business in the Other Markets segment in 2025?",
+      "expected": "US$485 million, an increase of 7 per cent",
+      "source_page": 18
+    },
+    {
+      "id": "Q07",
+      "doc": "AIA_Annual_Report_FY2024.pdf",
+      "type": "single-doc lookup",
+      "question": "What was the total dividend per share for 2024 and the increase over the prior year?",
+      "expected": "175.48 Hong Kong cents per share, up 9 per cent",
+      "source_page": 16
+    },
+    {
+      "id": "Q08",
+      "doc": "AIA_Annual_Report_FY2024.pdf",
+      "type": "single-doc lookup",
+      "question": "What final dividend per share did the Board recommend for 2024?",
+      "expected": "130.98 Hong Kong cents per share, an increase of 10 per cent",
+      "source_page": 16
+    },
+    {
+      "id": "Q09",
+      "doc": "AIA_Annual_Report_FY2023.pdf",
+      "type": "single-doc lookup",
+      "question": "What was the total dividend per share for 2023?",
+      "expected": "161.36 Hong Kong cents per share",
+      "source_page": 15
+    },
+    {
+      "id": "Q10",
+      "doc": "AIA_Annual_Report_FY2022.pdf",
+      "type": "single-doc lookup",
+      "question": "What was the total dividend per share for 2022 and by what percentage did it increase?",
+      "expected": "153.68 Hong Kong cents per share, up 5.3 per cent",
+      "source_page": 19
+    },
+    {
+      "id": "Q11",
+      "doc": "AIA_Annual_Report_FY2021.pdf",
+      "type": "single-doc lookup",
+      "question": "What was the total dividend per share for 2021?",
+      "expected": "146.00 Hong Kong cents per share",
+      "source_page": 15
+    },
+    {
+      "id": "Q12",
+      "doc": "ALL",
+      "type": "cross-document (all 10 reports)",
+      "question": "Across the FY2021 to FY2025 annual reports, what was the total dividend per share declared in each year, and what was the compound annual growth rate?",
+      "expected": "FY2021: 146.00; FY2022: 153.68; FY2023: 161.36; FY2024: 175.48; FY2025: 193.08 Hong Kong cents per share (CAGR about 7.2 per cent)",
+      "source_page": null
+    },
+    {
+      "id": "Q13",
+      "doc": "AIA_Interim_Report_1H2025.pdf",
+      "type": "single-doc lookup",
+      "question": "What interim dividend per share did the Board declare for the first half of 2025, and by how much did it increase?",
+      "expected": "49.00 Hong Kong cents per share, up 10 per cent",
+      "source_page": 146
+    },
+    {
+      "id": "Q14",
+      "doc": "AIA_Interim_Report_1H2025.pdf",
+      "type": "single-doc lookup",
+      "question": "What were the headline growth rates reported by AIA for the first half of 2025 for VONB, OPAT per share, UFSG per share and interim dividend per share?",
+      "expected": "VONB up 14 per cent; OPAT per share up 12 per cent; UFSG per share up 10 per cent; interim dividend per share up 10 per cent",
+      "source_page": 2
+    },
+    {
+      "id": "Q15",
+      "doc": "AIA_Interim_Report_1H2024.pdf",
+      "type": "single-doc lookup",
+      "question": "What was the interim dividend per share for the first half of 2024, and what was announced regarding the share buy-back programme?",
+      "expected": "Interim dividend of 44.50 Hong Kong cents per share, up 5.2 per cent; an additional US$2.0 billion was added to the share buy-back programme announced in April, bringing the total to US$12.0 billion",
+      "source_page": 2
+    },
+    {
+      "id": "Q16",
+      "doc": "AIA_Interim_Report_1H2023.pdf",
+      "type": "single-doc lookup",
+      "question": "What was the interim dividend per share for the first half of 2023?",
+      "expected": "42.29 Hong Kong cents per share, up 5 per cent",
+      "source_page": 2
+    },
+    {
+      "id": "Q17",
+      "doc": "AIA_Interim_Report_1H2022.pdf",
+      "type": "single-doc lookup",
+      "question": "What was the interim dividend per share for the first half of 2022 and by what percentage did it increase?",
+      "expected": "40.28 Hong Kong cents per share, an increase of 6 per cent",
+      "source_page": 9
+    },
+    {
+      "id": "Q18",
+      "doc": "AIA_Interim_Report_1H2021.pdf",
+      "type": "single-doc lookup",
+      "question": "What was the interim dividend per share for the first half of 2021 and by what percentage did it increase?",
+      "expected": "38.00 Hong Kong cents per share, an increase of 8.6 per cent",
+      "source_page": 9
+    },
+    {
+      "id": "Q19",
+      "doc": "ALL",
+      "type": "cross-document (interim series)",
+      "question": "Across the 1H2021 to 1H2025 interim reports, what interim dividend per share was declared each half-year, and what was the compound annual growth rate?",
+      "expected": "1H2021: 38.00; 1H2022: 40.28; 1H2023: 42.29; 1H2024: 44.50; 1H2025: 49.00 Hong Kong cents per share (CAGR about 6.6 per cent)",
+      "source_page": null
+    },
+    {
+      "id": "Q20",
+      "doc": "MIXED_FY2025",
+      "type": "cross-document arithmetic (annual + interim)",
+      "question": "Using the FY2025 annual report together with the 1H2025 interim report, show that the total dividend for 2025 equals the interim dividend plus the final dividend, and state all three figures.",
+      "expected": "Interim 49.00 + final 144.08 = 193.08 Hong Kong cents per share for the full year 2025",
+      "source_page": null
+    }
+  ]
+}

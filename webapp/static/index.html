@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AIA 财报智能问答 · PageIndex</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --panel:#ffffff; --border:#e3e6ea; --border-strong:#d0d5dc;
+    --text:#1c2024; --text-2:#5b636d; --text-3:#8b939d;
+    --accent:#c8102e; --accent-soft:#fdf2f4;
+    --blue:#0b6bcb; --blue-soft:#eef5fd;
+    --green:#0f7b4f; --green-soft:#eaf7f1;
+    --amber:#9a6700; --amber-soft:#fff8e6;
+    --radius:10px;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;font-family:var(--sans);background:var(--bg);color:var(--text);
+       font-size:14px;line-height:1.6;-webkit-font-smoothing:antialiased}
+  .app{display:flex;flex-direction:column;height:100vh}
+
+  /* top bar */
+  header{display:flex;align-items:center;gap:14px;padding:0 18px;height:56px;
+         background:var(--panel);border-bottom:1px solid var(--border);flex:none}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:650;letter-spacing:.2px}
+  .brand .dot{width:9px;height:9px;border-radius:50%;background:var(--accent)}
+  .meta{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-2)}
+  .pill{padding:3px 9px;border-radius:999px;background:var(--bg);border:1px solid var(--border);
+        font-family:var(--mono);font-size:11px;color:var(--text-2);white-space:nowrap}
+  .pill.ok{background:var(--green-soft);border-color:#bfe3d1;color:var(--green)}
+  .pill.warn{background:var(--amber-soft);border-color:#f0dfb0;color:var(--amber)}
+
+  /* layout */
+  main{flex:1;display:flex;min-height:0}
+  aside{width:292px;flex:none;background:var(--panel);border-right:1px solid var(--border);
+        display:flex;flex-direction:column;min-height:0}
+  .aside-h{padding:14px 16px 10px;display:flex;align-items:baseline;gap:8px}
+  .aside-h h2{margin:0;font-size:12px;font-weight:650;text-transform:uppercase;
+              letter-spacing:.7px;color:var(--text-3)}
+  .aside-h .n{margin-left:auto;font-size:11px;color:var(--text-3);font-family:var(--mono)}
+  .links{display:flex;gap:12px;padding:0 16px 10px;font-size:12px}
+  .links a{color:var(--blue);text-decoration:none;cursor:pointer}
+  .links a:hover{text-decoration:underline}
+  .docs{overflow-y:auto;padding:0 10px 10px;flex:1}
+  .doc{display:flex;gap:9px;align-items:flex-start;padding:8px 8px;border-radius:8px;cursor:pointer;
+       transition:background .12s}
+  .doc:hover{background:var(--bg)}
+  .doc input{margin:3px 0 0;accent-color:var(--accent);cursor:pointer;flex:none}
+  .doc .body{min-width:0}
+  .doc .nm{font-size:12.5px;line-height:1.35;word-break:break-all}
+  .doc .sub{font-size:11px;color:var(--text-3);font-family:var(--mono);margin-top:2px}
+  .doc.pending{opacity:.55;cursor:not-allowed}
+  .doc.pending input{cursor:not-allowed}
+  .badge{display:inline-block;font-size:10px;padding:1px 6px;border-radius:4px;
+         background:var(--bg);border:1px solid var(--border);color:var(--text-3);font-family:var(--mono)}
+  .sug{padding:10px 16px 16px;border-top:1px solid var(--border)}
+  .sug h2{margin:0 0 8px;font-size:12px;font-weight:650;text-transform:uppercase;
+          letter-spacing:.7px;color:var(--text-3)}
+  .sug button{display:block;width:100%;text-align:left;margin-bottom:6px;padding:7px 10px;
+              font-size:12.5px;font-family:inherit;color:var(--text-2);background:var(--bg);
+              border:1px solid var(--border);border-radius:7px;cursor:pointer;line-height:1.45}
+  .sug button:hover{border-color:var(--border-strong);color:var(--text)}
+
+  /* chat */
+  .chat{flex:1;display:flex;flex-direction:column;min-width:0}
+  .stream{flex:1;overflow-y:auto;padding:22px 26px 8px}
+  .wrap{max-width:820px;margin:0 auto}
+  .empty{max-width:560px;margin:12vh auto 0;text-align:center;color:var(--text-2)}
+  .empty h1{font-size:20px;margin:0 0 8px;color:var(--text)}
+  .empty p{margin:0 0 6px;font-size:13.5px}
+  .empty code{font-family:var(--mono);font-size:12px;background:var(--panel);
+              border:1px solid var(--border);padding:1px 5px;border-radius:4px}
+
+  .msg{margin-bottom:22px}
+  .who{display:flex;align-items:center;gap:8px;font-size:11.5px;font-weight:650;
+       text-transform:uppercase;letter-spacing:.6px;color:var(--text-3);margin-bottom:7px}
+  .who .tag{padding:1px 7px;border-radius:4px;background:var(--bg);border:1px solid var(--border);
+            font-family:var(--mono);text-transform:none;letter-spacing:0;font-size:10.5px}
+  .bubble{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);
+          padding:13px 16px}
+  .msg.user .bubble{background:var(--blue-soft);border-color:#cfe3f8}
+  .msg.user .who{color:var(--blue)}
+  .bubble p{margin:0 0 9px}
+  .bubble p:last-child{margin-bottom:0}
+  .bubble ul{margin:0 0 9px;padding-left:20px}
+  .bubble li{margin-bottom:3px}
+  .bubble strong{font-weight:650}
+  .bubble code{font-family:var(--mono);font-size:12.5px;background:var(--bg);
+               border:1px solid var(--border);padding:1px 4px;border-radius:4px}
+  .cursor{display:inline-block;width:7px;height:15px;background:var(--accent);
+          vertical-align:-2px;animation:blink 1s steps(2) infinite}
+  @keyframes blink{0%,50%{opacity:1}50.01%,100%{opacity:0}}
+
+  /* trace */
+  details.trace{margin-top:9px;background:var(--panel);border:1px solid var(--border);
+                border-radius:8px;overflow:hidden}
+  details.trace>summary{cursor:pointer;padding:7px 12px;font-size:12px;color:var(--text-2);
+                        list-style:none;display:flex;align-items:center;gap:7px;user-select:none}
+  details.trace>summary::-webkit-details-marker{display:none}
+  details.trace>summary::before{content:"▸";font-size:10px;color:var(--text-3);transition:transform .15s}
+  details.trace[open]>summary::before{transform:rotate(90deg)}
+  details.trace>summary:hover{background:var(--bg)}
+  .trace-body{border-top:1px solid var(--border);padding:9px 12px;background:var(--bg);
+              max-height:300px;overflow-y:auto}
+  .step{font-size:12px;margin-bottom:9px}
+  .step:last-child{margin-bottom:0}
+  .step .hd{font-family:var(--mono);font-size:11px;color:var(--blue);margin-bottom:3px;
+            display:flex;gap:6px;align-items:center}
+  .step .hd .idx{color:var(--text-3)}
+  .step pre{margin:0;font-family:var(--mono);font-size:11px;line-height:1.5;color:var(--text-2);
+            background:var(--panel);border:1px solid var(--border);border-radius:6px;
+            padding:7px 9px;white-space:pre-wrap;word-break:break-word;max-height:180px;overflow-y:auto}
+  .step.think .hd{color:var(--amber)}
+  .step.err .hd{color:var(--accent)}
+
+  /* composer */
+  .composer{flex:none;border-top:1px solid var(--border);background:var(--panel);padding:12px 26px 16px}
+  .composer .wrap{max-width:820px}
+  .box{display:flex;gap:10px;align-items:flex-end;background:var(--bg);
+       border:1px solid var(--border-strong);border-radius:var(--radius);padding:9px 11px;
+       transition:border-color .12s,box-shadow .12s}
+  .box:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  textarea{flex:1;border:0;background:transparent;resize:none;font-family:inherit;font-size:14px;
+           line-height:1.55;color:var(--text);outline:none;max-height:160px;padding:2px 0}
+  textarea::placeholder{color:var(--text-3)}
+  .send{flex:none;border:0;border-radius:7px;background:var(--accent);color:#fff;
+        font-family:inherit;font-size:13px;font-weight:600;padding:8px 16px;cursor:pointer}
+  .send:disabled{background:var(--border-strong);cursor:not-allowed}
+  .hint{margin-top:7px;font-size:11.5px;color:var(--text-3);display:flex;gap:10px}
+  .hint .sp{margin-left:auto}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand"><span class="dot"></span>AIA 财报智能问答</div>
+    <div class="meta">
+      <span class="pill" id="modelPill">—</span>
+      <span class="pill ok" id="docPill">—</span>
+      <span class="pill warn" id="pendPill" style="display:none">—</span>
+    </div>
+  </header>
+
+  <main>
+    <aside>
+      <div class="aside-h">
+        <h2>文档范围</h2>
+        <span class="n" id="selCount">0/0</span>
+      </div>
+      <div class="links">
+        <a id="selAll">全选</a><a id="selNone">全不选</a><a id="selAnnual">仅年报</a><a id="selInterim">仅中期</a>
+      </div>
+      <div class="docs" id="docs"></div>
+      <div class="sug">
+        <h2>试试这些</h2>
+        <div id="sugs"></div>
+      </div>
+    </aside>
+
+    <section class="chat">
+      <div class="stream" id="stream">
+        <div class="wrap" id="emptyState">
+          <div class="empty">
+            <h1>AIA 报告动态问答</h1>
+            <p>已索引的财报会被拆成层级树索引，模型沿着树推理定位到具体页面再作答。</p>
+            <p>在左侧勾选文档范围，然后在下面提问。</p>
+            <p style="margin-top:14px"><code>PageIndex</code> · 无向量库 · 可追溯到页码</p>
+          </div>
+        </div>
+      </div>
+      <div class="composer">
+        <div class="wrap">
+          <div class="box">
+            <textarea id="q" rows="1" placeholder="问点什么…例如：2025 年 AIA 香港的 VONB 增长了多少？"></textarea>
+            <button class="send" id="send">发送</button>
+          </div>
+          <div class="hint">
+            <span>Enter 发送 · Shift+Enter 换行</span>
+            <span class="sp" id="hintRight"></span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const stream = $('#stream');
+
+const SUGGESTIONS = [
+  "FY2021 的 VONB、OPAT 和 UFSG 分别是多少？",
+  "FY2021 全年股息 146.00 港仙是怎么构成的？",
+  "对比 FY2021 和 FY2022 的 VONB 与每股股息走势",
+  "FY2022 的 VONB 是多少？下半年表现如何？",
+  "1H2021 的 VONB 和 OPAT 分别增长了多少？",
+  "AIA 在 2022 年宣布的股份回购计划规模多大？",
+  "1H2021 的中期股息是多少？同比涨了多少？",
+  "2021 年 AIA 的 EV Equity 和 LCSM 偿付能力充足率是多少？",
+];
+
+let DOCS = [];
+
+function esc(s){return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+// tiny markdown: bold, inline code, bullets, paragraphs
+function md(text){
+  const blocks = esc(text).split(/\n{2,}/);
+  return blocks.map(b => {
+    const lines = b.split('\n');
+    if (lines.every(l => /^\s*[-*]\s+/.test(l))) {
+      return '<ul>' + lines.map(l => '<li>' + inline(l.replace(/^\s*[-*]\s+/,'')) + '</li>').join('') + '</ul>';
+    }
+    return '<p>' + lines.map(inline).join('<br>') + '</p>';
+  }).join('');
+}
+function inline(s){
+  return s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+          .replace(/`([^`]+)`/g, '<code>$1</code>');
+}
+
+async function loadStatus(){
+  try{
+    const r = await fetch('/api/status');
+    const d = await r.json();
+    DOCS = d.indexed || [];
+    $('#modelPill').textContent = d.chat_model || '—';
+    $('#docPill').textContent = `已索引 ${DOCS.length}/${d.total_pdfs}`;
+    const pend = d.pending || [];
+    const pp = $('#pendPill');
+    if (pend.length){ pp.style.display=''; pp.textContent = `${pend.length} 份索引中`; }
+    else pp.style.display='none';
+    renderDocs(d);
+  }catch(e){
+    $('#docPill').textContent = '服务未连接';
+    $('#docPill').className = 'pill warn';
+  }
+}
+
+function renderDocs(d){
+  const box = $('#docs');
+  const indexedNames = new Set(DOCS.map(x=>x.name));
+  const all = [
+    ...DOCS.map(x=>({name:x.name, id:x.id, pages:x.pages, ready:true})),
+    ...(d.pending||[]).map(n=>({name:n, id:null, pages:null, ready:false})),
+  ].sort((a,b)=>a.name.localeCompare(b.name));
+
+  box.innerHTML = all.map(x => `
+    <label class="doc ${x.ready?'':'pending'}">
+      <input type="checkbox" ${x.ready?'checked':'disabled'} data-id="${x.id||''}">
+      <span class="body">
+        <span class="nm">${esc(x.name.replace(/^AIA_/,'').replace(/\.pdf$/,''))}</span>
+        <span class="sub">${x.ready? (x.pages||'?')+' 页' : '<span class="badge">索引中</span>'}</span>
+      </span>
+    </label>`).join('');
+  box.querySelectorAll('input').forEach(cb => cb.addEventListener('change', updateSelCount));
+  updateSelCount();
+}
+
+function selectedIds(){
+  return [...document.querySelectorAll('#docs input:checked')].map(cb=>cb.dataset.id).filter(Boolean);
+}
+function updateSelCount(){
+  const ready = document.querySelectorAll('#docs input:not([disabled])').length;
+  $('#selCount').textContent = `${selectedIds().length}/${ready}`;
+  $('#send').disabled = selectedIds().length === 0;
+}
+function setSel(fn){
+  document.querySelectorAll('#docs input:not([disabled])').forEach(cb => cb.checked = fn(cb));
+  updateSelCount();
+}
+
+$('#selAll').onclick    = () => setSel(()=>true);
+$('#selNone').onclick   = () => setSel(()=>false);
+$('#selAnnual').onclick = () => setSel(cb => {
+  const n = cb.closest('.doc').querySelector('.nm').textContent; return n.startsWith('Annual'); });
+$('#selInterim').onclick= () => setSel(cb => {
+  const n = cb.closest('.doc').querySelector('.nm').textContent; return n.startsWith('Interim'); });
+
+$('#sugs').innerHTML = SUGGESTIONS.map((s,i)=>`<button data-i="${i}">${esc(s)}</button>`).join('');
+$('#sugs').onclick = e => {
+  const b = e.target.closest('button'); if(!b) return;
+  $('#q').value = SUGGESTIONS[+b.dataset.i];
+  autoGrow(); $('#q').focus();
+};
+
+// ── chat ────────────────────────────────────────────────────────────────
+let busy = false;
+
+function addMsg(role, text){
+  const empty = $('#emptyState'); if (empty) empty.remove();
+  const el = document.createElement('div');
+  el.className = 'msg ' + role;
+  el.innerHTML = `<div class="who">${role==='user'?'你':'PageIndex'}
+      ${role==='user'?`<span class="tag">${selectedIds().length} 份文档</span>`:''}</div>
+    <div class="bubble">${role==='user'? md(text) : ''}</div>`;
+  stream.appendChild(el);
+  stream.scrollTop = stream.scrollHeight;
+  return el;
+}
+
+function makeTrace(msgEl){
+  const d = document.createElement('details');
+  d.className = 'trace';
+  d.innerHTML = `<summary>检索过程 <span class="n" style="color:var(--text-3)">0 步</span></summary>
+                 <div class="trace-body"></div>`;
+  msgEl.appendChild(d);
+  return d;
+}
+
+function addStep(trace, kind, label, body){
+  const b = trace.querySelector('.trace-body');
+  const n = b.children.length + 1;
+  const el = document.createElement('div');
+  el.className = 'step ' + kind;
+  el.innerHTML = `<div class="hd"><span class="idx">${String(n).padStart(2,'0')}</span>${esc(label)}</div>
+                  ${body !== undefined ? `<pre>${esc(body)}</pre>` : ''}`;
+  b.appendChild(el);
+  const c = trace.querySelector('summary .n'); c.textContent = n + ' 步';
+  stream.scrollTop = stream.scrollHeight;
+  return el;
+}
+
+// Thinking arrives token by token: fold it into one step instead of
+// creating a step per token.
+function appendThink(trace, delta){
+  let el = trace._think;
+  if (!el || !el.isConnected){
+    el = addStep(trace, 'think', 'thinking', '');
+    trace._think = el;
+  }
+  const pre = el.querySelector('pre');
+  pre.textContent += delta;
+  pre.scrollTop = pre.scrollHeight;
+  stream.scrollTop = stream.scrollHeight;
+}
+
+async function ask(question){
+  if (busy) return;
+  const ids = selectedIds();
+  if (!ids.length) return;
+
+  busy = true; $('#send').disabled = true; $('#send').textContent = '生成中';
+  addMsg('user', question);
+
+  const ansEl = addMsg('assistant', '');
+  const bubble = ansEl.querySelector('.bubble');
+  bubble.innerHTML = '<span class="cursor"></span>';
+  const trace = makeTrace(ansEl);
+  let text = '';
+
+  try{
+    const res = await fetch('/api/ask', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({question, doc_ids: ids}),
+    });
+    if (!res.ok){ throw new Error('HTTP ' + res.status); }
+
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    while (true){
+      const {value, done} = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, {stream:true});
+      let i;
+      while ((i = buf.indexOf('\n\n')) >= 0){
+        const raw = buf.slice(0, i); buf = buf.slice(i + 2);
+        let ev = 'message', data = '';
+        raw.split('\n').forEach(l => {
+          if (l.startsWith('event: ')) ev = l.slice(7).trim();
+          else if (l.startsWith('data: ')) data += l.slice(6);
+        });
+        if (!data) continue;
+        let p; try { p = JSON.parse(data); } catch { continue; }
+
+        if (ev === 'answer'){
+          trace._think = null;
+          text += p.delta;
+          bubble.innerHTML = md(text) + '<span class="cursor"></span>';
+          stream.scrollTop = stream.scrollHeight;
+        } else if (ev === 'thinking'){
+          appendThink(trace, p.delta);
+        } else if (ev === 'tool_call'){
+          trace._think = null;
+          let a = p.arguments;
+          if (typeof a !== 'string') a = JSON.stringify(a, null, 2);
+          addStep(trace, 'call', 'tool_call · ' + (p.name || ''), a);
+        } else if (ev === 'tool_result'){
+          trace._think = null;
+          addStep(trace, 'res', 'tool_result · ' + (p.name || ''), p.output);
+        } else if (ev === 'error'){
+          text += (text ? '\n\n' : '') + '**出错：** ' + p.message;
+          bubble.innerHTML = md(text);
+          addStep(trace, 'err', 'error', p.message);
+        }
+      }
+    }
+    bubble.innerHTML = md(text || '_（没有返回内容）_');
+    if (!trace.querySelector('.trace-body').children.length) trace.remove();
+  }catch(e){
+    bubble.innerHTML = md('**请求失败：** ' + e.message);
+  }finally{
+    busy = false; $('#send').textContent = '发送'; updateSelCount();
+    stream.scrollTop = stream.scrollHeight;
+  }
+}
+
+// ── input ───────────────────────────────────────────────────────────────
+const ta = $('#q');
+function autoGrow(){ ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 160) + 'px'; }
+ta.addEventListener('input', autoGrow);
+ta.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); submit(); }
+});
+$('#send').onclick = submit;
+function submit(){
+  const v = ta.value.trim(); if (!v || busy) return;
+  ta.value = ''; autoGrow(); ask(v);
+}
+
+loadStatus();
+setInterval(loadStatus, 20000);
+</script>
+</body>
+</html>

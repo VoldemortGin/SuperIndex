@@ -1,0 +1,49 @@
+# ─── secrets ───────────────────────────────────────────────────────────────
+# .env holds a real API key. Never commit it; use .env.example as the template.
+.env
+
+# ─── upstream engine ───────────────────────────────────────────────────────
+# Cloned separately (README §0). It is someone else's code, and keeping it out
+# means `git pull` inside PageIndex/ stays clean.
+PageIndex/
+
+# ─── source PDFs ───────────────────────────────────────────────────────────
+# ~27 MB, fetched by data/aia_reports/download.sh (README §0).
+data/aia_reports/*.pdf
+
+# ─── generated outputs ─────────────────────────────────────────────────────
+# Everything under results/ is reproducible from the scripts. The PageIndex
+# doc store and the offline trees cost a little API spend to rebuild, but they
+# are build output and do not belong in git.
+results/*
+!results/.gitkeep
+
+# ─── python ────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# ─── macOS ─────────────────────────────────────────────────────────────────
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+
+# ─── editors ───────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ─── misc ──────────────────────────────────────────────────────────────────
+*.log
+*.tmp
+*.bak

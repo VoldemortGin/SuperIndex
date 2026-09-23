@@ -1,0 +1,580 @@
+{
+  "version": 1,
+  "root": "/Users/yong/WorkBuddy AI/2026-09-20-22-30-52/samples/test_corpus",
+  "built_at": 1790168035.008517,
+  "dirs": {
+    "": {
+      "rel_path": "",
+      "name": "test_corpus",
+      "parent": null,
+      "child_dirs": [
+        "中国太保",
+        "中国平安",
+        "友邦保险",
+        "行业汇总"
+      ],
+      "files": [],
+      "summary": "",
+      "n_files": 0,
+      "n_dirs": 4
+    },
+    "中国太保": {
+      "rel_path": "中国太保",
+      "name": "中国太保",
+      "parent": "",
+      "child_dirs": [
+        "中国太保/2023",
+        "中国太保/2024",
+        "中国太保/2025"
+      ],
+      "files": [],
+      "summary": "中国太保2023至2025年业绩报告，涵盖新业务价值、税后营运溢利、内涵价值权益、股息及分市场表现等核心指标。",
+      "n_files": 5,
+      "n_dirs": 8
+    },
+    "中国平安": {
+      "rel_path": "中国平安",
+      "name": "中国平安",
+      "parent": "",
+      "child_dirs": [
+        "中国平安/2023",
+        "中国平安/2024",
+        "中国平安/2025"
+      ],
+      "files": [],
+      "summary": "中国平安2023至2025年各年度及半年度报告的核心财务指标、分市场经营表现及业务数据。",
+      "n_files": 5,
+      "n_dirs": 8
+    },
+    "友邦保险": {
+      "rel_path": "友邦保险",
+      "name": "友邦保险",
+      "parent": "",
+      "child_dirs": [
+        "友邦保险/2023",
+        "友邦保险/2024",
+        "友邦保险/2025"
+      ],
+      "files": [],
+      "summary": "这里汇总了友邦保险2023至2025年的全年及中期业绩报告，包含新业务价值、税后营运溢利、内涵价值权益、股息及各市场表现等核心财务与经营数据。",
+      "n_files": 5,
+      "n_dirs": 8
+    },
+    "行业汇总": {
+      "rel_path": "行业汇总",
+      "name": "行业汇总",
+      "parent": "",
+      "child_dirs": [],
+      "files": [
+        "行业汇总/industry_summary_2024.md"
+      ],
+      "summary": "本目录包含一份2024年友邦保险、中国平安与中国太保三家上市险企VONB与OPAT核心指标的汇总对比文件。",
+      "n_files": 1,
+      "n_dirs": 0
+    },
+    "中国太保/2023": {
+      "rel_path": "中国太保/2023",
+      "name": "2023",
+      "parent": "中国太保",
+      "child_dirs": [
+        "中国太保/2023/annual",
+        "中国太保/2023/interim"
+      ],
+      "files": [],
+      "summary": "中国太保2023年年度及中期业绩报告，涵盖新业务价值、税后营运溢利、内涵价值权益、股息及分市场表现等核心指标。",
+      "n_files": 2,
+      "n_dirs": 2
+    },
+    "中国太保/2024": {
+      "rel_path": "中国太保/2024",
+      "name": "2024",
+      "parent": "中国太保",
+      "child_dirs": [
+        "中国太保/2024/annual",
+        "中国太保/2024/interim"
+      ],
+      "files": [],
+      "summary": "中国太保（CPIC）2024年全年及上半年业绩报告，涵盖新业务价值、税后营运溢利、内涵价值权益和股息等核心指标。",
+      "n_files": 2,
+      "n_dirs": 2
+    },
+    "中国太保/2025": {
+      "rel_path": "中国太保/2025",
+      "name": "2025",
+      "parent": "中国太保",
+      "child_dirs": [
+        "中国太保/2025/annual"
+      ],
+      "files": [],
+      "summary": "中国太保2025年年报，涵盖新业务价值、税后营运溢利、内涵价值权益、股息等核心指标及各市场表现。",
+      "n_files": 1,
+      "n_dirs": 1
+    },
+    "中国太保/2023/annual": {
+      "rel_path": "中国太保/2023/annual",
+      "name": "annual",
+      "parent": "中国太保/2023",
+      "child_dirs": [],
+      "files": [
+        "中国太保/2023/annual/CPIC_AR2023.md"
+      ],
+      "summary": "中国太保2023年全年报告，涵盖新业务价值、税后营运溢利、内涵价值权益、股息及分市场表现等核心指标。",
+      "n_files": 1,
+      "n_dirs": 0
+    },
+    "中国太保/2023/interim": {
+      "rel_path": "中国太保/2023/interim",
+      "name": "interim",
+      "parent": "中国太保/2023",
+      "child_dirs": [],
+      "files": [
+        "中国太保/2023/interim/CPIC_IR2023H1.md"
+      ],
+      "summary": "中国太保（CPIC）2023年上半年业绩报告，包含新业务价值、税后营运溢利、内涵价值权益及中期股息等核心指标与分市场表现。",
+      "n_files": 1,
+      "n_dirs": 0
+    },
+    "中国太保/2024/annual": {
+      "rel_path": "中国太保/2024/annual",
+      "name": "annual",
+      "parent": "中国太保/2024",
+      "child_dirs": [],
+      "files": [
+        "中国太保/2024/annual/CPIC_AR2024.md"
+      ],
+      "summary": "中国太保（CPIC）2024年全年报告，涵盖新业务价值、税后营运溢利、内涵价值权益及全年股息等核心指标。",
+      "n_files": 1,
+      "n_dirs": 0
+    },
+    "中国太保/2024/interim": {
+      "rel_path": "中国太保/2024/interim",
+      "name": "interim",
+      "parent": "中国太保/2024",
+      "child_dirs": [],
+      "files": [
+        "中国太保/2024/interim/CPIC_IR2024H1.md"
+      ],
+      "summary": "中国太保（CPIC）2024年上半年业绩报告，包含新业务价值、税后营运溢利等核心指标增长及中期股息宣派信息。",
+      "n_files": 1,
+      "n_dirs": 0
+    },
+    "中国太保/2025/annual": {
+      "rel_path": "中国太保/2025/annual",
+      "name": "annual",
+      "parent": "中国太保/2025",
+      "child_dirs": [],
+      "files": [
+        "中国太保/2025/annual/CPIC_AR2025.md"
+      ],
+      "summary": "中国太保2025年年报，涵盖新业务价值、税后营运溢利、内涵价值权益、股息等核心指标及各市场表现。",
+      "n_files": 1,
+      "n_dirs": 0
+    },
+    "中国平安/2023": {
+      "rel_path": "中国平安/2023",
+      "name": "2023",
+      "parent": "中国平安",
+      "child_dirs": [
+        "中国平安/2023/annual",
+        "中国平安/2023/interim"
+      ],
+      "files": [],
+      "summary": "中国平安2023年全年及上半年报告的核心财务指标与分市场表现。",
+      "n_files": 2,
+      "n_dirs": 2
+    },
+    "中国平安/2024": {
+      "rel_path": "中国平安/2024",
+      "name": "2024",
+      "parent": "中国平安",
+      "child_dirs": [
+        "中国平安/2024/annual",
+        "中国平安/2024/interim"
+      ],
+      "files": [],
+      "summary": "中国平安2024年年度及上半年报告，涵盖新业务价值、税后营运溢利、内涵价值权益和股息等核心财务指标及分市场经营表现。",
+      "n_files": 2,
+      "n_dirs": 2
+    },
+    "中国平安/2025": {
+      "rel_path": "中国平安/2025",
+      "name": "2025",
+      "parent": "中国平安",
+      "child_dirs": [
+        "中国平安/2025/annual"
+      ],
+      "files": [],
+      "summary": "中国平安2025年年度报告，涵盖集团及各市场的新业务价值、税后营运溢利、内涵价值权益和股息等核心业绩指标。",
+      "n_files": 1,
+      "n_dirs": 1
+    },
+    "中国平安/2023/annual": {
+      "rel_path": "中国平安/2023/annual",
+      "name": "annual",
+      "parent": "中国平安/2023",
+      "child_dirs": [],
+      "files": [
+        "中国平安/2023/annual/PingAn_AR2023.md"
+      ],
+      "summary": "中国平安2023年全年报告及核心财务指标（新业务价值、税后营运溢利、股息等）与分市场表现。",
+      "n_files": 1,
+      "n_dirs": 0
+    },
+    "中国平安/2023/interim": {
+      "rel_path": "中国平安/2023/interim",
+      "name": "interim",
+      "parent": "中国平安/2023",
+      "child_dirs": [],
+      "files": [
+        "中国平安/2023/interim/PingAn_IR2023H1.md"
+      ],
+      "summary": "中国平安2023年上半年报告的核心财务指标与分市场表现。",
+      "n_files": 1,
+      "n_dirs": 0
+    },
+    "中国平安/2024/annual": {
+      "rel_path": "中国平安/2024/annual",
+      "name": "annual",
+      "parent": "中国平安/2024",
+      "child_dirs": [],
+      "files": [
+        "中国平安/2024/annual/PingAn_AR2024.md"
+      ],
+      "summary": "中国平安2024年年度报告中关于集团及各市场新业务价值、税后营运溢利、内涵价值权益和股息等经营与财务表现的内容。",
+      "n_files": 1,
+      "n_dirs": 0
+    },
+    "中国平安/2024/interim": {
+      "rel_path": "中国平安/2024/interim",
+      "name": "interim",
+      "parent": "中国平安/2024",
+      "child_dirs": [],
+      "files": [
+        "中国平安/2024/interim/PingAn_IR2024H1.md"
+      ],
+      "summary": "中国平安2024年上半年报告，涵盖新业务价值、税后营运溢利、内涵价值权益及中期股息等核心财务指标与分市场表现。",
+      "n_files": 1,
+      "n_dirs": 0
+    },
+    "中国平安/2025/annual": {
+      "rel_path": "中国平安/2025/annual",
+      "name": "annual",
+      "parent": "中国平安/2025",
+      "child_dirs": [],
+      "files": [
+        "中国平安/2025/annual/PingAn_AR2025.md"
+      ],
+      "summary": "中国平安2025年年度报告，包含集团及各市场的新业务价值、税后营运溢利、内涵价值权益和股息等核心业绩指标。",
+      "n_files": 1,
+      "n_dirs": 0
+    },
+    "友邦保险/2023": {
+      "rel_path": "友邦保险/2023",
+      "name": "2023",
+      "parent": "友邦保险",
+      "child_dirs": [
+        "友邦保险/2023/annual",
+        "友邦保险/2023/interim"
+      ],
+      "files": [],
+      "summary": "友邦保险2023年全年及中期业绩报告的核心财务数据。",
+      "n_files": 2,
+      "n_dirs": 2
+    },
+    "友邦保险/2024": {
+      "rel_path": "友邦保险/2024",
+      "name": "2024",
+      "parent": "友邦保险",
+      "child_dirs": [
+        "友邦保险/2024/annual",
+        "友邦保险/2024/interim"
+      ],
+      "files": [],
+      "summary": "友邦保险2024年全年及中期业绩报告，包含新业务价值、税后营运溢利、内涵价值权益、股息及各市场表现等关键财务与经营信息。",
+      "n_files": 2,
+      "n_dirs": 2
+    },
+    "友邦保险/2025": {
+      "rel_path": "友邦保险/2025",
+      "name": "2025",
+      "parent": "友邦保险",
+      "child_dirs": [
+        "友邦保险/2025/annual"
+      ],
+      "files": [],
+      "summary": "友邦保险（AIA Group Limited）2025 年全年年度报告，涵盖新业务价值、税后营运溢利、内涵价值权益及全年股息等核心指标并分市场披露表现。",
+      "n_files": 1,
+      "n_dirs": 1
+    },
+    "友邦保险/2023/annual": {
+      "rel_path": "友邦保险/2023/annual",
+      "name": "annual",
+      "parent": "友邦保险/2023",
+      "child_dirs": [],
+      "files": [
+        "友邦保险/2023/annual/AIA_AR2023.md"
+      ],
+      "summary": "友邦保险（AIA Group Limited）2023 年全年年度报告，包含新业务价值、税后营运溢利、内涵价值权益及股息等核心财务数据。",
+      "n_files": 1,
+      "n_dirs": 0
+    },
+    "友邦保险/2023/interim": {
+      "rel_path": "友邦保险/2023/interim",
+      "name": "interim",
+      "parent": "友邦保险/2023",
+      "child_dirs": [],
+      "files": [
+        "友邦保险/2023/interim/AIA_IR2023H1.md"
+      ],
+      "summary": "友邦保险2023年上半年业绩报告，包含新业务价值、税后营运溢利、内涵价值权益等核心指标及中期股息信息。",
+      "n_files": 1,
+      "n_dirs": 0
+    },
+    "友邦保险/2024/annual": {
+      "rel_path": "友邦保险/2024/annual",
+      "name": "annual",
+      "parent": "友邦保险/2024",
+      "child_dirs": [],
+      "files": [
+        "友邦保险/2024/annual/AIA_AR2024.md"
+      ],
+      "summary": "这个目录包含友邦保险（AIA Group Limited）2024年全年报告，涵盖新业务价值（VONB）、税后营运溢利（OPAT）、内涵价值权益、全年股息及各市场表现等关键财务与经营信息。",
+      "n_files": 1,
+      "n_dirs": 0
+    },
+    "友邦保险/2024/interim": {
+      "rel_path": "友邦保险/2024/interim",
+      "name": "interim",
+      "parent": "友邦保险/2024",
+      "child_dirs": [],
+      "files": [
+        "友邦保险/2024/interim/AIA_IR2024H1.md"
+      ],
+      "summary": "友邦保险（AIA Group Limited）2024年上半年业绩报告，包含新业务价值、税后营运溢利、内涵价值权益、中期股息及分市场表现等核心指标。",
+      "n_files": 1,
+      "n_dirs": 0
+    },
+    "友邦保险/2025/annual": {
+      "rel_path": "友邦保险/2025/annual",
+      "name": "annual",
+      "parent": "友邦保险/2025",
+      "child_dirs": [],
+      "files": [
+        "友邦保险/2025/annual/AIA_AR2025.md"
+      ],
+      "summary": "友邦保险（AIA Group Limited）2025 年全年年度报告，涵盖新业务价值、税后营运溢利、内涵价值权益及全年股息等核心指标并分市场披露表现。",
+      "n_files": 1,
+      "n_dirs": 0
+    }
+  },
+  "files": {
+    "中国太保/2023/annual/CPIC_AR2023.md": {
+      "rel_path": "中国太保/2023/annual/CPIC_AR2023.md",
+      "name": "CPIC_AR2023.md",
+      "parent": "中国太保/2023/annual",
+      "ext": ".md",
+      "size": 2300,
+      "mtime": 1790167701.1183445,
+      "summary": "中国太保2023年全年报告显示新业务价值、税后营运溢利等核心指标增长，并披露股息及分市场表现；报告期：2023年全年；主体：中国太保（CPIC）；核心指标：新业务价值（VONB）、税后营运溢利（OPAT）、内涵价值权益、股息。",
+      "meta": {},
+      "n_chapters": 15,
+      "max_depth": 3,
+      "tree_key": "ab8239d9caf68635"
+    },
+    "中国太保/2023/interim/CPIC_IR2023H1.md": {
+      "rel_path": "中国太保/2023/interim/CPIC_IR2023H1.md",
+      "name": "CPIC_IR2023H1.md",
+      "parent": "中国太保/2023/interim",
+      "ext": ".md",
+      "size": 2169,
+      "mtime": 1790167701.118441,
+      "summary": "中国太保2023年上半年报告显示新业务价值（VONB）3,172百万美元、税后营运溢利（OPAT）5,823百万美元及内涵价值权益60.2十亿美元等核心指标并披露分市场表现（报告期：2023年上半年；主体：中国太保CPIC；核心指标：新业务价值VONB、税后营运溢利OPAT、内涵价值权益、中期股息）。",
+      "meta": {},
+      "n_chapters": 15,
+      "max_depth": 3,
+      "tree_key": "9de7b4ab22dcc0e4"
+    },
+    "中国太保/2024/annual/CPIC_AR2024.md": {
+      "rel_path": "中国太保/2024/annual/CPIC_AR2024.md",
+      "name": "CPIC_AR2024.md",
+      "parent": "中国太保/2024/annual",
+      "ext": ".md",
+      "size": 2300,
+      "mtime": 1790167701.1185658,
+      "summary": "中国太保2024年全年报告显示新业务价值、税后营运溢利和内涵价值权益等核心指标表现；报告期2024年全年，主体中国太保（CPIC），核心指标名称新业务价值VONB、税后营运溢利OPAT、内涵价值权益、全年股息。",
+      "meta": {},
+      "n_chapters": 15,
+      "max_depth": 3,
+      "tree_key": "0ccb1bc5a0e84a85"
+    },
+    "中国太保/2024/interim/CPIC_IR2024H1.md": {
+      "rel_path": "中国太保/2024/interim/CPIC_IR2024H1.md",
+      "name": "CPIC_IR2024H1.md",
+      "parent": "中国太保/2024/interim",
+      "ext": ".md",
+      "size": 2173,
+      "mtime": 1790167701.1186683,
+      "summary": "中国太保2024年上半年报告显示其新业务价值、税后营运溢利等核心指标增长并宣派中期股息；报告期2024年上半年，主体中国太保（CPIC），核心指标新业务价值VONB、税后营运溢利OPAT、内涵价值权益、中期股息。",
+      "meta": {},
+      "n_chapters": 15,
+      "max_depth": 3,
+      "tree_key": "297a8210b3d4c74c"
+    },
+    "中国太保/2025/annual/CPIC_AR2025.md": {
+      "rel_path": "中国太保/2025/annual/CPIC_AR2025.md",
+      "name": "CPIC_AR2025.md",
+      "parent": "中国太保/2025/annual",
+      "ext": ".md",
+      "size": 2299,
+      "mtime": 1790167701.1187892,
+      "summary": "中国太保2025年全年报告披露了报告期内新业务价值（VONB）、税后营运溢利（OPAT）、内涵价值权益、股息等核心指标及各市场表现。",
+      "meta": {},
+      "n_chapters": 15,
+      "max_depth": 3,
+      "tree_key": "c0d9022eb8598a40"
+    },
+    "中国平安/2023/annual/PingAn_AR2023.md": {
+      "rel_path": "中国平安/2023/annual/PingAn_AR2023.md",
+      "name": "PingAn_AR2023.md",
+      "parent": "中国平安/2023/annual",
+      "ext": ".md",
+      "size": 2282,
+      "mtime": 1790167701.1177423,
+      "summary": "中国平安2023年全年报告披露其新业务价值（VONB）、税后营运溢利（OPAT）和股息等核心财务指标及分市场表现。可检索关键信息：报告期2023年全年、主体中国平安（Ping An Insurance）、核心指标名称新业务价值（VONB）、税后营运溢利（OPAT）、内涵价值权益、股息。",
+      "meta": {},
+      "n_chapters": 15,
+      "max_depth": 3,
+      "tree_key": "cbea2d09bb0138d0"
+    },
+    "中国平安/2023/interim/PingAn_IR2023H1.md": {
+      "rel_path": "中国平安/2023/interim/PingAn_IR2023H1.md",
+      "name": "PingAn_IR2023H1.md",
+      "parent": "中国平安/2023/interim",
+      "ext": ".md",
+      "size": 2167,
+      "mtime": 1790167701.1178396,
+      "summary": "中国平安2023年上半年报告披露了其新业务价值、税后营运溢利、内涵价值权益及中期股息等核心财务指标，并分中国内地、香港、泰国、新加坡等市场呈现表现。可检索关键信息：报告期=2023年上半年；主体=中国平安（Ping An Insurance）；核心指标名称=新业务价值（VONB）、税后营运溢利（OPAT）、内涵价值权益、中期股息。",
+      "meta": {},
+      "n_chapters": 15,
+      "max_depth": 3,
+      "tree_key": "f3ca8ef976527526"
+    },
+    "中国平安/2024/annual/PingAn_AR2024.md": {
+      "rel_path": "中国平安/2024/annual/PingAn_AR2024.md",
+      "name": "PingAn_AR2024.md",
+      "parent": "中国平安/2024/annual",
+      "ext": ".md",
+      "size": 2288,
+      "mtime": 1790167701.1179736,
+      "summary": "中国平安2024年全年报告披露了集团及各市场的新业务价值、税后营运溢利和股息等经营与财务表现。关键信息：报告期2024年全年；主体中国平安（Ping An Insurance）；核心指标名称新业务价值（VONB）、税后营运溢利（OPAT）、内涵价值权益、全年股息。",
+      "meta": {},
+      "n_chapters": 15,
+      "max_depth": 3,
+      "tree_key": "22d37b850d54bf5e"
+    },
+    "中国平安/2024/interim/PingAn_IR2024H1.md": {
+      "rel_path": "中国平安/2024/interim/PingAn_IR2024H1.md",
+      "name": "PingAn_IR2024H1.md",
+      "parent": "中国平安/2024/interim",
+      "ext": ".md",
+      "size": 2158,
+      "mtime": 1790167701.1180687,
+      "summary": "中国平安2024年上半年报告披露其新业务价值（VONB）、税后营运溢利（OPAT）、内涵价值权益及中期股息等核心财务指标与分市场表现。",
+      "meta": {},
+      "n_chapters": 15,
+      "max_depth": 3,
+      "tree_key": "92e546397955432a"
+    },
+    "中国平安/2025/annual/PingAn_AR2025.md": {
+      "rel_path": "中国平安/2025/annual/PingAn_AR2025.md",
+      "name": "PingAn_AR2025.md",
+      "parent": "中国平安/2025/annual",
+      "ext": ".md",
+      "size": 2297,
+      "mtime": 1790167701.11819,
+      "summary": "中国平安2025年全年报告披露了集团及各市场的新业务价值、税后营运溢利和股息等核心业绩指标；报告期：2025年全年；主体：中国平安（Ping An Insurance）；核心指标：新业务价值VONB、税后营运溢利OPAT、内涵价值权益、全年股息。",
+      "meta": {},
+      "n_chapters": 15,
+      "max_depth": 3,
+      "tree_key": "515d0c474766f9c2"
+    },
+    "友邦保险/2023/annual/AIA_AR2023.md": {
+      "rel_path": "友邦保险/2023/annual/AIA_AR2023.md",
+      "name": "AIA_AR2023.md",
+      "parent": "友邦保险/2023/annual",
+      "ext": ".md",
+      "size": 2286,
+      "mtime": 1790167701.1170394,
+      "summary": "友邦保险（AIA Group Limited）2023 年全年报告显示，集团新业务价值（VONB）为 3,467 百万美元、税后营运溢利（OPAT）为 6,287 百万美元、内涵价值权益为 74.6 十亿美元，并建议全年股息每股 136.78 港仙；关键检索信息：报告期 2023 年全年，主体友邦保险（AIA Group Limited），核心指标名称新业务价值 VONB、税后营运溢利 OPAT、内涵价值权益、股息。",
+      "meta": {},
+      "n_chapters": 15,
+      "max_depth": 3,
+      "tree_key": "bba12def860af23e"
+    },
+    "友邦保险/2023/interim/AIA_IR2023H1.md": {
+      "rel_path": "友邦保险/2023/interim/AIA_IR2023H1.md",
+      "name": "AIA_IR2023H1.md",
+      "parent": "友邦保险/2023/interim",
+      "ext": ".md",
+      "size": 2158,
+      "mtime": 1790167701.1171863,
+      "summary": "友邦保险2023年上半年报告显示新业务价值等核心指标增长并宣派中期股息，可检索关键信息：报告期2023年上半年、主体友邦保险（AIA Group Limited）、核心指标新业务价值（VONB）、税后营运溢利（OPAT）、内涵价值权益、中期股息。",
+      "meta": {},
+      "n_chapters": 15,
+      "max_depth": 3,
+      "tree_key": "37bee0da39e5b5af"
+    },
+    "友邦保险/2024/annual/AIA_AR2024.md": {
+      "rel_path": "友邦保险/2024/annual/AIA_AR2024.md",
+      "name": "AIA_AR2024.md",
+      "parent": "友邦保险/2024/annual",
+      "ext": ".md",
+      "size": 2284,
+      "mtime": 1790167701.117338,
+      "summary": "友邦保险2024年全年报告显示集团新业务价值（VONB）为3,099百万美元、税后营运溢利（OPAT）为6,465百万美元，并披露全年股息每股150.72港仙及各市场表现；关键检索信息：报告期2024年全年、主体AIA Group Limited（友邦保险）、核心指标新业务价值VONB、税后营运溢利OPAT、内涵价值权益、全年股息。",
+      "meta": {},
+      "n_chapters": 15,
+      "max_depth": 3,
+      "tree_key": "453322b2274e0da4"
+    },
+    "友邦保险/2024/interim/AIA_IR2024H1.md": {
+      "rel_path": "友邦保险/2024/interim/AIA_IR2024H1.md",
+      "name": "AIA_IR2024H1.md",
+      "parent": "友邦保险/2024/interim",
+      "ext": ".md",
+      "size": 2165,
+      "mtime": 1790167701.1174443,
+      "summary": "友邦保险2024年上半年报告显示新业务价值、税后营运溢利等核心指标增长及分市场表现（报告期：2024年上半年；主体：友邦保险AIA Group Limited；核心指标：新业务价值VONB、税后营运溢利OPAT、内涵价值权益、中期股息）。",
+      "meta": {},
+      "n_chapters": 15,
+      "max_depth": 3,
+      "tree_key": "288beeb3ddedbf7e"
+    },
+    "友邦保险/2025/annual/AIA_AR2025.md": {
+      "rel_path": "友邦保险/2025/annual/AIA_AR2025.md",
+      "name": "AIA_AR2025.md",
+      "parent": "友邦保险/2025/annual",
+      "ext": ".md",
+      "size": 2295,
+      "mtime": 1790167701.117583,
+      "summary": "友邦保险（AIA Group Limited）2025 年全年报告公布新业务价值（VONB）、税后营运溢利（OPAT）、内涵价值权益及全年股息等核心指标并分市场披露表现（报告期：2025 年全年；主体：友邦保险 AIA Group Limited；核心指标：新业务价值 VONB、税后营运溢利 OPAT、内涵价值权益、全年股息）。",
+      "meta": {},
+      "n_chapters": 15,
+      "max_depth": 3,
+      "tree_key": "3276de8d2ca9d606"
+    },
+    "行业汇总/industry_summary_2024.md": {
+      "rel_path": "行业汇总/industry_summary_2024.md",
+      "name": "industry_summary_2024.md",
+      "parent": "行业汇总",
+      "ext": ".md",
+      "size": 327,
+      "mtime": 1790167701.1188898,
+      "summary": "这份文件汇总对比了友邦保险、中国平安和中国太保三家上市险企2024年的VONB与OPAT核心指标；关键信息：报告期2024年度、主体友邦保险/中国平安/中国太保、核心指标VONB和OPAT。",
+      "meta": {},
+      "n_chapters": 3,
+      "max_depth": 2,
+      "tree_key": "f529074a5f975d22"
+    }
+  }
+}
