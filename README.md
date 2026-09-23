@@ -129,6 +129,46 @@ structure inspected offline before spending anything.
 
 ---
 
+## Two ways to get text out of a PDF
+
+The default path reads the PDF's own **text layer** with PyPDF2. That is free
+and works well on running prose, but it has two hard limits on financial
+reports:
+
+| | text layer (default) | Azure Document Intelligence |
+|---|---|---|
+| Cost | free | per page |
+| Tables | **mangled** — a bar-chart page comes out as `175230`, two numbers fused, label-to-value association gone | real Markdown tables |
+| Scanned / image-only PDFs | **refused outright** (no text layer, no OCR) | OCR'd |
+| Running prose | good | good |
+| Page anchors | native (page ranges) | injected as `<!-- page: N -->` |
+
+Both land in the same place — Markdown with `#` headings — so `nav.build` and
+PageIndex's Markdown path consume either without changes.
+
+```bash
+# validate config, then analyse one page as a smoke test (cheap)
+python scripts/06_azure_extract.py data/aia_reports --check --only FY2021
+
+# convert the corpus to Markdown
+python scripts/06_azure_extract.py data/aia_reports --out corpus_md
+
+# index the result with the two-level navigator
+python -m nav.build corpus_md --out corpus_index --summarize-files
+```
+
+Configuration lives in `.env` (see the Azure section in `.env.example`) —
+endpoint, key, model, output format, features. The page anchors are injected by
+reading `analyzeResult.pages[].spans[].offset` and splicing a marker at each
+page boundary, which is why `AZURE_DI_STRING_INDEX_TYPE` must stay
+`unicodeCodePoint` (it keeps offsets aligned with Python string indices).
+
+`extractors/azure_di.py` is plain REST over httpx — no Azure SDK dependency.
+`tests/test_azure_di.py` covers the config, page-marker and error-mapping logic
+offline (28 assertions, no network).
+
+---
+
 ## Running it
 
 ### 0. Get the source PDFs

@@ -41,6 +41,7 @@ bash data/aia_reports/download.sh     # 唯一还需要单独获取的东西（1
 | 财报问答（命令行） | ✅ | `scripts/02_qa_test.py` |
 | 财报问答（Web 界面，流式） | ✅ | `webapp/server.py`（**当前正在运行**，端口 8787） |
 | 两级导航检索（目录 → 文档 → 章节） | ✅ | `nav/` |
+| PDF → Markdown（Azure Document Intelligence） | ⚠️ 逻辑已验证，**未用真实凭据跑过** | `extractors/azure_di.py`、`scripts/06_azure_extract.py` |
 | 查询延迟诊断 | ✅ | `scripts/profile_query.py` |
 | Markdown 格式审计 | ✅ | `scripts/04_md_audit.py` |
 | 跨文档重复度诊断 | ✅ | `scripts/05_similarity_probe.py` |
@@ -49,6 +50,8 @@ bash data/aia_reports/download.sh     # 唯一还需要单独获取的东西（1
 
 - **10 份 AIA 报告只索引了 3 份**（1H2021 / FY2021 / FY2022），
   其余 7 份未索引。原因见第五节「为什么中途停了」。
+- **Azure DI 抽取器没有用真实 Azure 凭据端到端验证过** —— 离线逻辑有
+  `tests/test_azure_di.py` 的 28 条断言覆盖，但真实调用需接手人配 key 后跑一次。
 - **`nav/` 只用合成语料验证过**，未在真实公司语料上跑过。
 - **Dify 方案只有设计文档，未落地**。
 - **没有评测集**（这是最大的缺口，见第八节）。
@@ -179,10 +182,17 @@ PAGEINDEX_CHAT_MODEL=deepseek/deepseek-flash
 │   ├── 03_md_tree_probe.py     markdown 建树探测
 │   ├── 04_md_audit.py          markdown 语料结构审计（不跑 LLM 就能预测索引质量）
 │   ├── 05_similarity_probe.py  跨文档重复度 + 检索区分度诊断
+│   ├── 06_azure_extract.py     ★ PDF → Markdown（Azure Document Intelligence）
 │   ├── monitor.sh              长任务的进度记录
 │   ├── questions.json          20 题，覆盖全部 10 份
 │   └── questions_3docs.json    18 题，只覆盖已索引的 3 份
 │   └── ⚠️ 01_build_index.py / 02_qa.py 是早期版本，已被上面两个取代，可删
+│
+├── extractors/                ★ 文档抽取后端
+│   └── azure_di.py            Azure Document Intelligence 客户端（纯 REST，无 SDK 依赖）
+│
+├── tests/
+│   └── test_azure_di.py       azure_di 的离线测试（28 断言，不联网）
 │
 ├── webapp/                    Web 问答界面
 │   ├── server.py              ★ 标准库 http.server，SSE 流式，端口 8787
@@ -196,6 +206,7 @@ PAGEINDEX_CHAT_MODEL=deepseek/deepseek-flash
 │   └── route.py               CLI：两级导航查询
 │
 ├── docs/
+│   ├── HANDOVER.md                本文档
 │   └── dify-improvement-plan.md   Dify 知识库改造方案（设计文档）
 │
 ├── samples/                   测试素材
@@ -274,11 +285,72 @@ stream = client.chat(question, doc_id=scope, stream=True, reasoning_effort=REASO
 - 每一级都有**确定性回退**（年份权重最高）
 - 增量更新：mtime + size 未变则跳过
 
-### 5.6 文档（新增/更新）
+### 5.6 `extractors/azure_di.py` + `scripts/06_azure_extract.py`（新增）
 
-- `README.md` — 补了 Web UI、当前语料状态、题集说明
+用 **Azure AI Document Intelligence** 把 PDF 转成 Markdown，作为默认文本层提取的
+替代方案。解决的是第七节里那两个默认路径的硬伤：
+
+| | 默认（PyPDF2 读文本层） | Azure DI |
+|---|---|---|
+| 表格 | **糊掉** —— 图表页抽成 `175230`，两个数粘一起，标签与数值的关联丢失 | 真正的 Markdown 表格 |
+| 扫描件 / 纯图片 PDF | **直接拒绝**（无文本层，无 OCR） | OCR 识别 |
+| 正文 | 好 | 好 |
+| 页码锚点 | 原生（页码区间） | 注入 `<!-- page: N -->` |
+
+**两条路都落到「带 `#` 标题的 Markdown」，所以 `nav.build` 和 PageIndex 的
+Markdown 路径都能直接吃，不用改代码。**
+
+实现要点：
+
+- **纯 REST over httpx**，没引入 Azure SDK 依赖
+- 异步模型：`POST ...:analyze` 返回 `202` + `Operation-Location`，
+  然后轮询直到 `status == "succeeded"`；尊重 `Retry-After`
+- **页标记注入**：Azure 返回的是一整串 content，页边界在
+  `analyzeResult.pages[].spans[].offset`。按 offset **倒序**插入
+  `<!-- page: N -->`，就补回了 Markdown 路径本来会丢掉的页码引用
+  —— 这正是之前 `nav/README.md` 里建议的「页码锚点」
+- ⚠️ `AZURE_DI_STRING_INDEX_TYPE` 必须是 `unicodeCodePoint`（默认已设），
+  否则 offset 与 Python 字符串下标对不上，页标记会插错位置
+- 错误映射成人话：401 → 检查 key；404 → 检查 endpoint/model；
+  429 → 免费版 F0 限流很严，降低 `--workers`
+- 免费版 F0 限流极严，所以 `--workers` 默认只有 **2**，且提供 `--pages` 做便宜试跑
+
+配置全部走 `.env`（见 `.env.example` 的 Azure 段）：
+
+```
+AZURE_DI_ENDPOINT=https://<resource>.cognitiveservices.azure.com/
+AZURE_DI_KEY=<key-1>
+AZURE_DI_MODEL=prebuilt-layout        # read / layout / document
+AZURE_DI_OUTPUT_FORMAT=markdown       # nav.build 需要 markdown
+AZURE_DI_FEATURES=formulas            # 可选
+AZURE_DI_LOCALE=en-US                 # 可选
+```
+
+用法：
+
+```bash
+# 校验配置 + 只分析 1 页做试跑（便宜）
+python scripts/06_azure_extract.py data/aia_reports --check --only FY2021
+
+# 全量转换
+python scripts/06_azure_extract.py data/aia_reports --out corpus_md
+
+# 用两级导航索引这份 Markdown
+python -m nav.build corpus_md --out corpus_index --summarize-files
+```
+
+已实测：带页标记 + 表格的 Markdown 经 `nav.build` 建树正常（页标记不影响
+标题解析），取回章节正文时**表格完整保留、页标记作为引用锚点保留**。
+
+⚠️ **尚未用真实 Azure 凭据端到端跑过** —— 逻辑层有 28 条离线断言覆盖
+（`tests/test_azure_di.py`，不联网），但真实调用需要接手人配好 key 后验证。
+
+### 5.7 文档（新增/更新）
+
+- `README.md` — 新增「两种抽取方式」对比、Web UI、当前语料状态、题集说明
 - `nav/README.md` — nav 包完整文档
 - `docs/dify-improvement-plan.md` — Dify 改造方案
+- `.env.example` — 新增 Azure DI 完整配置段（含各项取值说明）
 
 ### 5.7 测试素材（新增）
 
@@ -457,7 +529,14 @@ $PY -u scripts/02_qa_test.py --skip-index --questions questions_3docs.json \
 # 4. 验证 nav 索引可用（应定位到 友邦保险/2024/annual/ + 股息章节）
 $PY -u -m nav.route samples/test_index "友邦保险 2024 年全年的每股股息是多少？"
 
-# 5. 启动 Web 界面
+# 5. 跑 azure_di 的离线测试（28 条断言，不联网，约 1 秒）
+$PY -u tests/test_azure_di.py
+
+# 6. 检查 Azure DI 配置（未配 key 会给出可操作的报错，这是预期的）
+$PY -u scripts/06_azure_extract.py data/aia_reports --check
+#   配好 key 后再加 --only FY2021 做一次 1 页试跑（会真实调用 Azure）
+
+# 7. 启动 Web 界面
 $PY webapp/server.py     # → http://127.0.0.1:8787
 ```
 
