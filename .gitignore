@@ -2,10 +2,17 @@
 # .env holds a real API key. Never commit it; use .env.example as the template.
 .env
 
-# ─── upstream engine ───────────────────────────────────────────────────────
-# Cloned separately (README §0). It is someone else's code, and keeping it out
-# means `git pull` inside PageIndex/ stays clean.
-PageIndex/
+# ─── vendored upstream engine ──────────────────────────────────────────────
+# PageIndex is vendored (not a submodule) so one clone gets a working tree.
+# Only the package and the build files are kept; the bulky extras below are
+# upstream's own sample material and are not needed to run anything.
+# Provenance and the update procedure are in PageIndex/UPSTREAM.md.
+PageIndex/.git/
+PageIndex/.github/
+PageIndex/examples/
+PageIndex/assets/
+PageIndex/cookbook/
+PageIndex/tests/
 
 # ─── source PDFs ───────────────────────────────────────────────────────────
 # ~27 MB, fetched by data/aia_reports/download.sh (README §0).
@@ -47,3 +54,6 @@ env/
 *.log
 *.tmp
 *.bak
+
+# upstream editor/agent config — not needed
+PageIndex/.claude/

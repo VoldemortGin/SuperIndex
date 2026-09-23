@@ -131,24 +131,22 @@ structure inspected offline before spending anything.
 
 ## Running it
 
-### 0. Get the upstream code and the PDFs
+### 0. Get the source PDFs
 
-Two things are deliberately **not** committed to this repository — the upstream
-engine and the source PDFs. Fetch them first:
+The engine is **vendored** — `PageIndex/` ships with this repo, pinned to
+upstream commit `71714e8`, so a plain `git clone` gives you a runnable tree.
+(Provenance, what was stripped, and how to update: `PageIndex/UPSTREAM.md`.)
+
+The only thing not committed is the source PDFs (~27 MB, publicly downloadable):
 
 ```bash
-# PageIndex itself (upstream, pinned to the commit this project was built against)
-git clone https://github.com/VectifyAI/PageIndex.git
-cd PageIndex && git checkout 71714e8 && cd ..
-
-# the 10 AIA reports (~27 MB, downloaded from aia.com)
 bash data/aia_reports/download.sh
 ```
 
-> The engine is cloned rather than vendored on purpose: it is someone else's
-> code, and keeping it out means `git pull` inside `PageIndex/` stays clean.
-> All of this project's customisation lives in `scripts/`, `webapp/` and `nav/`,
-> never in `PageIndex/`.
+> `PageIndex/` is vendored rather than added as a submodule so that one clone
+> is enough — no `--recursive`, no missing-directory surprises. All of this
+> project's own code lives in `scripts/`, `webapp/` and `nav/`; nothing in
+> `PageIndex/` is ever modified, which keeps the upstream diff clean.
 
 ### 1. Environment
 

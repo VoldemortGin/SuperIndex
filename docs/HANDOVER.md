@@ -8,11 +8,14 @@
 ```bash
 git clone https://github.com/yongsoft/SuperIndex.git
 cd SuperIndex
-# 仓库里没有 PageIndex/ 和 PDF，先按 README「§0」把它们拉下来
+bash data/aia_reports/download.sh     # 唯一还需要单独获取的东西（10 份 PDF）
 ```
 
-> ⚠️ 仓库**不包含** `.env`（含密钥）、`PageIndex/`（上游克隆）、
-> `data/*.pdf`、`results/` 下的生成物。README §0 有获取步骤。
+> `PageIndex/` **已随仓库分发**（vendored，锁定 upstream commit `71714e8`），
+> 所以一次 clone 就能跑，不需要 `--recursive` 也不需要手动 clone 上游。
+> 仓库里**不包含** `.env`（含密钥）、`data/*.pdf`（27MB）、`results/` 下的生成物。
+> `PageIndex/` 里被剥掉了 examples/assets/cookbook/tests（约 56MB），
+> 详见 `PageIndex/UPSTREAM.md`。
 
 ---
 
@@ -71,20 +74,34 @@ PY=/Users/yong/.workbuddy/binaries/python/envs/pageindex/bin/python
 
 ### 3.2 PageIndex 的安装方式（重要）
 
-`PageIndex/` 是**上游仓库的克隆**，不是本项目代码：
+`PageIndex/` 是**上游引擎的 vendored 副本**，不是本项目代码：
 
 ```
-仓库:   https://github.com/VectifyAI/PageIndex.git
-commit: 71714e8
-状态:   干净（无本地改动）
+来源:   https://github.com/VectifyAI/PageIndex.git
+commit: 71714e8   （已锁定，随仓库分发）
+许可:   MIT — Copyright (c) 2025 Vectify AI
+状态:   未做任何本地修改
 ```
+
+⚠️ 完整说明（剥掉了什么、怎么更新到新版本）见 **`PageIndex/UPSTREAM.md`**。
 
 它是**以 editable 模式装进 venv** 的（`pip install -e PageIndex`），
-所以：
+所以改 `PageIndex/` 里的代码会立即生效。**但请不要改它** ——
+我们所有定制都通过 monkeypatch 或外层脚本完成，保持与上游的 diff 干净。
 
-- 改 `PageIndex/` 里的代码**会立即生效**，不用重装
-- 但**不要改它** —— 我们所有定制都通过 monkeypatch 或外层脚本完成，
-  保持上游干净，将来 `git pull` 才不会冲突
+两处运行时定制（都不碰源码，更新上游也不会丢）：
+
+| 定制 | 位置 | 原因 |
+|---|---|---|
+| `SUMMARY_CONCURRENCY` 64 → 8 | `scripts/02_qa_test.py` 的 `apply_concurrency` | 64 路并发会触发 DeepSeek 的假性余额拒绝 |
+| `reasoning_effort` 逐次传参 | `webapp/server.py`、`nav/llm.py` | 不写进引擎 |
+
+⚠️ venv 的 `.pth` 里存的是**绝对路径**，所以新机器上 clone 之后**必须重装**：
+
+```bash
+$PY -m pip install -r PageIndex/requirements.txt
+$PY -m pip install -e PageIndex --no-deps
+```
 
 验证安装指向（`pip show` 的 `Location` 显示 site-packages 是正常的，
 editable 安装靠 `.pth` 重定向）：
@@ -149,7 +166,8 @@ PAGEINDEX_CHAT_MODEL=deepseek/deepseek-flash
 
 ```
 .
-├── PageIndex/                 上游克隆，editable 安装，勿改
+├── PageIndex/                 上游引擎 vendored 副本，editable 安装，勿改
+│   └── UPSTREAM.md            来源/commit/剥掉了什么/怎么更新 ★ 必读
 ├── data/aia_reports/          10 份 AIA 报告 PDF（27 MB）
 ├── README.md                  项目主文档
 │
@@ -458,16 +476,17 @@ pkill -f "webapp/server.py" && nohup $PY -u webapp/server.py > results/webapp.lo
 - 打包交给同事时，**建议把 `.env` 排除**，只给 `.env.example`，让对方填自己的 key
 - 如果这个 key 已经流出过，建议在 DeepSeek 后台**轮换**
 
-### 打包建议
+### 仓库包含/排除清单
 
-| 目录 | 建议 | 理由 |
+| 目录 | 是否随仓库 | 说明 |
 |---|---|---|
-| `PageIndex/` | 保留，或改为让对方自己 `git clone` | 58 MB；是上游代码，不是我们的 |
-| `data/aia_reports/` | 保留 | 27 MB，公开年报；`download.sh` 里有原始 URL |
-| `results/` | **只保留 `pageindex_store/` 和 `trees/`**，日志可删 | 索引重建要花钱，日志没用 |
-| `.env` | **排除** | 含密钥 |
-| `.workbuddy-ai/` | 保留 | 项目记忆，含大量决策记录 |
-| `.DS_Store` | 删除 | macOS 垃圾文件 |
+| `PageIndex/` | ✅ **包含**（2.1 MB / 113 文件） | vendored，锁定 `71714e8`；剥掉了 examples/assets/cookbook/tests |
+| `data/aia_reports/*.pdf` | ❌ 排除（27 MB） | 用 `download.sh` 拉取，URL 有效 |
+| `results/*` | ❌ 排除（4 MB） | 纯生成物，可重建 |
+| `.env` | ❌ 排除 | **含真实密钥** |
+| `__pycache__` / `.DS_Store` | ❌ 排除 | 缓存与垃圾 |
+| `samples/test_index/` | ✅ 包含（164 KB） | 虽是生成物，但让 `nav/` 能立刻演示 |
+| `.workbuddy-ai/` | ✅ 包含（48 KB） | 项目记忆，含大量决策记录 |
 
 ### 已完成 / 待办
 
