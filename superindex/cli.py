@@ -8,7 +8,10 @@
     uv run scripts/superindex.py batch questions.jsonl --retrieval-only [--top-k 5]
 
 `search`, `ask`, `serve` and `batch` take `--match page|passage` (keyword
-search scoring, SUPERINDEX_BM25_MATCH; see `superindex.bm25`).
+search scoring, SUPERINDEX_BM25_MATCH; see `superindex.bm25`). `ask`, `serve`
+and `batch` put the top keyword-search pages in front of each question
+(`--no-prefetch` / `--prefetch-k N`, SUPERINDEX_PREFETCH[_K]; see
+`superindex.prefetch`).
 
 Models and endpoints come from `.env` (working directory, then the
 executable's folder) or the CLI flags; see `.env.example`.
@@ -48,6 +51,21 @@ def _add_match_flag(ap: argparse.ArgumentParser) -> None:
     ap.add_argument("--match", choices=("page", "passage"),
                     help="keyword search scoring: whole pages or their best passage "
                          "(SUPERINDEX_BM25_MATCH, default page)")
+
+
+def _add_prefetch_flags(ap: argparse.ArgumentParser) -> None:
+    ap.add_argument("--prefetch", action=argparse.BooleanOptionalAction, default=None,
+                    help="keyword-search each question first and give the agent the top "
+                         "pages as hints (SUPERINDEX_PREFETCH, default on)")
+    ap.add_argument("--prefetch-k", type=int,
+                    help="pages to prefetch (SUPERINDEX_PREFETCH_K, default 5)")
+
+
+def _prefetch_k(args: argparse.Namespace) -> int:
+    from superindex import prefetch
+
+    return prefetch.resolve_k(getattr(args, "prefetch", None),
+                              getattr(args, "prefetch_k", None))
 
 
 def _settings(args: argparse.Namespace) -> LLMSettings:
@@ -147,7 +165,13 @@ def cmd_ask(args: argparse.Namespace) -> int:
     if args.doc:
         ids = _resolve_docs(client.list_documents(limit=100).get("documents", []), args.doc)
         scope = ids[0] if len(ids) == 1 else ids
-    stream = client.chat(args.question, doc_id=scope, stream=True,
+    from superindex import prefetch
+
+    message, hits = prefetch.prepare(_store(args), args.question, scope, _prefetch_k(args))
+    if args.verbose:
+        print(f"[prefetch] {prefetch.block(hits) or 'no candidates'}", file=sys.stderr,
+              flush=True)
+    stream = client.chat(message, doc_id=scope, stream=True,
                          reasoning_effort=settings.reasoning_effort)
     for ev in stream.events:
         etype = ev.get("type")
@@ -210,6 +234,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     server._client = client
     server.corpus_status = corpus_status
     server.REASONING_EFFORT = settings.reasoning_effort
+    server.PREFETCH_K = _prefetch_k(args)
     print(f"store   : {store}")
     return server.run(args.host, args.port)
 
@@ -245,8 +270,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="document name, id or name fragment (repeatable; default: all)")
     p.add_argument("--store", help="store directory (SUPERINDEX_STORE)")
     p.add_argument("--instructions", help="extra standing guidance for the answering agent")
-    p.add_argument("-v", "--verbose", action="store_true", help="print tool calls to stderr")
+    p.add_argument("-v", "--verbose", action="store_true",
+                   help="print prefetched pages and tool calls to stderr")
     _add_match_flag(p)
+    _add_prefetch_flags(p)
     _add_llm_flags(p)
     p.set_defaults(func=cmd_ask)
 
@@ -266,6 +293,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--store", help="store directory (SUPERINDEX_STORE)")
     p.add_argument("--instructions", help="replace the web UI's standing guidance")
     _add_match_flag(p)
+    _add_prefetch_flags(p)
     _add_llm_flags(p)
     p.set_defaults(func=cmd_serve)
 
@@ -290,6 +318,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--top-k", type=int, default=5,
                    help="pages searched per question with --retrieval-only (default 5)")
     _add_match_flag(p)
+    _add_prefetch_flags(p)
     _add_llm_flags(p)
     p.set_defaults(func=cmd_batch)
     return ap

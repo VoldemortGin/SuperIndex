@@ -44,9 +44,12 @@ class FakeClient:
     def __init__(self, answers: dict[str, Any]) -> None:
         self.answers = answers
         self.calls: list[tuple[str, Any]] = []
+        self.messages: list[str] = []
 
-    def chat(self, question: str, doc_id: Any = None, stream: bool = False,
+    def chat(self, message: str, doc_id: Any = None, stream: bool = False,
              reasoning_effort: str | None = None) -> FakeStream:
+        self.messages.append(message)
+        question = message.rsplit("问题：", 1)[-1]      # past a prefetch block
         self.calls.append((question, doc_id))
         spec = self.answers.get(question, "")
         if isinstance(spec, Exception):

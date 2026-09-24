@@ -16,6 +16,12 @@ finish, so `--resume` can skip what is done) and `<out>/summary.md`.
 one of the question's `pages` (e.g. ``[12, 13]`` or ``"12-13"``; `page` works
 too), or else when its text holds the expected answer (same rule as the rough
 score). The summary reports recall@1/3/5 and MRR.
+
+With prefetch on (the default, `superindex.prefetch`), each question goes to
+the agent behind its top keyword-search pages; the record keeps them
+(`prefetch`, each judged like `--retrieval-only`) and `prefetch_hit` says
+whether one of them holds the answer, so the summary can tell "search missed
+it" from "found but not used". The rough score still reads only the answer.
 """
 from __future__ import annotations
 
@@ -32,7 +38,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
-from superindex import bm25
+from superindex import bm25, prefetch
 from superindex.runtime import ConfigError, app_dir
 
 RESULTS_FILE = "results.jsonl"
@@ -159,10 +165,11 @@ def _arguments(raw: Any) -> Any:
 
 
 def run_question(client: Any, q: Question, scope: str | list[str] | None, *,
-                 timeout: float, reasoning_effort: str | None = None) -> dict[str, Any]:
-    """Answer one question; never raises. `llm_turns` is an estimate: one turn
-    per batch of tool calls (ended by a tool result or text), plus the final
-    answer turn."""
+                 timeout: float, reasoning_effort: str | None = None,
+                 message: str | None = None) -> dict[str, Any]:
+    """Answer one question (sent as `message`, default the question text);
+    never raises. `llm_turns` is an estimate: one turn per batch of tool calls
+    (ended by a tool result or text), plus the final answer turn."""
     answer: list[str] = []
     tool_calls: list[dict[str, Any]] = []
     state: dict[str, Any] = {"turns": 0, "error": None}
@@ -170,7 +177,7 @@ def run_question(client: Any, q: Question, scope: str | list[str] | None, *,
 
     def consume() -> None:
         try:
-            stream = client.chat(q.question, doc_id=scope, stream=True,
+            stream = client.chat(message or q.question, doc_id=scope, stream=True,
                                  reasoning_effort=reasoning_effort)
             in_tools = False
             for ev in stream.events:
@@ -230,31 +237,42 @@ def gold_pages(q: Question) -> set[int] | None:
     return pages or None
 
 
+def judge_hits(store: Path, q: Question, hits: list[bm25.Hit],
+               texts: dict[str, list[str]] | None = None) -> tuple[str | None, list[bool]]:
+    """How `q` is judged ("pages", "expected" or None) and whether each hit is
+    relevant: one of its `pages`, or else a page whose text holds the
+    expected answer."""
+    from pageindex.local_store import DocStore
+
+    gold = gold_pages(q)
+    judge = "pages" if gold is not None else ("expected" if q.expected else None)
+    texts = {} if texts is None else texts
+    relevant: list[bool] = []
+    for h in hits:
+        if gold is not None:
+            relevant.append(h.page in gold)
+        elif q.expected:
+            if h.doc_id not in texts:
+                texts[h.doc_id] = bm25._page_texts(DocStore(str(store)).get_pages(h.doc_id) or [])
+            page = texts[h.doc_id][h.page - 1] if h.page <= len(texts[h.doc_id]) else ""
+            relevant.append(bool((score(q.expected, bm25.plain_text(page)) or {}).get("hit")))
+        else:
+            relevant.append(False)
+    return judge, relevant
+
+
 def run_retrieval(store: Path, q: Question, scope: list[str] | None, *, top_k: int,
                   match: str | None = None, page_weight: float = bm25.PAGE_WEIGHT,
                   texts: dict[str, list[str]] | None = None) -> dict[str, Any]:
     """Search one question and rank its hits: `rank` is the position of the
     first relevant page (None if none in the top k)."""
-    from pageindex.local_store import DocStore
-
     t0 = time.time()
     result = bm25.search(store, q.question, doc_ids=scope, top_k=top_k, match=match,
                          page_weight=page_weight)
-    gold = gold_pages(q)
-    judge = "pages" if gold is not None else ("expected" if q.expected else None)
-    texts = {} if texts is None else texts
+    judge, flags = judge_hits(store, q, result.hits, texts)
     hits: list[dict[str, Any]] = []
     rank = None
-    for i, h in enumerate(result.hits, start=1):
-        if gold is not None:
-            relevant = h.page in gold
-        elif q.expected:
-            if h.doc_id not in texts:
-                texts[h.doc_id] = bm25._page_texts(DocStore(str(store)).get_pages(h.doc_id) or [])
-            page = texts[h.doc_id][h.page - 1] if h.page <= len(texts[h.doc_id]) else ""
-            relevant = bool((score(q.expected, bm25.plain_text(page)) or {}).get("hit"))
-        else:
-            relevant = False
+    for i, (h, relevant) in enumerate(zip(result.hits, flags), start=1):
         if relevant and rank is None:
             rank = i
         hits.append({"doc_name": h.doc_name, "page": h.page, "score": round(h.score, 3),
@@ -340,11 +358,30 @@ def _hit_mark(rec: dict[str, Any]) -> str:
     return f"{'✓' if sc['hit'] else '✗'} {sc['matched']}/{sc['total']}"
 
 
+def _prefetch_mark(rec: dict[str, Any]) -> str:
+    found = rec.get("prefetch_hit")
+    return "-" if found is None else ("✓" if found else "✗")
+
+
+def _prefetch_lines(records: list[dict[str, Any]], meta: dict[str, Any]) -> list[str]:
+    if not any("prefetch" in r for r in records):
+        return ["- 检索前置：关"]
+    judged = [r for r in records if r.get("prefetch_hit") is not None and not r.get("error")]
+    found = [r for r in judged if r["prefetch_hit"]]
+    unused = sum(1 for r in found if r.get("score") and not r["score"]["hit"])
+    missed = sum(1 for r in judged if not r["prefetch_hit"]
+                 and r.get("score") and not r["score"]["hit"])
+    return [(f"- 检索前置：开（k={meta.get('prefetch_k', '')}）　候选含答案页：{len(found)}/"
+             f"{len(judged)}　未命中题中：候选含答案页 {unused} 题（找到了但没用好）、"
+             f"不含 {missed} 题（检索没找到）")]
+
+
 def write_summary(records: list[dict[str, Any]], path: Path, meta: dict[str, Any]) -> None:
     scored = [r for r in records if r.get("score") and not r.get("error")]
     hits = sum(1 for r in scored if r["score"]["hit"])
     errors = sum(1 for r in records if r.get("error"))
     secs = [float(r.get("seconds") or 0) for r in records]
+    with_prefetch = any("prefetch" in r for r in records)
     lines = [
         f"# 批量问答结果 — {meta.get('started', '')}",
         "",
@@ -355,18 +392,24 @@ def write_summary(records: list[dict[str, Any]], path: Path, meta: dict[str, Any
         + (f"（{hits / len(scored):.0%}）" if scored else ""),
         (f"- 单题耗时合计：{sum(secs):.1f}s　平均：{(sum(secs) / len(secs) if secs else 0):.1f}s"
          f"　本次运行墙钟：{meta.get('wall_seconds', 0):.1f}s"),
+        *_prefetch_lines(records, meta),
         "",
         ("> 粗评分：期望答案中的每个数字都出现在回答里（1,814 与 1814、38.00 与 38 视为相同）"
-         "即算命中；期望答案不含数字时按整句（忽略大小写）包含判断。仅供快速筛查，需人工复核。"),
+         "即算命中；期望答案不含数字时按整句（忽略大小写）包含判断。仅供快速筛查，需人工复核。"
+         + ("只看最终回答，不看注入的检索线索。「线索」列：检索前置候选页中是否有答案页"
+            "（判定同纯检索评测：题目给了 `pages` 时按页码，否则按页面文本含期望答案）。"
+            if with_prefetch else "")),
         "",
-        "| # | ID | 问题 | 命中 | 耗时(s) | 轮次 | 读取页码 | 错误 |",
-        "|---|---|---|---|---|---|---|---|",
+        "| # | ID | 问题 | 命中 | 耗时(s) | 轮次 | 读取页码 | " + ("线索 | " if with_prefetch else "")
+        + "错误 |",
+        "|---|---|---|---|---|---|---|" + ("---|" if with_prefetch else "") + "---|",
     ]
     for i, r in enumerate(records, start=1):
         lines.append(f"| {i} | {_cell(r.get('id'), 20)} | {_cell(r.get('question'), 60)} "
                      f"| {_hit_mark(r)} | {float(r.get('seconds') or 0):.1f} "
                      f"| {r.get('llm_turns', '')} | {_cell(', '.join(r.get('pages_read') or []), 60)} "
-                     f"| {_cell(r.get('error'), 60)} |")
+                     + (f"| {_prefetch_mark(r)} " if with_prefetch else "")
+                     + f"| {_cell(r.get('error'), 60)} |")
     lines += ["", "## 逐题详情", ""]
     for r in records:
         lines.append(f"### {r.get('id')} {_hit_mark(r)}")
@@ -378,6 +421,11 @@ def write_summary(records: list[dict[str, Any]], path: Path, meta: dict[str, Any
             lines.append("")
         if r.get("error"):
             lines.append(f"**错误**：{r['error']}")
+            lines.append("")
+        if r.get("prefetch"):
+            pages = ", ".join(f"{c['doc_name']}:{c['page']}{' ✓' if c.get('relevant') else ''}"
+                              for c in r["prefetch"])
+            lines.append(f"**检索线索**：{pages}")
             lines.append("")
         lines.append("**回答**：")
         lines.append("")
@@ -431,7 +479,7 @@ def _scope(docs: list[dict[str, Any]], wanted: list[str]) -> list[str]:
 def cmd_batch(args: argparse.Namespace) -> int:
     from pageindex.local_store import DocStore
 
-    from superindex.cli import _settings, _store, make_client
+    from superindex.cli import _prefetch_k, _settings, _store, make_client
 
     qfile = Path(args.questions).expanduser()
     questions = load_questions(qfile)
@@ -450,6 +498,7 @@ def cmd_batch(args: argparse.Namespace) -> int:
     retrieval = bool(getattr(args, "retrieval_only", False))
     top_k = max(1, int(getattr(args, "top_k", 5) or 5))
     match = bm25.resolve_match(getattr(args, "match", None))
+    prefetch_k = 0 if retrieval else _prefetch_k(args)
     client = None if retrieval else make_client(settings, store, instructions=args.instructions)
     texts: dict[str, list[str]] = {}
 
@@ -468,7 +517,8 @@ def cmd_batch(args: argparse.Namespace) -> int:
     if retrieval:
         print(f"retrieval : only (no LLM)  match: {match}  top-k: {top_k}", flush=True)
     else:
-        print(f"timeout   : {args.timeout:g}s  concurrency: {args.concurrency}", flush=True)
+        print(f"timeout   : {args.timeout:g}s  concurrency: {args.concurrency}  "
+              f"prefetch: {prefetch_k or 'off'}", flush=True)
 
     lock = threading.Lock()
     finished = [0]
@@ -482,8 +532,15 @@ def cmd_batch(args: argparse.Namespace) -> int:
                 record = run_retrieval(store, q, scope_ids, top_k=top_k, match=match,
                                        texts=texts)
             else:
+                hits = prefetch.search(store, q.question, scope_ids, prefetch_k)
                 record = run_question(client, q, scope, timeout=args.timeout,
-                                      reasoning_effort=settings.reasoning_effort)
+                                      reasoning_effort=settings.reasoning_effort,
+                                      message=prefetch.augment(q.question, hits))
+                if prefetch_k:
+                    judge, flags = judge_hits(store, q, hits, texts)
+                    record["prefetch"] = [{"doc_name": h.doc_name, "page": h.page,
+                                           "relevant": f} for h, f in zip(hits, flags)]
+                    record["prefetch_hit"] = any(flags) if judge else None
         except Exception as exc:  # noqa: BLE001 - e.g. an unknown doc: record it
             error = f"{type(exc).__name__}: {exc}"
             if retrieval:
@@ -531,7 +588,7 @@ def cmd_batch(args: argparse.Namespace) -> int:
         return 0
     write_summary(records, out_dir / SUMMARY_FILE, {
         "started": started, "questions": str(qfile), "store": str(store),
-        "chat_model": settings.chat_model, "wall_seconds": wall,
+        "chat_model": settings.chat_model, "wall_seconds": wall, "prefetch_k": prefetch_k,
     })
     errors = sum(1 for r in records if r.get("error"))
     print(f"\n{len(records)} question(s), {errors} error(s), {wall:.1f}s")

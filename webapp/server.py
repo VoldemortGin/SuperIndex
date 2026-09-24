@@ -48,6 +48,9 @@ CHAT_MODEL = os.getenv("PAGEINDEX_CHAT_MODEL", "deepseek/deepseek-flash")
 # answer unchanged. "low" is the default; set it to "" to send nothing and get
 # the model's own default back.
 REASONING_EFFORT = os.getenv("PAGEINDEX_REASONING_EFFORT", "low").strip() or None
+# Pages keyword-searched before each question and handed to the agent as
+# hints (superindex.prefetch); `superindex serve` sets it, 0 is off.
+PREFETCH_K = 0
 
 _client = None
 _client_lock = threading.Lock()
@@ -198,10 +201,16 @@ class Handler(BaseHTTPRequestHandler):
         try:
             client = get_client()
             scope = doc_ids[0] if len(doc_ids) == 1 else doc_ids
+            message = question
+            if PREFETCH_K:
+                from superindex import prefetch
+
+                message, hits = prefetch.prepare(STORE, question, doc_ids, PREFETCH_K)
+                emit("prefetch", {"candidates": prefetch.candidates(hits)})
             # One run per answer; serialize so two browser tabs cannot
             # interleave runs on the same client.
             with _chat_lock:
-                stream = client.chat(question, doc_id=scope, stream=True,
+                stream = client.chat(message, doc_id=scope, stream=True,
                                      reasoning_effort=REASONING_EFFORT)
                 for ev in stream.events:
                     etype = ev.get("type")
