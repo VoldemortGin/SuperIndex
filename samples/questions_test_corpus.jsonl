@@ -1,0 +1,36 @@
+{"id": "TC01", "doc": "AIA_AR2024", "kind": "table", "lang": "zh", "question": "友邦保险 2024 年新加坡伙伴分销渠道的新业务价值是多少？", "expected": "177 百万美元"}
+{"id": "TC02", "doc": "CPIC_AR2023", "kind": "table", "lang": "zh", "question": "中国太保 2023 年香港代理渠道的 VONB 是多少百万美元？", "expected": "954"}
+{"id": "TC03", "doc": "PingAn_AR2025", "kind": "text", "lang": "zh", "question": "中国平安 2025 年泰国新业务价值是多少，增长了多少？", "expected": "1,630 百万美元，增长 32%"}
+{"id": "TC04", "doc": "AIA_IR2023H1", "kind": "summary", "lang": "zh", "question": "友邦保险 2023 年上半年宣派的中期股息是每股多少港仙？", "expected": "39.55 港仙"}
+{"id": "TC05", "doc": "CPIC_IR2024H1", "kind": "table", "lang": "zh", "question": "中国太保 2024 年上半年马来西亚代理渠道新业务价值是多少？", "expected": "791"}
+{"id": "TC06", "doc": "AIA_AR2025", "kind": "table", "lang": "mixed", "question": "AIA 2025 Malaysia VONB 伙伴分销 partnership", "expected": "514"}
+{"id": "TC07", "doc": "AIA_AR2025", "kind": "text", "lang": "mixed", "question": "AIA 2025 OPAT 税后营运溢利 同比增长多少？", "expected": "6,466 百万美元，增长 11%"}
+{"id": "TC08", "doc": "PingAn_AR2025", "kind": "summary", "lang": "zh", "question": "中国平安 2025 年内涵价值权益是多少十亿美元？", "expected": "66.6"}
+{"id": "TC09", "doc": "CPIC_AR2023", "kind": "text", "lang": "zh", "question": "中国太保 2023 年其他市场的新业务价值及增长率是多少？", "expected": "1,471 百万美元，增长 -5%"}
+{"id": "TC10", "doc": "AIA_IR2023H1", "kind": "table", "lang": "mixed", "question": "友邦 2023 上半年泰国伙伴分销 VONB", "expected": "324"}
+{"id": "TC11", "doc": "CPIC_IR2024H1", "kind": "text", "lang": "zh", "question": "中国太保 2024 年上半年新加坡新业务价值增长了多少？", "expected": "1,298 百万美元，增长 39%"}
+{"id": "TC12", "doc": "PingAn_AR2025", "kind": "table", "lang": "zh", "question": "中国平安 2025 年全年股息是每股多少港仙？", "expected": "139.16 港仙"}
+{"id": "TC13", "doc": "AIA_AR2024", "kind": "text", "lang": "zh", "question": "友邦保险 2024 年马来西亚新业务价值及同比增长率", "expected": "745 百万美元，增长 -2%"}
+{"id": "TC14", "doc": "PingAn_IR2024H1", "kind": "table", "lang": "zh", "question": "中国平安 2024 年上半年香港代理渠道新业务价值是多少？", "expected": "276"}
+{"id": "TC15", "kind": "crossdoc", "lang": "zh", "question": "友邦保险 2025 年全年报告 末期股息每股多少港仙？", "expected": "103.95 港仙"}
+{"id": "TC16", "kind": "crossdoc", "lang": "zh", "question": "中国太保 2024 年上半年报告 中期股息每股多少港仙？", "expected": "42.76 港仙"}
+{"id": "TC17", "kind": "crossdoc", "lang": "zh", "question": "中国平安 2023 年全年报告 税后营运溢利 OPAT 是多少？", "expected": "6,440 百万美元"}
+{"id": "HL01", "doc": "HarbourLife_AR2022", "kind": "toc_trap", "lang": "zh", "question": "越南代理渠道的新业务价值是多少？", "expected": "187 百万美元"}
+{"id": "HL02", "doc": "HarbourLife_AR2022", "kind": "toc_trap", "lang": "zh", "question": "印度尼西亚伙伴分销渠道的新业务价值是多少？", "expected": "64 百万美元"}
+{"id": "HL03", "doc": "HarbourLife_AR2022", "kind": "toc_trap", "lang": "mixed", "question": "韩国 Korea 直销渠道 VONB 是多少？", "expected": "29 百万美元"}
+{"id": "HL04", "doc": "HarbourLife_AR2022", "kind": "toc_trap", "lang": "en", "question": "What special dividend per share did the Board declare?", "expected": "18.20 Hong Kong cents"}
+{"id": "HL05", "doc": "HarbourLife_AR2022", "kind": "long_page", "lang": "en", "question": "What final dividend per share did the Board recommend?", "expected": "96.40 Hong Kong cents"}
+{"id": "HL06", "doc": "HarbourLife_AR2022", "kind": "table", "lang": "en", "question": "What was the carrying value of corporate bonds in Indonesia?", "expected": "US$1,284.7m"}
+{"id": "HL07", "doc": "HarbourLife_AR2022", "kind": "xpage_table", "lang": "en", "question": "Carrying value of mutual funds in Korea", "expected": "1,548.5"}
+{"id": "HL08", "doc": "HarbourLife_AR2022", "kind": "xpage_table", "lang": "mixed", "question": "泰国股票 Equities Thailand 的账面价值 carrying value 是多少？", "expected": "6,950.2"}
+{"id": "HL09", "doc": "HarbourLife_AR2022", "kind": "long_page", "lang": "en", "question": "How much would a 50 basis point decrease in interest rates reduce EV Equity?", "expected": "US$412 million"}
+{"id": "HL10", "doc": "HarbourLife_AR2022", "kind": "long_page", "lang": "en", "question": "What is the impact of a 10 per cent fall in equity prices on EV Equity?", "expected": "US$287 million"}
+{"id": "HL11", "doc": "HarbourLife_AR2022", "kind": "xpage_table", "lang": "mixed", "question": "Harbour Life Korea 的偿付能力充足率 solvency ratio 是多少？", "expected": "318%"}
+{"id": "HL12", "doc": "HarbourLife_AR2022", "kind": "table", "lang": "zh", "question": "印度尼西亚附属公司的偿付能力充足率是多少？", "expected": "238%"}
+{"id": "HL13", "doc": "HarbourLife_AR2022", "kind": "text", "lang": "zh", "question": "2022 年集团支付的理赔总额和医疗理赔金额分别是多少？", "expected": "1,976 百万美元，医疗理赔 843 百万美元"}
+{"id": "HL14", "doc": "HarbourLife_AR2022", "kind": "long_page", "lang": "zh", "question": "集团营运碳排放强度较 2019 年基准下降了多少？", "expected": "27.4%"}
+{"id": "HL15", "doc": "HarbourLife_AR2022", "kind": "dispersed", "lang": "zh", "question": "集团全职员工人数以及高级管理层中女性占比分别是多少？", "expected": "23,480 人，41.5%"}
+{"id": "HL16", "doc": "HarbourLife_AR2022", "kind": "summary", "lang": "zh", "question": "集团偿付能力充足率是多少？", "expected": "236%"}
+{"id": "HL17", "doc": "HarbourLife_AR2022", "kind": "summary", "lang": "en", "question": "What were the total invested assets?", "expected": "US$58,904m"}
+{"id": "HL18", "doc": "HarbourLife_AR2022", "kind": "text", "lang": "zh", "question": "新加坡的新业务价值是多少，增长了多少？", "expected": "1,206 百万美元，增长 16%"}
+{"id": "HL19", "doc": "HarbourLife_AR2022", "pages": [12], "kind": "text", "lang": "en", "question": "What was the average claims processing time in days?", "expected": "4.2 days"}
