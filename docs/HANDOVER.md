@@ -3,10 +3,10 @@
 > 面向接手同事。读完这份文档 + `README.md` + `nav/README.md`，
 > 应该能独立跑起来、看懂每个设计决策的理由、并知道坑在哪。
 
-**代码仓库**：https://github.com/yongsoft/SuperIndex （私有，需授权访问）
+**代码仓库**：https://github.com/VoldemortGin/SuperIndex
 
 ```bash
-git clone https://github.com/yongsoft/SuperIndex.git
+git clone https://github.com/VoldemortGin/SuperIndex.git
 cd SuperIndex
 bash data/aia_reports/download.sh     # 唯一还需要单独获取的东西（10 份 PDF）
 ```
@@ -592,7 +592,7 @@ pkill -f "webapp/server.py" && nohup $PY -u webapp/server.py > results/webapp.lo
 
 ### 已完成 / 待办
 
-✅ **已建 git 仓库并推送到 GitHub**：https://github.com/yongsoft/SuperIndex（私有）
+✅ **已建 git 仓库并推送到 GitHub**：https://github.com/VoldemortGin/SuperIndex（原 yongsoft/SuperIndex，2026-09-23 起迁至 VoldemortGin/SuperIndex）
 ✅ **已加 `.gitignore`**：排除 `.env`、`PageIndex/`、`data/*.pdf`、`results/*`、
 `__pycache__`、`.DS_Store`
 ✅ **`PageIndex/` 不 vendor，README §0 给了 clone 步骤**
