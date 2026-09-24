@@ -15,6 +15,7 @@ The corpus is the five most recent **annual reports** plus the five matching
 > 常用：`uv run scripts/superindex.py search "final dividend" --top-k 3`（BM25 检索自检，不调 LLM）；`uv run scripts/superindex.py batch q.jsonl`（批量问答，出 `summary.md`）；`batch q.jsonl --retrieval-only --match page|passage`（纯检索评测）。
 > `--match` 默认 `page`；`passage` 在长页多主题时更好，建议在真实 DI 年报题集上用 `--retrieval-only` 两种各跑一次复核。公司/云端 LLM API（OpenAI 兼容网关、Azure OpenAI）配置见 quickstart §3b。
 > 检索前置（默认开）：`ask` / `serve` / `batch` 在问题进入 Agent 前先跑 BM25，把 top-k 候选页作为「检索线索」拼在问题前；`--no-prefetch` 关闭、`--prefetch-k N` 调整（`SUPERINDEX_PREFETCH` / `SUPERINDEX_PREFETCH_K`）。Agent 另有 `calculate` 工具（Decimal 精确计算，含 `pct_change` / `cagr` / `ratio`），提示要求所有算术都经由它。
+> PDF 原页截图（多模态模型用，默认关）：`index --pdf-dir D:\pdfs` 按同名关联源 PDF；`ask` / `serve` / `batch --page-image auto|always`（`SUPERINDEX_PAGE_IMAGE`）把候选页截图附给模型，并提供 `get_page_image` 工具按需取图，每题最多 `SUPERINDEX_PAGE_IMAGE_MAX`（默认 3）张；见 quickstart §4–§6。
 
 ---
 

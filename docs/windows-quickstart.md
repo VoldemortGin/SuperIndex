@@ -127,6 +127,7 @@ uv run scripts/superindex.py index D:\corpus_md --store D:\si_store             
 - `--no-summary`：不调 LLM，几秒建完，问答时模型靠目录树 + 关键词检索定位页面。先用它跑通。
 - 开摘要：每个节点调一次模型，文档多时要很久，换来目录导航更准；`--concurrency` 控制并发（默认 8，本机小模型可调低）。
 - 同名文件内容未变会跳过；`--force` 重建。`ask`/`search`/`serve`/`batch` 若用了 `--store`，也要带同一个 `--store`。
+- 关联源 PDF（给多模态模型看原页截图用，见 §6 末尾）：加 `--pdf-dir D:\corpus_pdf`（或 `.env` 的 `SUPERINDEX_PDF_DIR`），按文件名（`年报.md` ↔ `年报.pdf`，子目录递归查找）匹配；找不到时再看 DI 转换留下的 `.meta.json` 里的源路径；都没有则该文档不带图，不报错。PDF 页数与 Markdown 页数不一致会打印 `warning`（仍会关联）。已建好的库直接再跑一次 `index D:\corpus_md --pdf-dir D:\corpus_pdf` 即可补关联，不会重建文本。PDF 之后别挪位置（记录的是绝对路径）；挪了就重新跑一次 `--pdf-dir`。
 
 ## 5. 自检与问答
 
@@ -175,6 +176,14 @@ uv run scripts/superindex.py batch D:\q.jsonl --retrieval-only --match passage
 检索前置（默认开）：`ask` / `serve` / `batch` 会先按问题跑 BM25，把 top-5 候选页（文档、页码、章节、片段）拼在问题前交给 Agent；`--no-prefetch` 关闭，`--prefetch-k N` 调整条数（`.env`：`SUPERINDEX_PREFETCH=0`、`SUPERINDEX_PREFETCH_K`）。`batch` 的 `summary.md` 多一列「线索」并统计“候选含答案页但没答对”（模型没用好）与“候选不含答案页”（检索没找到）。`ask -v` 会打印候选。
 
 数值计算：Agent 带 `calculate` 工具（Decimal 精确计算，支持 `pct_change` / `cagr` / `ratio` 和具名变量），系统提示要求增长率、占比、差额、单位换算等一律调用它；调用记录在 `batch` 的工具调用列表里。
+
+PDF 原页截图（默认关，仅用于能看图的模型，如公司网关上的 GPT-4o / GPT-4.1 类部署）：建库时已用 `--pdf-dir` 关联 PDF，然后在 `.env` 设 `SUPERINDEX_PAGE_IMAGE=auto`（或命令行 `--page-image auto`）。
+
+- `auto`：检索前置候选页中，含表格、图（`<figure>`）或文字很少（去标签后 < 300 字符，多为扫描页/图表页）的页，按排名附截图；`always`：候选页按排名都附；两种模式下 Agent 还能调用 `get_page_image(doc_name, page)` 主动要图。每题合计最多 `SUPERINDEX_PAGE_IMAGE_MAX` 张（默认 3），同一页不重复附。
+- 系统提示要求：截图与 Markdown 冲突（表格错列、数字识别错）时以截图为准，并在回答里说明依据的页码。
+- **成本**：每张图约 1–2.5K 输入 token（长边 1600px 的 JPEG，视模型计费方式），3 张图可能让单题 token 翻倍；先用 `auto` 在题集上对比 `off` 的命中率与花费再决定。长边可用 `SUPERINDEX_PAGE_IMAGE_MAX_SIDE` 调小（如 1200）。
+- 截图首次使用时渲染，缓存在文档库 `docs\<id>\images\` 下；渲染失败自动退回纯文本。`ask -v` 打印附了哪些页；`batch` 的 `results.jsonl` 记录每题 `page_images`（页码与来源 auto/always/tool）和 `image_count`，`summary.md` 多一列「附图数」并给出总数。
+- 模型不支持图片时网关会报错（如 `image_url is not supported`），把 `SUPERINDEX_PAGE_IMAGE` 改回 `off` 即可。
 
 一键脚本（建库→跑题集→打印 summary 路径）：
 

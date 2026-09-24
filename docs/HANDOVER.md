@@ -648,3 +648,9 @@ pkill -f "webapp/server.py" && nohup $PY -u webapp/server.py > results/webapp.lo
 2. page / passage 两路结果做 RRF 融合。
 3. 用公司 embedding API 做向量召回，与 BM25 混合；无 reranker，用 RRF 合并排序。
 4. **已完成**：`calculate` 数值计算工具（`superindex/calc.py`，simpleeval 1.0.8 + Decimal），与 `search_pages` 一起注册，系统提示要求算术一律调用；待用真实题集观察调用率与单位换算正确性。
+5. **已完成**：PDF 原页截图附给多模态模型（方案 A，默认关）。
+   - `index --pdf-dir`（`SUPERINDEX_PDF_DIR`）按同名 / `.meta.json` 关联 PDF，绝对路径与页数写入 doc metadata（`pdf_path` / `pdf_pages` / `pdf_stamp`）；旧库再跑一次即只补 metadata。伪分页（无页标记）的 Markdown 不关联。
+   - 页标签 `docs/<id>/page_tags.json`（`has_table` / `has_figure` / `low_text` < 300 字符），旧库懒生成。
+   - 渲染接口 `superindex/page_render.py`（pypdfium2 + Pillow，JPEG q80，长边 1600），缓存 `docs/<id>/images/<长边>/p<N>.jpg`；pypdfium2 / Pillow 已移入主依赖并打进 PyInstaller 包（onedir 91 MB → 106 MB）。
+   - 送图方式（`superindex/image_chat.py`）：PageIndex 的 chat 只收文本，故在外层复用 `local_chat._chat_agent` / `_chat_events_agen` 自建流：检索前置附图放进问题那条 user 消息（`input_image` → Chat Completions `image_url` data URL）；`get_page_image` 工具只回文本，图片由 `RunConfig.call_model_input_filter` 作为紧跟 tool 结果之后的 user 消息插入（OpenAI Chat Completions 的 tool 消息不能带图）。用本地假 OpenAI 服务器验证了 `openai/<model>`+base_url 与 `azure/<deployment>` 两种请求体（`tests/test_page_images.py`）。
+   - 依赖更多 PageIndex 私有接口（`local_chat._chat_agent` / `_run_kwargs` / `_stream_sync` / `_chat_events_agen`），升级 PageIndex 需回归；尚未在真实多模态模型上评测效果与成本。
