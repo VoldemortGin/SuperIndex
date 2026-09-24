@@ -11,7 +11,10 @@
 search scoring, SUPERINDEX_BM25_MATCH; see `superindex.bm25`). `ask`, `serve`
 and `batch` put the top keyword-search pages in front of each question
 (`--no-prefetch` / `--prefetch-k N`, SUPERINDEX_PREFETCH[_K]; see
-`superindex.prefetch`).
+`superindex.prefetch`). `index --pdf-dir DIR` links each Markdown file to its
+PDF; `ask`, `serve` and `batch --page-image auto|always` then show a vision
+model screenshots of the PDF pages (SUPERINDEX_PAGE_IMAGE, default off; see
+`superindex.page_images`).
 
 Models and endpoints come from `.env` (working directory, then the
 executable's folder) or the CLI flags; see `.env.example`.
@@ -61,6 +64,19 @@ def _add_prefetch_flags(ap: argparse.ArgumentParser) -> None:
                     help="pages to prefetch (SUPERINDEX_PREFETCH_K, default 5)")
 
 
+def _add_page_image_flag(ap: argparse.ArgumentParser) -> None:
+    ap.add_argument("--page-image", choices=("off", "auto", "always"),
+                    help="attach PDF page screenshots for a vision model: auto = prefetched "
+                         "pages with tables/figures/little text, always = prefetched pages; "
+                         "both add the get_page_image tool (SUPERINDEX_PAGE_IMAGE, default off)")
+
+
+def _page_image_mode(args: argparse.Namespace) -> str:
+    from superindex import page_images
+
+    return page_images.resolve_mode(getattr(args, "page_image", None))
+
+
 def _prefetch_k(args: argparse.Namespace) -> int:
     from superindex import prefetch
 
@@ -107,6 +123,7 @@ def make_client(settings: LLMSettings, store: Path, instructions: str | None = N
 
 # ───────────────────────────────────────────────────────────── index
 def cmd_index(args: argparse.Namespace) -> int:
+    from superindex import page_images
     from superindex.md_ingest import find_markdown, index_markdown
 
     settings = _settings(args)
@@ -119,8 +136,12 @@ def cmd_index(args: argparse.Namespace) -> int:
     if not files:
         print(f"no Markdown files under {args.path}", file=sys.stderr)
         return 1
+    pdf_dir = args.pdf_dir or os.getenv(page_images.PDF_DIR_ENV, "").strip() or None
+    pdfs = page_images.pdf_index(Path(pdf_dir).expanduser()) if pdf_dir else None
     print(f"store   : {store}")
     print(f"summary : {summary_model or 'off'}")
+    if pdf_dir:
+        print(f"pdfs    : {pdf_dir} ({sum(len(v) for v in (pdfs or {}).values())} found)")
     failed = 0
     for md in files:
         t0 = time.time()
@@ -130,7 +151,8 @@ def cmd_index(args: argparse.Namespace) -> int:
                 res = index_markdown(md, store, summary_model=summary_model,
                                      backend=settings.index_backend(),
                                      concurrency=args.concurrency,
-                                     page_chars=args.page_chars, force=args.force)
+                                     page_chars=args.page_chars, force=args.force,
+                                     pdf=page_images.find_pdf(md, pdfs))
         except Exception as exc:  # noqa: BLE001 - keep going with the next file
             failed += 1
             print(f"  FAIL  {md.name}: {type(exc).__name__}: {exc}", flush=True)
@@ -139,6 +161,10 @@ def cmd_index(args: argparse.Namespace) -> int:
         pages = f"{res.pages} pages" + ("" if res.has_markers else " (pseudo)")
         print(f"  {verb} {res.name} -> {res.doc_id}  {pages}, {res.nodes} nodes"
               f"  ({time.time() - t0:.1f}s)", flush=True)
+        if res.pdf:
+            print(f"        pdf: {res.pdf}", flush=True)
+        for warning in res.warnings:
+            print(f"        warning: {warning}", flush=True)
     return 1 if failed else 0
 
 
@@ -166,14 +192,19 @@ def cmd_ask(args: argparse.Namespace) -> int:
     if args.doc:
         ids = _resolve_docs(client.list_documents(limit=100).get("documents", []), args.doc)
         scope = ids[0] if len(ids) == 1 else ids
-    from superindex import prefetch
+    from superindex import image_chat, page_images, prefetch
 
     message, hits = prefetch.prepare(_store(args), args.question, scope, _prefetch_k(args))
+    session = page_images.new_session(_store(args), _page_image_mode(args))
+    if session is not None:
+        session.attach_prefetch(hits)
     if args.verbose:
         print(f"[prefetch] {prefetch.block(hits) or 'no candidates'}", file=sys.stderr,
               flush=True)
-    stream = client.chat(message, doc_id=scope, stream=True,
-                         reasoning_effort=settings.reasoning_effort)
+        if session is not None:
+            _print_images(session, "prefetch")
+    stream = image_chat.chat(client, message, doc_id=scope,
+                             reasoning_effort=settings.reasoning_effort, session=session)
     for ev in stream.events:
         etype = ev.get("type")
         if etype == "answer":
@@ -182,7 +213,16 @@ def cmd_ask(args: argparse.Namespace) -> int:
             arguments = json.dumps(ev.get("arguments"), ensure_ascii=False)
             print(f"\n[tool] {ev.get('name')} {arguments}", file=sys.stderr, flush=True)
     print()
+    if args.verbose and session is not None:
+        _print_images(session, "total")
     return 0
+
+
+def _print_images(session: Any, when: str) -> None:
+    pages = ", ".join(f"{r['doc_name']} p.{r['page']} ({r['source']})"
+                      for r in session.records())
+    print(f"[page-image] {when}: {pages or 'none'} (mode {session.mode}, "
+          f"max {session.limit})", file=sys.stderr, flush=True)
 
 
 # ───────────────────────────────────────────────────────────── search
@@ -236,6 +276,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     server.corpus_status = corpus_status
     server.REASONING_EFFORT = settings.reasoning_effort
     server.PREFETCH_K = _prefetch_k(args)
+    server.PAGE_IMAGE = _page_image_mode(args)
     print(f"store   : {store}")
     return server.run(args.host, args.port)
 
@@ -262,6 +303,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="simultaneous summary calls (default 8)")
     p.add_argument("--page-chars", type=int, default=4000,
                    help="pseudo-page size for Markdown without page markers")
+    p.add_argument("--pdf-dir", help="folder of the source PDFs, matched to the Markdown by "
+                                     "file name, for page screenshots (SUPERINDEX_PDF_DIR)")
     _add_llm_flags(p)
     p.set_defaults(func=cmd_index)
 
@@ -275,6 +318,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="print prefetched pages and tool calls to stderr")
     _add_match_flag(p)
     _add_prefetch_flags(p)
+    _add_page_image_flag(p)
     _add_llm_flags(p)
     p.set_defaults(func=cmd_ask)
 
@@ -295,6 +339,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--instructions", help="replace the web UI's standing guidance")
     _add_match_flag(p)
     _add_prefetch_flags(p)
+    _add_page_image_flag(p)
     _add_llm_flags(p)
     p.set_defaults(func=cmd_serve)
 
@@ -320,6 +365,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="pages searched per question with --retrieval-only (default 5)")
     _add_match_flag(p)
     _add_prefetch_flags(p)
+    _add_page_image_flag(p)
     _add_llm_flags(p)
     p.set_defaults(func=cmd_batch)
     return ap

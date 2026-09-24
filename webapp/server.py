@@ -51,6 +51,9 @@ REASONING_EFFORT = os.getenv("PAGEINDEX_REASONING_EFFORT", "low").strip() or Non
 # Pages keyword-searched before each question and handed to the agent as
 # hints (superindex.prefetch); `superindex serve` sets it, 0 is off.
 PREFETCH_K = 0
+# PDF page screenshots for a vision model (superindex.page_images): "off",
+# "auto" or "always"; `superindex serve` sets it.
+PAGE_IMAGE = "off"
 
 _client = None
 _client_lock = threading.Lock()
@@ -202,16 +205,23 @@ class Handler(BaseHTTPRequestHandler):
             client = get_client()
             scope = doc_ids[0] if len(doc_ids) == 1 else doc_ids
             message = question
+            from superindex import image_chat, page_images
+
+            session = page_images.new_session(STORE, PAGE_IMAGE)
             if PREFETCH_K:
                 from superindex import prefetch
 
                 message, hits = prefetch.prepare(STORE, question, doc_ids, PREFETCH_K)
-                emit("prefetch", {"candidates": prefetch.candidates(hits)})
+                event = {"candidates": prefetch.candidates(hits)}
+                if session is not None:
+                    session.attach_prefetch(hits)
+                    event["images"] = session.records()
+                emit("prefetch", event)
             # One run per answer; serialize so two browser tabs cannot
             # interleave runs on the same client.
             with _chat_lock:
-                stream = client.chat(message, doc_id=scope, stream=True,
-                                     reasoning_effort=REASONING_EFFORT)
+                stream = image_chat.chat(client, message, doc_id=scope,
+                                         reasoning_effort=REASONING_EFFORT, session=session)
                 for ev in stream.events:
                     etype = ev.get("type")
                     if etype == "answer":

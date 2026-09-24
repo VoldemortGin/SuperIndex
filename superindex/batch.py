@@ -22,6 +22,10 @@ the agent behind its top keyword-search pages; the record keeps them
 (`prefetch`, each judged like `--retrieval-only`) and `prefetch_hit` says
 whether one of them holds the answer, so the summary can tell "search missed
 it" from "found but not used". The rough score still reads only the answer.
+
+With `--page-image auto|always` (`superindex.page_images`) the record lists the
+PDF page screenshots the question was given (`page_images`: document, page and
+source auto/always/tool; `image_count`).
 """
 from __future__ import annotations
 
@@ -38,7 +42,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
-from superindex import bm25, prefetch
+from superindex import bm25, image_chat, page_images, prefetch
 from superindex.runtime import ConfigError, app_dir
 
 RESULTS_FILE = "results.jsonl"
@@ -166,10 +170,12 @@ def _arguments(raw: Any) -> Any:
 
 def run_question(client: Any, q: Question, scope: str | list[str] | None, *,
                  timeout: float, reasoning_effort: str | None = None,
-                 message: str | None = None) -> dict[str, Any]:
-    """Answer one question (sent as `message`, default the question text);
-    never raises. `llm_turns` is an estimate: one turn per batch of tool calls
-    (ended by a tool result or text), plus the final answer turn."""
+                 message: str | None = None,
+                 session: page_images.Session | None = None) -> dict[str, Any]:
+    """Answer one question (sent as `message`, default the question text, with
+    `session`'s page images); never raises. `llm_turns` is an estimate: one
+    turn per batch of tool calls (ended by a tool result or text), plus the
+    final answer turn."""
     answer: list[str] = []
     tool_calls: list[dict[str, Any]] = []
     state: dict[str, Any] = {"turns": 0, "error": None}
@@ -177,8 +183,8 @@ def run_question(client: Any, q: Question, scope: str | list[str] | None, *,
 
     def consume() -> None:
         try:
-            stream = client.chat(message or q.question, doc_id=scope, stream=True,
-                                 reasoning_effort=reasoning_effort)
+            stream = image_chat.chat(client, message or q.question, doc_id=scope,
+                                     reasoning_effort=reasoning_effort, session=session)
             in_tools = False
             for ev in stream.events:
                 if cancel.is_set():
@@ -206,7 +212,7 @@ def run_question(client: Any, q: Question, scope: str | list[str] | None, *,
         state["error"] = f"timeout after {timeout:g}s"
     text = "".join(answer).strip()
     turns = state["turns"] + (1 if text else 0)
-    return {
+    record = {
         "id": q.id, "question": q.question, "doc": q.doc, "expected": q.expected,
         **q.extra,
         "scope": scope, "answer": text, "error": state["error"],
@@ -214,6 +220,10 @@ def run_question(client: Any, q: Question, scope: str | list[str] | None, *,
         "tool_calls": list(tool_calls), "pages_read": pages_read(tool_calls),
         "score": score(q.expected, text),
     }
+    if session is not None:
+        record["page_images"] = session.records()
+        record["image_count"] = len(record["page_images"])
+    return record
 
 
 # ───────────────────────────────────────────────────────────── retrieval only
@@ -382,6 +392,7 @@ def write_summary(records: list[dict[str, Any]], path: Path, meta: dict[str, Any
     errors = sum(1 for r in records if r.get("error"))
     secs = [float(r.get("seconds") or 0) for r in records]
     with_prefetch = any("prefetch" in r for r in records)
+    with_images = any("image_count" in r for r in records)
     lines = [
         f"# 批量问答结果 — {meta.get('started', '')}",
         "",
@@ -393,6 +404,9 @@ def write_summary(records: list[dict[str, Any]], path: Path, meta: dict[str, Any
         (f"- 单题耗时合计：{sum(secs):.1f}s　平均：{(sum(secs) / len(secs) if secs else 0):.1f}s"
          f"　本次运行墙钟：{meta.get('wall_seconds', 0):.1f}s"),
         *_prefetch_lines(records, meta),
+        *([f"- 附图（{meta.get('page_image', '')}）：共 "
+           f"{sum(int(r.get('image_count') or 0) for r in records)} 张"]
+          if with_images else []),
         "",
         ("> 粗评分：期望答案中的每个数字都出现在回答里（1,814 与 1814、38.00 与 38 视为相同）"
          "即算命中；期望答案不含数字时按整句（忽略大小写）包含判断。仅供快速筛查，需人工复核。"
@@ -401,14 +415,16 @@ def write_summary(records: list[dict[str, Any]], path: Path, meta: dict[str, Any
             if with_prefetch else "")),
         "",
         "| # | ID | 问题 | 命中 | 耗时(s) | 轮次 | 读取页码 | " + ("线索 | " if with_prefetch else "")
-        + "错误 |",
-        "|---|---|---|---|---|---|---|" + ("---|" if with_prefetch else "") + "---|",
+        + ("附图数 | " if with_images else "") + "错误 |",
+        "|---|---|---|---|---|---|---|" + ("---|" if with_prefetch else "")
+        + ("---|" if with_images else "") + "---|",
     ]
     for i, r in enumerate(records, start=1):
         lines.append(f"| {i} | {_cell(r.get('id'), 20)} | {_cell(r.get('question'), 60)} "
                      f"| {_hit_mark(r)} | {float(r.get('seconds') or 0):.1f} "
                      f"| {r.get('llm_turns', '')} | {_cell(', '.join(r.get('pages_read') or []), 60)} "
                      + (f"| {_prefetch_mark(r)} " if with_prefetch else "")
+                     + (f"| {r.get('image_count', 0)} " if with_images else "")
                      + f"| {_cell(r.get('error'), 60)} |")
     lines += ["", "## 逐题详情", ""]
     for r in records:
@@ -426,6 +442,11 @@ def write_summary(records: list[dict[str, Any]], path: Path, meta: dict[str, Any
             pages = ", ".join(f"{c['doc_name']}:{c['page']}{' ✓' if c.get('relevant') else ''}"
                               for c in r["prefetch"])
             lines.append(f"**检索线索**：{pages}")
+            lines.append("")
+        if r.get("page_images"):
+            pages = ", ".join(f"{p['doc_name']}:{p['page']}（{p['source']}）"
+                              for p in r["page_images"])
+            lines.append(f"**附图**：{pages}")
             lines.append("")
         lines.append("**回答**：")
         lines.append("")
@@ -479,7 +500,7 @@ def _scope(docs: list[dict[str, Any]], wanted: list[str]) -> list[str]:
 def cmd_batch(args: argparse.Namespace) -> int:
     from pageindex.local_store import DocStore
 
-    from superindex.cli import _prefetch_k, _settings, _store, make_client
+    from superindex.cli import _page_image_mode, _prefetch_k, _settings, _store, make_client
 
     qfile = Path(args.questions).expanduser()
     questions = load_questions(qfile)
@@ -499,6 +520,7 @@ def cmd_batch(args: argparse.Namespace) -> int:
     top_k = max(1, int(getattr(args, "top_k", 5) or 5))
     match = bm25.resolve_match(getattr(args, "match", None))
     prefetch_k = 0 if retrieval else _prefetch_k(args)
+    image_mode = "off" if retrieval else _page_image_mode(args)
     client = None if retrieval else make_client(settings, store, instructions=args.instructions)
     texts: dict[str, list[str]] = {}
 
@@ -518,7 +540,7 @@ def cmd_batch(args: argparse.Namespace) -> int:
         print(f"retrieval : only (no LLM)  match: {match}  top-k: {top_k}", flush=True)
     else:
         print(f"timeout   : {args.timeout:g}s  concurrency: {args.concurrency}  "
-              f"prefetch: {prefetch_k or 'off'}", flush=True)
+              f"prefetch: {prefetch_k or 'off'}  page images: {image_mode}", flush=True)
 
     lock = threading.Lock()
     finished = [0]
@@ -533,9 +555,13 @@ def cmd_batch(args: argparse.Namespace) -> int:
                                        texts=texts)
             else:
                 hits = prefetch.search(store, q.question, scope_ids, prefetch_k)
+                session = page_images.new_session(store, image_mode)
+                if session is not None:
+                    session.attach_prefetch(hits)
                 record = run_question(client, q, scope, timeout=args.timeout,
                                       reasoning_effort=settings.reasoning_effort,
-                                      message=prefetch.augment(q.question, hits))
+                                      message=prefetch.augment(q.question, hits),
+                                      session=session)
                 if prefetch_k:
                     judge, flags = judge_hits(store, q, hits, texts)
                     record["prefetch"] = [{"doc_name": h.doc_name, "page": h.page,
@@ -589,6 +615,7 @@ def cmd_batch(args: argparse.Namespace) -> int:
     write_summary(records, out_dir / SUMMARY_FILE, {
         "started": started, "questions": str(qfile), "store": str(store),
         "chat_model": settings.chat_model, "wall_seconds": wall, "prefetch_k": prefetch_k,
+        "page_image": image_mode,
     })
     errors = sum(1 for r in records if r.get("error"))
     print(f"\n{len(records)} question(s), {errors} error(s), {wall:.1f}s")
