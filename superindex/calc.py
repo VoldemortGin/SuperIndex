@@ -20,7 +20,6 @@ from decimal import ROUND_HALF_UP, Context, Decimal, DecimalException, localcont
 from typing import Any
 
 from avada_eval import DEFAULT_FUNCTIONS
-from avada_eval.decimal_ops import decimal_sum
 from avada_eval.llm import FINANCE_FUNCTIONS, TOOL_DESCRIPTION, evaluate_for_llm
 
 TOOL_NAME = "calculate"
@@ -68,8 +67,6 @@ GUIDANCE = (
 )
 
 CONTEXT = Context(prec=PRECISION, rounding=ROUND_HALF_UP)
-# sum(1, 2, 3) as in the tool description (avada's own sum takes one iterable)
-FUNCTIONS: dict[str, Any] = {"sum": lambda *xs: decimal_sum(xs)}
 FUNCTION_NAMES = frozenset(DEFAULT_FUNCTIONS) | frozenset(FINANCE_FUNCTIONS)
 _ERROR_PREFIX = {
     "DivisionByZero": "division by zero",
@@ -148,9 +145,8 @@ def evaluate(expression: str, variables: dict[str, Any] | None = None) -> dict[s
         names[str(name)] = _number(value, f"variable {name!r}")
 
     try:
-        out = evaluate_for_llm(_preprocess(expression), names, functions=FUNCTIONS,
-                               context=CONTEXT)
-    except Exception as exc:  # noqa: BLE001 — avada lets unexpected (e.g. beartype) errors through
+        out = evaluate_for_llm(_preprocess(expression), names, context=CONTEXT)
+    except Exception as exc:  # noqa: BLE001 — defensive; avada >= 0.1.1 reports errors in `out`
         raise CalcError(f"cannot evaluate: {type(exc).__name__}: {exc}") from None
     if not out.ok:
         prefix = _ERROR_PREFIX.get(out.error_type or "", "cannot evaluate")

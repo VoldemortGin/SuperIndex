@@ -53,6 +53,7 @@ def test_functions() -> None:
     assert value("ratio(1, 4)") == "0.25"
     assert value("avg(1, 2, 3, 4)") == "2.5"
     assert value("sum(1, 2, 3) + max(1, 234) - min(5, 4) + abs(-1)") == "237"
+    assert value("sum(1.5, 2)") == "3.5"
     assert value("max(1,234)") == "1234"  # comma with no spaces: thousands separator
     assert value("1,234.5 + 12,345,678") == "12346912.5"
 
@@ -84,7 +85,9 @@ def test_errors_are_readable() -> None:
                                 ("1 < 2", "not a number"),
                                 ("round", "not a number"),
                                 ("cagr(1, 0, 5)", "positive"),
-                                ("pct_change(1)", "missing")):
+                                ("pct_change(1)", "missing"),
+                                ("pct_change(1)", r"usage: pct_change\(new, old\)"),
+                                ("abs(x=1)", r"^cannot evaluate: abs\(\): ")):
         with pytest.raises(CalcError, match=message):
             evaluate(expression)
 
