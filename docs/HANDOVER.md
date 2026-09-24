@@ -590,7 +590,7 @@ pkill -f "webapp/server.py" && nohup $PY -u webapp/server.py > results/webapp.lo
 | `.env` | ❌ 排除 | **含真实密钥** |
 | `__pycache__` / `.DS_Store` | ❌ 排除 | 缓存与垃圾 |
 | `samples/test_index/` | ✅ 包含（164 KB） | 虽是生成物，但让 `nav/` 能立刻演示 |
-| `.workbuddy-ai/` | ✅ 包含（48 KB） | 项目记忆，含大量决策记录 |
+| `.workbuddy-ai/` | ❌ 排除 | 项目记忆（本地工作笔记，未纳入版本库） |
 
 ### 已完成 / 待办
 
