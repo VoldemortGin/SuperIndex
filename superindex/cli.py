@@ -4,6 +4,7 @@
     python -m superindex ask "What was the 2021 final dividend?" [--doc NAME_OR_ID ...]
     python -m superindex search "final dividend 2021" [--doc NAME_OR_ID ...] [--top-k 5]
     python -m superindex serve [--port 8787] [--store DIR]
+    python -m superindex batch questions.jsonl [--out DIR] [--concurrency 1] [--resume]
 
 Models and endpoints come from `.env` (working directory, then the
 executable's folder) or the CLI flags; see `.env.example`.
@@ -202,6 +203,13 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return server.run(args.host, args.port)
 
 
+# ───────────────────────────────────────────────────────────── batch
+def cmd_batch(args: argparse.Namespace) -> int:
+    from superindex import batch
+
+    return batch.cmd_batch(args)
+
+
 # ───────────────────────────────────────────────────────────── main
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="superindex", description=__doc__.split("\n")[0])
@@ -246,6 +254,24 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--instructions", help="replace the web UI's standing guidance")
     _add_llm_flags(p)
     p.set_defaults(func=cmd_serve)
+
+    p = sub.add_parser("batch", help="answer a question set and write results + summary")
+    p.add_argument("questions", help="question file: .json (scripts/questions.json layout), "
+                                     ".jsonl, .csv (question[,expected,doc,id]) or .txt")
+    p.add_argument("--doc", action="append",
+                   help="document for every question (overrides the file's `doc`; repeatable)")
+    p.add_argument("--store", help="store directory (SUPERINDEX_STORE)")
+    p.add_argument("--out", help="output folder (default results/batch/<timestamp>)")
+    p.add_argument("--concurrency", type=int, default=1,
+                   help="questions answered at once (default 1)")
+    p.add_argument("--limit", type=int, help="only the first N questions")
+    p.add_argument("--timeout", type=float, default=300,
+                   help="seconds per question (default 300)")
+    p.add_argument("--resume", action="store_true",
+                   help="skip questions already answered in --out (default: the latest run)")
+    p.add_argument("--instructions", help="extra standing guidance for the answering agent")
+    _add_llm_flags(p)
+    p.set_defaults(func=cmd_batch)
     return ap
 
 

@@ -1,0 +1,8 @@
+{"id": "S01", "doc": "aia_ar2021_excerpt", "question": "What final dividend per share did the Board recommend for 2021, and what was the total dividend for 2021?", "expected": "108.00 Hong Kong cents per share; total 146.00 Hong Kong cents"}
+{"id": "S02", "doc": "aia_ar2021_excerpt", "question": "What was AIA's value of new business (VONB) in 2021?", "expected": "US$3,366m"}
+{"id": "S03", "doc": "aia_ar2021_excerpt", "question": "What was the Group LCSM cover ratio at 31 December 2021?", "expected": "399 per cent"}
+{"id": "S04", "doc": "aia_ar2021_excerpt", "question": "What was the net profit in 2021 according to the consolidated income statement?", "expected": "7,427"}
+{"id": "S05", "doc": "di_native_excerpt", "question": "2023 年集团新业务价值是多少，增长了多少？", "expected": "4,034 百万美元，增长 33%"}
+{"id": "S06", "doc": "di_native_excerpt", "question": "董事会建议派发的 2023 年末期股息是每股多少港仙？", "expected": "113.75 港仙"}
+{"id": "S07", "doc": "di_native_excerpt", "question": "What was the net profit attributable to shareholders in 2023?", "expected": "US$3,764 million"}
+{"id": "S08", "doc": "di_native_excerpt", "question": "What was free surplus generation in 2023 and 2022?", "expected": "6,240 and 6,191"}
