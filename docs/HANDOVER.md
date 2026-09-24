@@ -644,6 +644,7 @@ pkill -f "webapp/server.py" && nohup $PY -u webapp/server.py > results/webapp.lo
 
 **候选后续**
 
-1. 检索前置：Agent 启动前先跑 BM25，把候选页号/片段注入提示，不依赖模型主动调用工具。
+1. ~~检索前置：Agent 启动前先跑 BM25，把候选页号/片段注入提示，不依赖模型主动调用工具。~~ **已完成**（`superindex/prefetch.py`，默认开，`--no-prefetch` / `--prefetch-k`；`batch` 统计候选是否含答案页）。
 2. page / passage 两路结果做 RRF 融合。
 3. 用公司 embedding API 做向量召回，与 BM25 混合；无 reranker，用 RRF 合并排序。
+4. **已完成**：`calculate` 数值计算工具（`superindex/calc.py`，simpleeval 1.0.8 + Decimal），与 `search_pages` 一起注册，系统提示要求算术一律调用；待用真实题集观察调用率与单位换算正确性。
