@@ -416,8 +416,12 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("index_dir")
     ap.add_argument("question")
-    ap.add_argument("--model", default=llm.DEFAULT_MODEL)
-    ap.add_argument("--effort", default=llm.DEFAULT_EFFORT)
+    ap.add_argument("--model", default=llm.DEFAULT_MODEL,
+                    help="LiteLLM model (default: NAV_MODEL, else "
+                         "SUPERINDEX_CHAT_MODEL, else deepseek/deepseek-flash)")
+    ap.add_argument("--effort", default=llm.DEFAULT_EFFORT,
+                    help="reasoning_effort (default: NAV_REASONING_EFFORT, else "
+                         "'none'; empty sends none)")
     ap.add_argument("--max-files", type=int, default=5)
     ap.add_argument("--max-sections", type=int, default=6)
     ap.add_argument("--show-content", action="store_true")

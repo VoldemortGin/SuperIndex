@@ -308,7 +308,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--concurrency", type=int, default=8,
                    help="simultaneous summary calls (default 8)")
     p.add_argument("--page-chars", type=int, default=4000,
-                   help="pseudo-page size for Markdown without page markers")
+                   help="pseudo-page size for Markdown without page markers (default 4000)")
     p.add_argument("--pdf-dir", help="folder of the source PDFs, matched to the Markdown by "
                                      "file name, for page screenshots (SUPERINDEX_PDF_DIR)")
     _add_llm_flags(p)
@@ -339,8 +339,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_search)
 
     p = sub.add_parser("serve", help="start the web chat UI over the store")
-    p.add_argument("--port", type=int, default=8787)
-    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8787, help="(default 8787)")
+    p.add_argument("--host", default="127.0.0.1", help="(default 127.0.0.1)")
     p.add_argument("--store", help="store directory (SUPERINDEX_STORE)")
     _add_instructions_flags(p)
     _add_match_flag(p)

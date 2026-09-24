@@ -3,7 +3,7 @@
 `superindex` 把 Azure DI 产出的 Markdown 建成 SuperIndex 文档库（目录树 + BM25），并提供问答（`ask`）和网页界面（`serve`）。
 这里的脚本把它打成**不需要 Python** 的可执行程序，面向离线 Windows 服务器 + 本机 Ollama。
 不需要单文件 / 免 Python 的 exe 时，更简单的是 `pip install superindex`（或 `uv tool install superindex`）。
-不打包、直接用 Python 源码运行：见 [`docs/windows-quickstart.md`](../docs/windows-quickstart.md)。
+不打包、直接用 Python 源码运行：见 [`docs/windows-quickstart.md`](https://github.com/VoldemortGin/SuperIndex/blob/main/docs/windows-quickstart.md)。
 
 ## 1. 在联网的 Windows 电脑上打包
 
@@ -31,7 +31,7 @@ uv export --frozen --no-default-groups --group build --no-hashes --no-emit-proje
 ```
 
 **onedir（默认）还是 onefile**：默认 onedir（`superindex\superindex.exe` + `_internal\`）。
-启动快（onefile 每次启动都要把约 105 MB 解压到 `%TEMP%`，本机实测 `--help` 约 12 秒 vs onedir 0.1 秒）、杀软误报少、`%TEMP%` 受限的服务器上也能跑。
+启动快（onefile 每次启动都要把约 107 MB 解压到 `%TEMP%`，启动明显慢于 onedir）、杀软误报少、`%TEMP%` 受限的服务器上也能跑。
 只有"必须是单个 exe"时才用 `-OneFile`。
 
 ## 2. 离线部署
@@ -77,6 +77,6 @@ superindex.exe serve --host 0.0.0.0 --port 8787       # 局域网访问（注意
   `serve` 运行时也尽量不要对同一 store 执行 `index`。
 - 只支持 Markdown 输入（引擎的 PDF 解析栈已从包中剔除）；PDF 需先用 Azure DI 转成 Markdown。
   包内带 pypdfium2（含 libpdfium）+ Pillow，仅用于把关联的源 PDF 页渲染成截图给多模态模型（`index --pdf-dir`、`--page-image auto`，见 `.env.example`），
-  为此包体积增加约 15 MB（macOS arm64 实测：onedir 91 MB → 106 MB，zip 46 MB → 53 MB）。
+  为此包体积增加约 16 MB（macOS arm64 实测：onedir 约 107 MB，zip 约 54 MB）。
 - 杀毒软件可能拦截或隔离新生成的 exe，必要时把解压目录加入白名单。
 - 包内 Windows 版只能在 Windows 上构建；Windows 7 / Server 2008 不受支持（Python 3.11+ 要求 Windows 8.1 / Server 2012 R2 以上）。

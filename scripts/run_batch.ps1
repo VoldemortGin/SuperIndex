@@ -2,7 +2,8 @@
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\run_batch.ps1          # the two sample .md + sample questions
 #   powershell -ExecutionPolicy Bypass -File scripts\run_batch.ps1 -Markdown D:\corpus_md -Questions D:\q.jsonl
-#   powershell -ExecutionPolicy Bypass -File scripts\run_batch.ps1 -Summary -Store D:\store -Extra "--concurrency","2"
+#   powershell -ExecutionPolicy Bypass -Command "& .\scripts\run_batch.ps1 -Summary -Store D:\store -Extra '--concurrency','2'"
+#   (-Extra needs -Command: with -File several values arrive as one argument)
 #
 # -Summary builds the index with LLM node summaries (slower); default is --no-summary.
 # Output: results\batch\<timestamp>\summary.md and results.jsonl.

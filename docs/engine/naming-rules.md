@@ -1,9 +1,14 @@
 # PageIndex naming rules v1
 
-Chat, Compute and the Python SDK share this contract. The byte-identical
-`naming-v1.json` fixtures run in Vitest and pytest; update all three copies
-when changing the contract. Names preserve case. Existing duplicate-name
-scopes and database comparison behavior are unchanged.
+> **Reference only.** This is the upstream PageIndex naming contract, kept for
+> reference. superindex implements only the local allocation in
+> `superindex/engine/naming.py` (used by the local store and Markdown
+> ingestion). Upstream's Chat, Compute, cloud SDK, folders, `upload-url` and
+> rollout do not exist here; the shared `naming-v1.json` fixtures (run in
+> upstream's Vitest and pytest suites) are not part of this repository.
+
+Names preserve case. Existing duplicate-name scopes and comparison behavior
+are unchanged.
 
 ## New names
 
@@ -34,30 +39,21 @@ label here, not a security mechanism. A duplicate adds `_1`, `_2`, etc.
 before the extension. Allocators may shorten again to stay within the
 180-byte budget; a short numeric suffix exceeding that budget is also allowed.
 Each backend keeps its existing collision-attempt limit.
-The allocating backend returns the actual final name alongside its upload
-URL or document ID. Chat and cloud SDK callers use that response unchanged.
-The local SDK is its own backend and performs the same allocation locally.
-The cloud SDK applies the same idempotent sanitization before multipart
-encoding so header escaping cannot alter the name. The backend still
-validates the name and allocates the final collision suffix.
 
-## Folder creation and rename
+In superindex the local store is its own allocator and records the final
+name with the document ID; everything runs locally through
+`superindex/engine/naming.py`. The engine's PDF client (`local_api.py`)
+sanitizes with `sanitize_filename` and adds `_1` … `_99` with
+`truncate_filename`. `superindex index` (`md_ingest.py`) sanitizes the same
+way, but re-indexing a file of the same name replaces the earlier copy
+instead of adding a suffix.
 
-Clients validate without rewriting the request. The backend normalizes
-Unicode and spaces, then rejects invalid characters, reserved names
-or excessive byte length with an actionable error. Never turn `/Research/`
-into `Research`. Check duplicates using the normalized name before saving.
-ZIP import reports invalid folder entries; it does not silently rename their
-path components. Generated ZIP root folder names follow the upload rules.
+(Upstream's folder creation/rename rules are omitted: superindex has no
+folders.)
 
-## Reading and rollout
+## Reading
 
 Read assigned names literally. Apply no new cleaning, truncation or case
 folding to persisted names or to a final upload name submitted for processing.
 At the processing boundary, still reject path separators, controls and `.`/`..`
 so the name remains one path component. Existing names are not migrated.
-
-Deploy Compute first (through dev verification), then Chat and the SDK.
-Compute's internal `/files/upload-url` response becomes
-`{ "url": "...", "headers": {}, "name": "final-name.pdf" }` for both S3 and
-Azure. Consumers must use `name`, not reconstruct it from the input or URL.

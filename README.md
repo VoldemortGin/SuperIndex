@@ -53,7 +53,7 @@ SUPERINDEX_API_KEY_OVERRIDE=ollama
 SUPERINDEX_REASONING_EFFORT=
 ```
 
-没有配置模型时不会回落到任何云端模型，命令会直接报错并提示该设置哪个变量。
+`superindex` 的各子命令在没有配置模型时不会回落到任何云端模型，会直接报错并提示该设置哪个变量。例外是仓库内的两级导航 `superindex.nav`（见文末「两级导航」）：它有自己的默认模型 `deepseek/deepseek-flash`。
 
 ## 用法
 
@@ -261,4 +261,6 @@ uv run python -m superindex.nav.build ./corpus_md --out ./corpus_index --summari
 uv run python -m superindex.nav.route ./corpus_index "港湾人寿 2022 年的每股股息是多少？" --show-content
 ```
 
-配置 Azure DI 后 `superindex.nav.build` 也可直接吃 PDF（启动时打印所用抽取器，`--extractor {auto,azure-di,text-layer}` 可强制指定）。详见 [superindex/nav/README.md](https://github.com/VoldemortGin/SuperIndex/blob/main/superindex/nav/README.md)。
+`superindex.nav.build` 也可直接吃 PDF（启动时打印所用抽取器，`--extractor {auto,azure-di,text-layer}` 可强制指定）：配置了 Azure DI 时得到带标题的章节树，否则用 PDF 文本层（PyPDF2）每页一个节点。
+
+模型：nav 有自己的一套取值，只借用 `SUPERINDEX_CHAT_MODEL`。模型取 `--model` > `NAV_MODEL` > `SUPERINDEX_CHAT_MODEL` > 兜底 `deepseek/deepseek-flash`；推理强度取 `route --effort` > `NAV_REASONING_EFFORT` > 默认 `none`（`build` 没有 `--effort`，只读环境变量）；用网关 / Ollama 上的非推理模型时要设 `NAV_REASONING_EFFORT=`（空值即不发送），否则 LiteLLM 会报 `UnsupportedParamsError`。它**不读** `SUPERINDEX_BASE_URL` / `SUPERINDEX_API_KEY_OVERRIDE`，网关地址与 key 要用 LiteLLM 自己的变量（如 `OPENAI_API_BASE` / `OPENAI_API_KEY`）。详见 [superindex/nav/README.md](https://github.com/VoldemortGin/SuperIndex/blob/main/superindex/nav/README.md)。

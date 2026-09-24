@@ -1,5 +1,7 @@
 # 交接文档 — PageIndex × AIA 财报检索项目
 
+> **阅读指引**：§一–§九（及其后 §十、附录、「2026-09-23 进展」）为 2026-09-20/23 的历史记录，其中的路径、命令与状态已过时；现行用法见 `README.md`、`CHANGELOG.md` 与文末 0.1.x 各节。
+
 > 面向接手同事。读完这份文档 + `README.md` + `nav/README.md`，
 > 应该能独立跑起来、看懂每个设计决策的理由、并知道坑在哪。
 
@@ -726,6 +728,11 @@ uvx twine upload dist/*      # 需要 PyPI token（TWINE_USERNAME=__token__ / TW
 
 ---
 
+## 0.1.1 更新
+
+- 0.1.1 的完整变更见 `CHANGELOG.md`。要点：删除 VectifyAI 托管云客户端与 MCP bridge（引擎只保留本地模式）；superindex 侧原先依赖的 `_tool_specs` / `_resolve_document` / `_chat_agent` 等引擎私有接口已改为正式扩展点（`SuperIndexClient(tools=...)`、`chat(..., extras=ChatExtras(...))`、`page_text_extractor=`、公开的 `agent_tools.resolve_document`），见 `docs/engine/UPSTREAM.md`。上文 2026-09-23 段落里"依赖 PageIndex 私有接口"的说法已不再成立。
+
 ## 0.1.2 更新（未发布）
 
 - 源码入口薄壳 `scripts/superindex.py` 改名为 `scripts/si.py`：原名与包同名，运行 `scripts/` 下其他脚本时会遮蔽 `superindex` 包（报 `'superindex' is not a package`）。上文各段里的 `uv run scripts/superindex.py ...` 现在一律写作 `uv run python scripts/si.py ...`（依赖 `uv sync` 以 editable 方式安装的包）；其余脚本同样用 `uv run python scripts/<name>.py` 运行。
+- 文档与帮助文字修正：README / `.env.example` 写明 `superindex.nav` 与部分实验脚本有各自的默认模型（nav 兜底 `deepseek/deepseek-flash`，不读 `SUPERINDEX_BASE_URL`）；nav 的 PDF 抽取说明改为 Azure DI → 文本层；quickstart 的样例批量题集补索引第二份样例；打包体积按实测更新；`docs/engine/naming-rules.md` 标注为上游参考；CLI `--help` 补默认值；网页文档计数文字修正。

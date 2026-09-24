@@ -228,7 +228,7 @@ async function loadStatus(){
     const d = await r.json();
     DOCS = d.indexed || [];
     $('#modelPill').textContent = d.chat_model || '—';
-    $('#docPill').textContent = `已索引 ${DOCS.length}/${d.total_pdfs}`;
+    $('#docPill').textContent = `已索引 ${DOCS.length} 份`;
     const pend = d.pending || [];
     const pp = $('#pendPill');
     if (pend.length){ pp.style.display=''; pp.textContent = `${pend.length} 份索引中`; }

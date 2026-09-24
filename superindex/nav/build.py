@@ -397,13 +397,16 @@ def main() -> int:
     ap.add_argument("--summarize-files", action="store_true")
     ap.add_argument("--summarize-chapters", action="store_true")
     ap.add_argument("--force", action="store_true", help="recompute existing summaries")
-    ap.add_argument("--model", default=llm.DEFAULT_MODEL)
+    ap.add_argument("--model", default=llm.DEFAULT_MODEL,
+                    help="LiteLLM model for summaries (default: NAV_MODEL, else "
+                         "SUPERINDEX_CHAT_MODEL, else deepseek/deepseek-flash)")
     ap.add_argument("--workers", type=int, default=6)
     ap.add_argument("--extractor", choices=["auto", "azure-di", "text-layer"],
                     default="auto",
                     help="PDF text extractor. 'auto' (default) uses Azure "
                          "Document Intelligence when AZURE_DI_ENDPOINT and "
-                         "AZURE_DI_KEY are set in .env, else the PDF bookmarks.")
+                         "AZURE_DI_KEY are set in .env, else the PDF text layer "
+                         "(PyPDF2).")
     args = ap.parse_args()
 
     # Resolve the extraction backend once, up front, and say which one it is.

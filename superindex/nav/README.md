@@ -33,6 +33,20 @@ $PY -m superindex.nav.route index/ "..." --show-content      # 附章节原文
 $PY -m superindex.nav.route index/ "..." --json              # 机器可读
 ```
 
+## 模型
+
+nav 自带一套模型取值，**不走** `superindex` 命令的 `--chat-model` / `--base-url` 那套配置：
+
+| 项 | 取值顺序 |
+|---|---|
+| 模型 | `--model`（build / route 都有）> `NAV_MODEL` > `SUPERINDEX_CHAT_MODEL` > 兜底 `deepseek/deepseek-flash` |
+| 推理强度 | `route --effort` > `NAV_REASONING_EFFORT` > 默认 `none`；`build` 没有 `--effort`，只读环境变量。设为空值则不发送该参数（网关 / Ollama 上的非推理模型必须这样设，否则 LiteLLM 报 `UnsupportedParamsError`） |
+
+- **不读** `SUPERINDEX_BASE_URL` / `SUPERINDEX_API_KEY_OVERRIDE`。网关地址与 key 用 LiteLLM 自己的环境变量，
+  如 `openai/<模型名>` 配 `OPENAI_API_BASE`（带 `/v1`）与 `OPENAI_API_KEY`；`.env` 同样会被读取。
+- 没配任何模型时会用兜底的 `deepseek/deepseek-flash`（需要 `DEEPSEEK_API_KEY`），这与 `superindex` 命令"未配模型即报错"不同。
+- 只有步骤 1（结构索引）不调用模型；`route` 每次查询都会调用模型。
+
 步骤 2/3 是**增量**的：文件大小与 mtime 未变且已有对应摘要时直接跳过。
 内容变了才会重建该文件的章节树（其旧章节摘要随之失效）。
 新增文件自动挂进索引，删除的文件自动移除。
@@ -71,7 +85,7 @@ index/
   "children": [] }
 ```
 
-`start` / `end` 对 markdown 是**行号**，对 PDF 是**页码**。取正文时按这个区间切片。
+`start` / `end` 是源文本的**行号**（PDF 是抽取出的文本的行号；文本层路径下章节标题为 `Page N`）。取正文时按这个区间切片。
 
 ## 三个关键设计
 
@@ -124,8 +138,9 @@ index/
 
 - **章节级摘要需要 LLM**，上千文件的语料是一次性成本。没有摘要时章节定位
   明显变弱（回退到词元匹配）。
-- **PDF 只走书签**。没有内嵌书签的 PDF 拿不到章节树，退化成整份文件一个节点。
-  需要的话接 `superindex.engine.flash` 模式补上。
+- **PDF 的章节树取决于抽取器**。配置了 Azure Document Intelligence（`AZURE_DI_ENDPOINT` + `AZURE_DI_KEY`）时
+  得到带标题的章节树；否则用 PDF 文本层（PyPDF2），没有标题，每页一个节点（标题 `Page N`），粗但每页都可达。
+  `--extractor {auto,azure-di,text-layer}` 可强制指定（默认 `auto`）。扫描件没有文本层，只能走 Azure DI。
 - **目录结构本身的质量决定上限**。如果语料是一坨平铺的几千个文件（没有子目录），
   第 1 级的目录树退化成一次列几千个文件名 —— 这时应先做一层目录治理，
   或改用 `_descend_dirs` 的批处理策略。

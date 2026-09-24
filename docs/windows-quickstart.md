@@ -171,6 +171,8 @@ uv run python scripts/si.py serve --port 8787                        # 浏览器
 ## 6. 批量问答（batch）
 
 ```powershell
+# 样例题集用到两份样例文档：除 §4 的 di_native_excerpt.md 外，再索引 aia_ar2021_excerpt.md
+uv run python scripts/si.py index samples\aia_ar2021_excerpt.md --no-summary
 uv run python scripts/si.py batch samples\questions_sample.jsonl
 uv run python scripts/si.py batch D:\my_questions.csv --concurrency 2 --timeout 300
 uv run python scripts/si.py batch D:\q.jsonl --doc HarbourLife --limit 5   # 题集 doc 与库内文档名不一致时用 --doc 统一指定
@@ -217,7 +219,9 @@ PDF 原页截图（默认关，仅用于能看图的模型，如公司网关上�
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\run_batch.ps1
-powershell -ExecutionPolicy Bypass -File scripts\run_batch.ps1 -Markdown D:\corpus_md -Questions D:\q.jsonl -Extra "--concurrency","2"
+powershell -ExecutionPolicy Bypass -File scripts\run_batch.ps1 -Markdown D:\corpus_md -Questions D:\q.jsonl
+# 要用 -Extra 给 batch 传多个参数时改用 -Command（-File 方式无法传数组，多个值会并成一个参数）
+powershell -ExecutionPolicy Bypass -Command "& .\scripts\run_batch.ps1 -Markdown D:\corpus_md -Questions D:\q.jsonl -Extra '--concurrency','2'"
 ```
 
 ## 7. 常见问题

@@ -55,7 +55,8 @@ def main() -> int:
         docs = metas.get("documents", metas) if isinstance(metas, dict) else metas
         doc_ids = [d["id"] for d in docs]
     if not doc_ids:
-        print("No documents in the local store. Run scripts/03_index_with_llm.py first.",
+        print(f"No documents in {args.storage_path}. Index Markdown into it first: "
+              f"uv run superindex index <file-or-folder> --store {args.storage_path}",
               file=sys.stderr)
         return 1
 
