@@ -1,32 +1,71 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
 [project]
 name = "superindex"
 version = "0.1.0"
-description = "PageIndex question answering over Azure DI Markdown"
+description = "Vectorless, page-cited question answering over long financial reports (Azure DI Markdown → tree index → LLM agent)"
 readme = "README.md"
-requires-python = ">=3.11,<3.13"
-# Runtime dependencies of superindex / webapp / nav and the vendored PageIndex/
-# (Markdown path; pypdfium2 + Pillow only render PDF page screenshots,
-# superindex/page_render.py). Pinned to the tested versions; uv.lock pins
-# everything else.
-dependencies = [
-    "litellm==1.97.0",
-    "openai==2.54.0",
-    "openai-agents==0.20.0",
-    "mcp==2.2.0",
-    "PyPDF2==3.0.1",
-    "python-dotenv==1.2.2",
-    "PyYAML==6.0.2",
-    "regex==2026.9.10",
-    "requests==2.34.2",
-    "sortedcontainers==2.4.0",
-    "tiktoken==0.14.0",
-    "urllib3==2.8.0",
-    "colorama==0.4.6; sys_platform == 'win32'",
-    "pywin32==311; sys_platform == 'win32'",
-    "pypdfium2==5.13.0",
-    "Pillow==12.3.0",
-    "avada-eval>=0.1.0,<0.2",
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "lin han", email = "mn2895566@gmail.com" }]
+keywords = ["rag", "retrieval", "llm", "document-qa", "financial-reports", "vectorless", "tree-index", "bm25"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Environment :: Web Environment",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Natural Language :: Chinese (Simplified)",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Text Processing :: Indexing",
 ]
+# Runtime dependencies of superindex (engine, nav, webapp, extractors).
+# Ranges, not pins, so the package installs next to other tools; uv.lock pins
+# the tested set, and packaging/requirements-bundle.txt is exported from it.
+# Fast-moving / 0.x libraries are capped at the next minor release.
+dependencies = [
+    "litellm>=1.97.0,<1.98",
+    "openai>=2.54.0,<3",
+    "openai-agents>=0.20.0,<0.21",
+    "mcp>=2.2.0,<3",
+    "avada-eval>=0.1.1,<0.2",
+    "httpx>=0.28.1,<1",
+    "PyPDF2>=3.0.1,<4",
+    "pypdfium2>=5.13.0,<6",
+    "Pillow>=10.0,<13",
+    "python-dotenv>=1.0,<2",
+    "PyYAML>=6.0,<7",
+    "regex>=2024.0.0",
+    "requests>=2.28,<3",
+    # MCP retries use Retry(allowed_methods=...), added in urllib3 1.26.
+    "urllib3>=1.26,<3",
+    "sortedcontainers>=2.4,<3",
+    "tiktoken>=0.14.0,<0.15",
+    "colorama>=0.4.6,<0.5; sys_platform == 'win32'",
+    "pywin32>=311; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+# Engine integrations that the superindex CLI never uses.
+anthropic = ["anthropic>=0.108.0"]
+claude = ["claude-agent-sdk>=0.1.53"]
+
+[project.scripts]
+superindex = "superindex.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/VoldemortGin/SuperIndex"
+Repository = "https://github.com/VoldemortGin/SuperIndex"
+Issues = "https://github.com/VoldemortGin/SuperIndex/issues"
 
 [dependency-groups]
 dev = [
@@ -37,22 +76,20 @@ build = [
     "pyinstaller==6.22.3",
     "pyinstaller-hooks-contrib==2026.7",
 ]
-# Vendored PageIndex installed editable (its PDF stack, pypdfium2 + Pillow, is
-# in the main dependencies), for the scripts/0x_* experiments and standalone
-# webapp/server.py. Never in the bundle (scripts/superindex.py and the
-# PyInstaller spec use PageIndex/ from the path).
-pageindex = [
-    "pageindex",
-]
 
 [tool.uv]
-# Not an installable package: run the CLI via `uv run scripts/superindex.py`,
-# which puts the repo root on sys.path; superindex/__init__.py then falls back
-# to the vendored PageIndex/.
-package = false
-# `uv sync` / `uv run` install every dependency group (dev, pageindex, build);
-# the bundle build opts out with --no-default-groups --group build.
+# `uv sync` / `uv run` install every dependency group (dev, build); the
+# bundle build opts out with --no-default-groups --group build.
 default-groups = "all"
 
-[tool.uv.sources]
-pageindex = { path = "PageIndex", editable = true }
+[tool.hatch.build]
+exclude = ["__pycache__", "*.py[cod]", "superindex/engine/flash/assets"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["superindex"]
+
+[tool.hatch.build.targets.sdist]
+# The package plus README/LICENSE/NOTICE (added automatically; hatchling
+# always adds .gitignore too). tests/ needs samples/ and scripts/, which are
+# repository-only, so it stays out.
+include = ["/superindex", "/pyproject.toml", "/README.md"]

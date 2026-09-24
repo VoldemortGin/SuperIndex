@@ -12,19 +12,19 @@ from pathlib import Path
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
 
 ROOT = Path(SPECPATH).resolve().parent
-PAGEINDEX = ROOT / "PageIndex"
+PKG = ROOT / "superindex"
 ONEFILE = os.environ.get("SUPERINDEX_ONEFILE", "").strip() == "1"
 
-# Only the Markdown path ships: PageIndex's PDF parsing (pageindex.flash) and
-# citation highlighting (pageindex.imaging), litellm's proxy server and its
+# Only the Markdown path ships: the engine's PDF parsing (superindex.engine.flash)
+# and citation highlighting (superindex.engine.imaging), litellm's proxy server and its
 # optional Rust OCR bridge (loaded behind try/except ImportError) are never
 # reached. pypdfium2 (its hooks collect libpdfium) and Pillow do ship: they
 # render PDF page screenshots (superindex.page_render).
-PDF_ONLY = ("pageindex.flash", "pageindex.imaging")
+PDF_ONLY = ("superindex.engine.flash", "superindex.engine.imaging")
 LITELLM_UNUSED = ("litellm.proxy", "litellm.rust_bridge._native")
 
 
-def _keep_pageindex(name: str) -> bool:
+def _keep_engine(name: str) -> bool:
     return not name.startswith(PDF_ONLY)
 
 
@@ -33,8 +33,8 @@ def _keep_litellm(name: str) -> bool:
 
 
 datas = [
-    (str(ROOT / "webapp" / "static"), "webapp/static"),
-    (str(PAGEINDEX / "pageindex" / "config.yaml"), "pageindex"),
+    (str(PKG / "webapp" / "static"), "superindex/webapp/static"),
+    (str(PKG / "engine" / "config.yaml"), "superindex/engine"),
 ]
 # Tokenizer files (tiktoken cl100k/o200k encodings, keyed by their URL hash —
 # litellm points TIKTOKEN_CACHE_DIR at them, so no download) and the offline
@@ -54,7 +54,7 @@ hiddenimports = [
     "tiktoken_ext",
     "tiktoken_ext.openai_public",
     "agents.extensions.models.litellm_model",
-    "webapp.server",
+    "superindex.webapp.server",
     "superindex.cli",
     "superindex.md_ingest",
     "superindex.bm25",
@@ -67,13 +67,13 @@ hiddenimports = [
     "superindex.image_chat",
     "PIL.Image",
     "PIL.JpegImagePlugin",
-    "nav.build",
-    "nav.store",
-    "nav.llm",
+    "superindex.nav.build",
+    "superindex.nav.store",
+    "superindex.nav.llm",
 ]
-# pageindex/__init__ and litellm load most modules lazily (module __getattr__,
+# superindex.engine/__init__ and litellm load most modules lazily (module __getattr__,
 # string imports), which static analysis cannot follow.
-hiddenimports += collect_submodules("pageindex", filter=_keep_pageindex)
+hiddenimports += collect_submodules("superindex.engine", filter=_keep_engine)
 hiddenimports += collect_submodules("litellm", filter=_keep_litellm)
 if sys.platform == "win32":
     # mcp.os.win32.utilities imports these unguarded at module level on Windows.
@@ -87,7 +87,7 @@ excludes = [
 
 a = Analysis(
     [str(ROOT / "superindex" / "__main__.py")],
-    pathex=[str(ROOT), str(PAGEINDEX)],
+    pathex=[str(ROOT)],
     datas=datas,
     hiddenimports=hiddenimports,
     excludes=excludes,

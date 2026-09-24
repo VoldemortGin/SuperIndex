@@ -2,21 +2,9 @@
 # .env holds a real API key. Never commit it; use .env.example as the template.
 .env
 
-# ─── vendored upstream engine ──────────────────────────────────────────────
-# PageIndex is vendored (not a submodule) so one clone gets a working tree.
-# Only the package and the build files are kept; the bulky extras below are
-# upstream's own sample material and are not needed to run anything.
-# Provenance and the update procedure are in PageIndex/UPSTREAM.md.
-PageIndex/.git/
-PageIndex/.github/
-PageIndex/examples/
-PageIndex/assets/
-PageIndex/cookbook/
-PageIndex/tests/
-
 # ─── source PDFs ───────────────────────────────────────────────────────────
-# ~27 MB, fetched by data/aia_reports/download.sh (README §0).
-data/aia_reports/*.pdf
+# Source PDFs under data/ are fetched by the download script next to them.
+data/**/*.pdf
 
 # ─── generated outputs ─────────────────────────────────────────────────────
 # Everything under results/ is reproducible from the scripts. The PageIndex
@@ -24,6 +12,8 @@ data/aia_reports/*.pdf
 # are build output and do not belong in git.
 results/*
 !results/.gitkeep
+# Default store of `superindex` run from the repository root.
+superindex_store/
 
 # ─── python ────────────────────────────────────────────────────────────────
 __pycache__/
@@ -55,5 +45,3 @@ env/
 *.tmp
 *.bak
 
-# upstream editor/agent config — not needed
-PageIndex/.claude/
