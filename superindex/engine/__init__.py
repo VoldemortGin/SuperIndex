@@ -1,9 +1,11 @@
 """SuperIndex engine: tree indexing and the local chat agent (derived from VectifyAI/PageIndex; see NOTICE)."""
 from typing import TYPE_CHECKING as _TYPE_CHECKING
 
+from .agent_tools import AgentTool
 from .chat_stream import ChatStream
 from .client import SuperIndexClient, PageIndexCloudClient, SuperIndexLocalClient
 from .errors import SuperIndexAPIError
+from .local_chat import ChatExtras
 from .types import (ChatConfig, ChatProcessOptions, CloudIndexConfig,
                     IndexConfig, LocalIndexConfig)
 
@@ -18,7 +20,7 @@ __all__ = [
     "SuperIndexClient", "PageIndexCloudClient", "SuperIndexLocalClient",
     "SuperIndexAPIError",
     "IndexConfig", "CloudIndexConfig", "LocalIndexConfig", "ChatConfig",
-    "ChatProcessOptions", "ChatStream",
+    "ChatProcessOptions", "ChatStream", "AgentTool", "ChatExtras",
     "page_index", "page_index_main", "page_index_flash",
     "optimize_tree", "md_to_tree", "highlight_region",
 ]

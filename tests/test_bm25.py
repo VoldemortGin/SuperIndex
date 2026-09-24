@@ -191,17 +191,10 @@ def test_search_cli(store: Path) -> None:
 
 
 # ───────────────────────────────────────────────────────────── agent tool
-@pytest.fixture()
-def installed(monkeypatch: pytest.MonkeyPatch) -> None:
-    from superindex.engine import agent_tools
-    monkeypatch.setattr(agent_tools, "_tool_specs", agent_tools._tool_specs)
-    agent_search.install()
-    agent_search.install()                                    # idempotent
-
-
 def _client(store: Path) -> Any:
     from superindex.engine import SuperIndexClient
-    return SuperIndexClient(chat_model="openai/offline-test", storage_path=str(store))
+    return SuperIndexClient(chat_model="openai/offline-test", storage_path=str(store),
+                            tools=agent_search.tools())
 
 
 def _call(specs: list[Any], arguments: dict[str, Any]) -> tuple[dict[str, Any], bool]:
@@ -210,7 +203,7 @@ def _call(specs: list[Any], arguments: dict[str, Any]) -> tuple[dict[str, Any], 
     return json.loads(blocks[0]["text"]), is_error
 
 
-def test_tool_is_registered_and_scoped(store: Path, installed: None) -> None:
+def test_tool_is_registered_and_scoped(store: Path) -> None:
     from superindex.engine import agent_tools
 
     client = _client(store)
@@ -237,7 +230,7 @@ def test_tool_is_registered_and_scoped(store: Path, installed: None) -> None:
     assert err and payload["errorCode"] == "INVALID_INPUT"
 
 
-def test_openai_agent_gets_the_tool(store: Path, installed: None) -> None:
+def test_openai_agent_gets_the_tool(store: Path) -> None:
     from superindex.engine.local_chat import _openai_agent
 
     agent = _openai_agent(_client(store), "chat", "openai/offline-test", "x", None, None,
@@ -245,19 +238,19 @@ def test_openai_agent_gets_the_tool(store: Path, installed: None) -> None:
     assert {"search_pages", "calculate"} <= {t.name for t in agent.tools}
 
 
-def test_make_client_installs_tool_and_guidance(store: Path,
-                                               monkeypatch: pytest.MonkeyPatch) -> None:
+def test_make_client_registers_tools_and_guidance(store: Path) -> None:
     from superindex.cli import make_client
     from superindex.engine import agent_tools
     from superindex.runtime import LLMSettings
 
-    monkeypatch.setattr(agent_tools, "_tool_specs", agent_tools._tool_specs)
     settings = LLMSettings(None, "openai/offline-test", None, None, None)
     client = make_client(settings, store, instructions="Answer in Chinese.")
     assert {"search_pages", "calculate"} <= {s[0] for s in agent_tools._tool_specs(client)}
     base = agent_tools._base_instructions(client)
     assert "Answer in Chinese." in base and agent_search.GUIDANCE in base
     assert calc.GUIDANCE in base
+    assert base.index("Answer in Chinese.") < base.index(agent_search.GUIDANCE) \
+        < base.index(calc.GUIDANCE)
 
 
 # ───────────────────────────────────────────────────────────── passages
@@ -417,7 +410,7 @@ def test_search_cli_match_flag(diluted: Path) -> None:
     assert out.returncode == 2
 
 
-def test_tool_reports_match(diluted: Path, installed: None,
+def test_tool_reports_match(diluted: Path,
                             monkeypatch: pytest.MonkeyPatch) -> None:
     from superindex.engine import agent_tools
 

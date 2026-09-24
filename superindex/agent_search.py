@@ -1,12 +1,9 @@
 """The `search_pages` and `calculate` tools for the engine's local chat agent.
 
-The engine builds the agent's tools from `superindex.engine.agent_tools._tool_specs`
-(the local tool set served as an in-process MCP server, see
-`superindex.engine.integrations.openai_agents.build_mcp_server`, which looks the
-function up at call time). `install()` wraps that function so local clients
-also get `search_pages`, bound to the same document scope (`doc_ids`) as the
-built-in tools, and `calculate` (`superindex.calc`) without editing the engine's tool
-set.
+`tools()` returns them as engine `AgentTool`s, registered with
+`SuperIndexClient(tools=...)`: the engine serves them after its built-in tools,
+bound to the same document scope (`doc_ids`), and appends each tool's guidance
+to the agent's system prompt.
 """
 from __future__ import annotations
 
@@ -14,6 +11,7 @@ import json
 from typing import Any
 
 from superindex import bm25, calc
+from superindex.engine.agent_tools import AgentTool, resolve_document
 
 TOOL_NAME = "search_pages"
 MAX_TOP_K = 20
@@ -83,10 +81,8 @@ def run_search(client: Any, arguments: dict[str, Any],
         [doc_ids] if isinstance(doc_ids, str) else [str(d) for d in doc_ids])
     doc_name = arguments.get("doc_name")
     if doc_name:
-        from superindex.engine.agent_tools import _resolve_document
-
         allowed = frozenset(scope) if scope is not None else None
-        entry, error = _resolve_document(client, str(doc_name), allowed_ids=allowed)
+        entry, error = resolve_document(client, str(doc_name), allowed_ids=allowed)
         if error is not None:
             return json.dumps(error[0], ensure_ascii=False), True
         assert entry is not None
@@ -110,44 +106,12 @@ def run_search(client: Any, arguments: dict[str, Any],
     return json.dumps(payload, ensure_ascii=False), False
 
 
-def _spec(name: str, description: str, schema: dict[str, Any], run: Any,
-          fallback: str) -> tuple[str, str, dict[str, Any], Any]:
-    def invoke(arguments: dict[str, Any]) -> tuple[list[dict[str, Any]], bool]:
-        try:
-            text, is_error = run(arguments or {})
-        except Exception as exc:  # noqa: BLE001 - tool calls never raise into the agent
-            text, is_error = _failure(f"{name} failed: {exc}", "INTERNAL_ERROR", [fallback])
-        return [{"type": "text", "text": text}], is_error
-
-    return name, description, json.loads(json.dumps(schema)), invoke
-
-
-def extra_specs(client: Any, doc_ids: Any) -> list[tuple[str, str, dict[str, Any], Any]]:
-    """The tool specs `install()` adds for a local client."""
+def tools() -> list[AgentTool]:
+    """`search_pages` and `calculate`, for `SuperIndexClient(tools=...)`."""
     return [
-        _spec(TOOL_NAME, DESCRIPTION, SCHEMA,
-              lambda arguments: run_search(client, arguments, doc_ids),
-              "Use get_document_structure() instead"),
-        _spec(calc.TOOL_NAME, calc.DESCRIPTION, calc.SCHEMA, calc.run_calculate,
-              "Fix the expression and call calculate again"),
+        AgentTool(TOOL_NAME, DESCRIPTION, SCHEMA, run_search,
+                  "Use get_document_structure() instead", GUIDANCE),
+        AgentTool(calc.TOOL_NAME, calc.DESCRIPTION, calc.SCHEMA,
+                  lambda client, arguments, doc_ids: calc.run_calculate(arguments),
+                  "Fix the expression and call calculate again", calc.GUIDANCE),
     ]
-
-
-def install() -> None:
-    """Add `search_pages` and `calculate` to every local SuperIndexClient's
-    agent tools. Idempotent."""
-    from superindex.engine import agent_tools
-
-    original = agent_tools._tool_specs
-    if getattr(original, "_superindex_search", False):
-        return
-
-    def tool_specs(client: Any, include_management: bool = False, doc_ids: Any = None
-                   ) -> list[tuple[str, str, dict[str, Any], Any]]:
-        specs = original(client, include_management, doc_ids)
-        if getattr(client, "api_key", None) or not getattr(client, "storage_path", None):
-            return specs
-        return [*specs, *extra_specs(client, doc_ids)]
-
-    tool_specs._superindex_search = True  # type: ignore[attr-defined]
-    agent_tools._tool_specs = tool_specs

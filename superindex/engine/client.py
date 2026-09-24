@@ -12,6 +12,10 @@ from typing import (TYPE_CHECKING, Any, Callable, Iterator, Literal, Mapping,
 from .chat_stream import ChatStream
 from .errors import SuperIndexAPIError
 
+if TYPE_CHECKING:
+    from .agent_tools import AgentTool
+    from .local_chat import ChatExtras
+
 
 _litellm_preload_started = False
 
@@ -399,6 +403,8 @@ class SuperIndexClient:
         index_backend: Optional[dict[str, Any]] = None,
         chat_backend: Optional[dict[str, Any]] = None,
         instructions: Optional[str] = None,
+        tools: Optional[list[AgentTool]] = None,
+        page_text_extractor: Optional[Callable[[str], list[str]]] = None,
     ):
         if api_key == "":
             raise SuperIndexAPIError(
@@ -412,6 +418,7 @@ class SuperIndexClient:
                 "chat(protocol=\"messages\", model=..., instructions=[...]) on "
                 "a client with chat_model=... set.")
         self.instructions = (instructions or "").strip() or None
+        self.tools: tuple[AgentTool, ...] = tuple(tools or ())
         # Each side picks one spelling — its slot, or the flat arguments.
         # ``model`` sets every role, so it claims both sides.
         index_flat: dict[str, Any] = {
@@ -562,6 +569,7 @@ class SuperIndexClient:
                 model=self.model,
                 summary_model=self.summary_model,
                 index_backend=index_conf.get("index_backend"),
+                page_text_extractor=page_text_extractor,
             )
             # LiteLLM's multi-second import would otherwise land on the
             # first chat call; failures resurface there with real context.
@@ -919,6 +927,7 @@ class SuperIndexClient:
         backend: Optional[dict[str, Any]] = None,
         extra_headers: Optional[dict[str, str]] = None,
         extra_body: Optional[dict[str, Any]] = None,
+        extras: Optional[ChatExtras] = None,
     ) -> str: ...
 
     @overload
@@ -939,6 +948,7 @@ class SuperIndexClient:
         backend: Optional[dict[str, Any]] = None,
         extra_headers: Optional[dict[str, str]] = None,
         extra_body: Optional[dict[str, Any]] = None,
+        extras: Optional[ChatExtras] = None,
     ) -> ChatStream: ...
 
     @overload
@@ -959,6 +969,7 @@ class SuperIndexClient:
         backend: Optional[dict[str, Any]] = None,
         extra_headers: Optional[dict[str, str]] = None,
         extra_body: Optional[dict[str, Any]] = None,
+        extras: Optional[ChatExtras] = None,
     ) -> dict[str, Any]: ...
 
     @overload
@@ -979,6 +990,7 @@ class SuperIndexClient:
         backend: Optional[dict[str, Any]] = None,
         extra_headers: Optional[dict[str, str]] = None,
         extra_body: Optional[dict[str, Any]] = None,
+        extras: Optional[ChatExtras] = None,
     ) -> Iterator[dict[str, Any]]: ...
 
     @overload
@@ -999,6 +1011,7 @@ class SuperIndexClient:
         backend: Optional[dict[str, Any]] = None,
         extra_headers: Optional[dict[str, str]] = None,
         extra_body: Optional[dict[str, Any]] = None,
+        extras: Optional[ChatExtras] = None,
     ) -> Iterator[Any]: ...
 
     @overload
@@ -1019,6 +1032,7 @@ class SuperIndexClient:
         backend: Optional[dict[str, Any]] = None,
         extra_headers: Optional[dict[str, str]] = None,
         extra_body: Optional[dict[str, Any]] = None,
+        extras: Optional[ChatExtras] = None,
     ) -> Union[str, ChatStream]: ...
 
     @overload
@@ -1040,6 +1054,7 @@ class SuperIndexClient:
         backend: Optional[dict[str, Any]] = None,
         extra_headers: Optional[dict[str, str]] = None,
         extra_body: Optional[dict[str, Any]] = None,
+        extras: Optional[ChatExtras] = None,
     ) -> Union[str, ChatStream, dict[str, Any], Iterator[Any]]: ...
 
     def chat(
@@ -1060,6 +1075,7 @@ class SuperIndexClient:
         backend: Optional[dict[str, Any]] = None,
         extra_headers: Optional[dict[str, str]] = None,
         extra_body: Optional[dict[str, Any]] = None,
+        extras: Optional[ChatExtras] = None,
     ) -> Union[str, ChatStream, dict[str, Any], Iterator[Any]]:
         """
         Ask a question about your documents.
@@ -1214,6 +1230,11 @@ class SuperIndexClient:
                 leading system row in ``messages``. ``stream`` / ``doc_id``
                 are refused too: each has its own argument. Credentials
                 belong in ``backend``, never here.
+            extras (ChatExtras, optional): Additions for this run of the
+                streamed answer lane (own chat model only): a multimodal
+                last user message, appended instructions, extra Agents SDK
+                tools and a ``call_model_input_filter``. See
+                ``local_chat.ChatExtras``.
 
         Returns:
             - answer lane, stream=False: the answer string
@@ -1279,6 +1300,12 @@ class SuperIndexClient:
                                     if instructions else text)
             else:
                 enable_citations = True
+        if extras is not None and not (stream and protocol is None
+                                       and self._local_chat):
+            raise SuperIndexAPIError(
+                "extras extend the streamed answer lane of your own chat "
+                "model — pass stream=True, no protocol, on a client with "
+                "chat_model=... set.")
         if protocol in ("responses", "messages"):
             self._require_own_chat(f"chat(protocol={protocol!r})")
             if protocol == "responses":
@@ -1343,7 +1370,7 @@ class SuperIndexClient:
                                        show_process=resolved,
                                        max_turns=max_turns, backend=backend,
                                        extra_headers=extra_headers,
-                                       extra_body=extra_body)
+                                       extra_body=extra_body, extras=extras)
             from .local_chat import run_cloud_chat_stream
             chunks = self.chat_completions(messages, stream=True,
                                            stream_metadata=True,

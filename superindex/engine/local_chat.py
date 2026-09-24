@@ -11,7 +11,7 @@ import queue
 import threading
 import time
 import uuid
-from typing import Any, Iterator, Mapping, Optional, Union
+from typing import Any, Callable, Iterator, Mapping, Optional, Union
 
 from .agent_tools import _base_instructions, targeting_block
 from .chat_stream import ChatStream
@@ -903,11 +903,46 @@ def run_cloud_chat_stream(chunks,
                 "model) to run the agent in your process."))
 
 
+@dataclasses.dataclass
+class ChatExtras:
+    """Per-call additions to the streamed answer lane (``chat(stream=True,
+    extras=...)`` on a client with its own chat model).
+
+    ``user_content`` replaces the content of the last user message sent to
+    the model — e.g. its text followed by ``input_image`` parts; the
+    conversation's prompt cache key still covers the text form.
+    ``instructions`` is appended to the system prompt. ``tools`` are extra
+    Agents SDK tools, placed after the client's tools.
+    ``call_model_input_filter`` is set on the run's ``RunConfig``."""
+
+    user_content: Optional[list[dict[str, Any]]] = None
+    instructions: Optional[str] = None
+    tools: list[Any] = dataclasses.field(default_factory=list)
+    call_model_input_filter: Optional[Callable[[Any], Any]] = None
+
+
+def _apply_extras(agent, items: list, run_kwargs: dict,
+                  extras: ChatExtras) -> None:
+    if extras.user_content is not None:
+        if not items or items[-1].get("role") != "user":
+            raise SuperIndexAPIError(
+                "extras.user_content replaces the last user message, but "
+                "the conversation does not end with one.")
+        items[-1] = {"role": "user", "content": extras.user_content}
+    if extras.instructions:
+        agent.instructions = f"{agent.instructions}\n\n{extras.instructions}"
+    agent.tools.extend(extras.tools)
+    if extras.call_model_input_filter is not None:
+        run_kwargs["run_config"].call_model_input_filter = (
+            extras.call_model_input_filter)
+
+
 def run_chat_stream(client, messages, doc_id=None, model=None,
                     reasoning_effort=None,
                     show_process: Union[bool, Mapping[str, Any]] = False,
                     max_turns=None, backend=None, extra_headers=None,
                     extra_body=None, folder_id=None,
+                    extras: Optional[ChatExtras] = None,
                     ) -> ChatStream:
     """chat(stream=True): validation and the agent build run here, eagerly;
     the run itself starts when the returned stream's chosen view is first
@@ -928,6 +963,8 @@ def run_chat_stream(client, messages, doc_id=None, model=None,
                                   extra_headers=extra_headers,
                                   folder_id=folder_id)
     run_kwargs = _run_kwargs(max_turns)
+    if extras is not None:
+        _apply_extras(agent, items, run_kwargs, extras)
 
     def events():
         return _stream_sync(

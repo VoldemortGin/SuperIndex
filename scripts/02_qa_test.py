@@ -57,7 +57,7 @@ DOC_SETS = {
 }
 
 
-def build_client(args):
+def build_client(args, page_text_extractor=None):
     from superindex.engine import SuperIndexClient
 
     index_backend = {}
@@ -75,6 +75,7 @@ def build_client(args):
         storage_path=str(STORE),
         index_backend=index_backend or None,
         chat_backend=chat_backend or None,
+        page_text_extractor=page_text_extractor,
         instructions=(
             "You are auditing an annual report. Answer with the exact figures, "
             "units and periods stated in the document. If the document does not "
@@ -179,8 +180,8 @@ def main() -> int:
             print("--extractor azure-di 需要 AZURE_DI_ENDPOINT 与 AZURE_DI_KEY，"
                   "但 .env 里没有配置。", file=sys.stderr)
             return 1
-    from superindex.extractors.backend import install_into_pageindex
-    backend = install_into_pageindex()
+    from superindex.extractors.backend import page_text_extractor
+    backend, extract = page_text_extractor()
     print()
 
     qfile = Path(__file__).resolve().parent / args.questions
@@ -207,7 +208,7 @@ def main() -> int:
     print()
 
     apply_concurrency(args.concurrency)
-    client = build_client(args)
+    client = build_client(args, extract)
 
     doc_ids: dict[str, str] = {}
     if not args.skip_index:

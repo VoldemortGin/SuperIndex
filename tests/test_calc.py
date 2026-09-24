@@ -119,13 +119,12 @@ def test_run_calculate_envelope() -> None:
     assert err
 
 
-def test_registered_next_to_search_pages(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_registered_next_to_search_pages(tmp_path: Path) -> None:
     from superindex import agent_search
     from superindex.engine import SuperIndexClient, agent_tools
 
-    monkeypatch.setattr(agent_tools, "_tool_specs", agent_tools._tool_specs)
-    agent_search.install()
-    client = SuperIndexClient(chat_model="openai/offline-test", storage_path=str(tmp_path))
+    client = SuperIndexClient(chat_model="openai/offline-test", storage_path=str(tmp_path),
+                              tools=agent_search.tools())
     specs = {s[0]: s for s in agent_tools._tool_specs(client)}
     assert {"search_pages", "calculate"} <= set(specs)
     blocks, err = specs["calculate"][3]({"expression": "0.1 + 0.2"})

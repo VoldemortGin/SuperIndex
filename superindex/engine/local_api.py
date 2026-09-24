@@ -8,7 +8,7 @@ import os
 import re
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 from .errors import SuperIndexAPIError
 from .local_store import DocStore
@@ -32,14 +32,26 @@ def _now_iso() -> str:
     return now.replace(microsecond=now.microsecond // 1000 * 1000).isoformat()
 
 
+def extract_page_texts(file_path: str) -> list[str]:
+    """The default page text extractor: the PDF text layer via PyPDF2."""
+    import PyPDF2
+    with open(file_path, "rb") as f:
+        reader = PyPDF2.PdfReader(f)
+        # PyPDF2 decodes broken ToUnicode maps with surrogatepass; lone
+        # surrogates would crash every utf-8 JSON save downstream.
+        return [_scrub_surrogates(page.extract_text() or "")
+                for page in reader.pages]
 
 
 class LocalAPI:
     """Backs SuperIndexClient's local mode. One instance per client."""
 
     def __init__(self, storage_path: str, model: str, summary_model: str,
-                 index_backend: dict | None = None):
+                 index_backend: dict | None = None,
+                 page_text_extractor: Callable[[str], list[str]] | None = None):
         self._store = DocStore(storage_path)
+        # PDF path -> one text per page (default: the PDF text layer).
+        self._extract_page_texts = page_text_extractor or extract_page_texts
         self._model = model
         self._summary_model = summary_model
         self._index_backend = index_backend
@@ -190,16 +202,6 @@ class LocalAPI:
                     f"{page_count} readable pages."
                 )
             stack.extend(node.get("nodes") or [])
-
-    @staticmethod
-    def _extract_page_texts(file_path: str) -> list[str]:
-        import PyPDF2
-        with open(file_path, "rb") as f:
-            reader = PyPDF2.PdfReader(f)
-            # PyPDF2 decodes broken ToUnicode maps with surrogatepass; lone
-            # surrogates would crash every utf-8 JSON save downstream.
-            return [_scrub_surrogates(page.extract_text() or "")
-                    for page in reader.pages]
 
     def _index_standard(self, file_path: str, page_texts: list[str]) -> tuple[list, str | None]:
         from .page_index_classic import page_index_main

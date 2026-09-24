@@ -121,12 +121,8 @@ def make_client(settings: LLMSettings, store: Path, instructions: str | None = N
     agent also has the `search_pages` keyword tool and `calculate`."""
     chat_model = settings.require("chat")
     configure_litellm()
-    from superindex import agent_search, calc
+    from superindex import agent_search
     from superindex.engine import SuperIndexClient
-
-    agent_search.install()
-    instructions = "\n\n".join(t for t in (instructions, agent_search.GUIDANCE, calc.GUIDANCE)
-                                 if t)
 
     return SuperIndexClient(
         index_model=settings.index_model or chat_model,
@@ -135,6 +131,7 @@ def make_client(settings: LLMSettings, store: Path, instructions: str | None = N
         index_backend=settings.index_backend(),
         chat_backend=settings.chat_backend(),
         instructions=instructions,
+        tools=agent_search.tools(),
     )
 
 

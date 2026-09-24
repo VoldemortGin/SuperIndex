@@ -1,8 +1,7 @@
 """Put PDF page screenshots (`superindex.page_images`) in front of the agent.
 
-The engine's own chat lane takes text messages only, so with images on the run
-is assembled here from the same parts `superindex.engine.local_chat.run_chat_stream`
-uses (agent, input items, event stream) with three additions:
+With images on, the run goes through the engine's chat lane with
+`ChatExtras` (`superindex.engine.local_chat`) carrying three additions:
 
 - prefetch images: the question's user message becomes a content list —
   the text, then each page as an ``input_image`` part with a base64 data URL
@@ -25,6 +24,8 @@ import json
 from typing import Any
 
 from superindex import page_render
+from superindex.engine.agent_tools import resolve_document
+from superindex.engine.local_chat import ChatExtras
 from superindex.page_images import Attached, Session
 
 TOOL_NAME = "get_page_image"
@@ -103,11 +104,9 @@ def request_page(client: Any, session: Session, doc_ids: Any, doc_name: str, pag
         number = int(page)
     except (TypeError, ValueError):
         return _reply({"error": "page must be a page number", "errorCode": "INVALID_INPUT"})
-    from superindex.engine.agent_tools import _resolve_document
-
     scope = None if doc_ids is None else frozenset(
         [doc_ids] if isinstance(doc_ids, str) else [str(d) for d in doc_ids])
-    entry, error = _resolve_document(client, str(doc_name or ""), allowed_ids=scope)
+    entry, error = resolve_document(client, str(doc_name or ""), allowed_ids=scope)
     if error is not None:
         return json.dumps(error[0], ensure_ascii=False)
     assert entry is not None
@@ -180,22 +179,12 @@ def chat(client: Any, message: str, *, doc_id: Any, reasoning_effort: str | None
     if session is None:
         return client.chat(message, doc_id=doc_id, stream=True,
                            reasoning_effort=reasoning_effort)
-    from superindex.engine import local_chat
-    from superindex.engine.chat_stream import ChatStream
-
-    local_chat._require_openai_agents("chat")
-    agent, items, _ = local_chat._chat_agent(client, [{"role": "user", "content": message}],
-                                             doc_id, None, reasoning_effort=reasoning_effort)
     prefetched = [a for a in session.attached if a.source != "tool"]
-    if prefetched:
-        items[-1] = {"role": "user", "content": user_content(message, prefetched)}
-    agent.instructions = f"{agent.instructions}\n\n{guidance(session.limit)}"
-    agent.tools.append(page_image_tool(client, session, client._local_doc_scope(doc_id)))
-    run_kwargs = local_chat._run_kwargs(None)
-    run_kwargs["run_config"].call_model_input_filter = input_filter(session)
-
-    def events() -> Any:
-        return local_chat._stream_sync(
-            lambda: local_chat._chat_events_agen(client, agent, items, run_kwargs))
-
-    return ChatStream(text=lambda: local_chat._weave(events(), None), events=events)
+    extras = ChatExtras(
+        user_content=user_content(message, prefetched) if prefetched else None,
+        instructions=guidance(session.limit),
+        tools=[page_image_tool(client, session, doc_id)],
+        call_model_input_filter=input_filter(session),
+    )
+    return client.chat(message, doc_id=doc_id, stream=True,
+                       reasoning_effort=reasoning_effort, extras=extras)

@@ -22,6 +22,7 @@ tool error re-raise SuperIndexAPIError.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import difflib
 import inspect
 import json
@@ -393,7 +394,7 @@ def _scope_documents(documents: list[dict[str, Any]],
     return [doc for doc in documents if doc.get("id") in allowed_ids]
 
 
-def _resolve_document(
+def resolve_document(
     client, doc_name: str,
     documents: Optional[list[dict[str, Any]]] = None,
     allowed_ids: Optional[frozenset] = None,
@@ -839,7 +840,7 @@ def _get_document(client, doc_name: str, folder_id: Optional[str] = None,
                   _allowed_ids: Optional[frozenset] = None) -> tuple[dict, bool]:
     if folder_id not in (None, "root"):
         return _folder_unsupported("folder_id")
-    entry, error = _resolve_document(client, doc_name, allowed_ids=_allowed_ids)
+    entry, error = resolve_document(client, doc_name, allowed_ids=_allowed_ids)
     if error is not None:
         return error
     assert entry is not None
@@ -908,7 +909,7 @@ def _get_document_structure(client, doc_name: str,
                             _allowed_ids: Optional[frozenset] = None) -> tuple[dict, bool]:
     if folder_id not in (None, "root"):
         return _folder_unsupported("folder_id")
-    entry, error = _resolve_document(client, doc_name, allowed_ids=_allowed_ids)
+    entry, error = resolve_document(client, doc_name, allowed_ids=_allowed_ids)
     if error is not None:
         return error
     assert entry is not None
@@ -1012,7 +1013,7 @@ def _get_page_content(client, doc_name: str, pages: str,
                       _allowed_ids: Optional[frozenset] = None) -> tuple[dict, bool]:
     if folder_id not in (None, "root"):
         return _folder_unsupported("folder_id")
-    entry, error = _resolve_document(client, doc_name, allowed_ids=_allowed_ids)
+    entry, error = resolve_document(client, doc_name, allowed_ids=_allowed_ids)
     if error is not None:
         return error
     assert entry is not None
@@ -1154,7 +1155,7 @@ def _remove_document(client, doc_names: list[str],
     documents = _all_documents(client, stop_ids=_allowed_ids)
     results = []
     for doc_name in doc_names:
-        entry, error = _resolve_document(client, doc_name, documents=documents,
+        entry, error = resolve_document(client, doc_name, documents=documents,
                                          allowed_ids=_allowed_ids)
         if error is not None or entry is None:
             results.append({"doc_name": doc_name, "status": "not_found"})
@@ -1519,6 +1520,38 @@ def _require_doc_selection(doc_ids) -> None:
             "doc_id to give the agent the whole library.")
 
 
+@dataclasses.dataclass(frozen=True)
+class AgentTool:
+    """An extra tool for the local chat agent, registered with
+    ``SuperIndexClient(tools=[...])`` and served after the built-in tools.
+
+    ``run(client, arguments, doc_ids)`` returns (JSON text, is_error);
+    ``doc_ids`` is the chat's document scope (None: the whole library). An
+    exception becomes an INTERNAL_ERROR envelope whose next step is
+    ``fallback``. ``guidance``, when set, is appended to the agent's system
+    prompt after the client's own instructions."""
+
+    name: str
+    description: str
+    schema: dict[str, Any]
+    run: Callable[[Any, dict[str, Any], Any], tuple[str, bool]]
+    fallback: str
+    guidance: Optional[str] = None
+
+    def spec(self, client, doc_ids=None,
+             ) -> "tuple[str, str, dict, Callable[[dict], tuple[list, bool]]]":
+        def invoke(arguments: dict) -> tuple[list, bool]:
+            try:
+                text, is_error = self.run(client, arguments or {}, doc_ids)
+            except Exception as exc:  # noqa: BLE001 - tools never raise into the agent
+                text = _dumps({"error": f"{self.name} failed: {exc}",
+                               "errorCode": "INTERNAL_ERROR",
+                               "next_steps": {"options": [self.fallback]}})
+                is_error = True
+            return [{"type": "text", "text": text}], is_error
+        return self.name, self.description, copy.deepcopy(self.schema), invoke
+
+
 def _tool_specs(client, include_management: bool = False, doc_ids=None,
                 ) -> "list[tuple[str, str, dict, Callable[[dict], tuple[list, bool]]]]":
     """(name, description, schema, invoke) per tool, for adapters that take
@@ -1551,9 +1584,10 @@ def _tool_specs(client, include_management: bool = False, doc_ids=None,
             return [{"type": "text", "text": text}], is_error
         return invoke
 
-    return [(name, _local_description(name), _local_schema(name),
-             local_invoke(name))
-            for name in tool_names(include_management)]
+    return [*[(name, _local_description(name), _local_schema(name),
+               local_invoke(name))
+              for name in tool_names(include_management)],
+            *[tool.spec(client, doc_ids) for tool in client.tools]]
 
 
 def build_agent_tools(client, include_management: bool = False,
@@ -1688,8 +1722,10 @@ def _base_instructions(client, include_management: bool = False) -> str:
                 "to substitute the SDK's local-subset guidance, which does "
                 "not cover the cloud tool set."
             )
-    own = getattr(client, "instructions", None)
-    return f"{base}\n\n{own}" if own else base
+    own = [getattr(client, "instructions", None)]
+    if not getattr(client, "api_key", None):
+        own += [tool.guidance for tool in client.tools]
+    return "\n\n".join([base, *[text for text in own if text]])
 
 
 def doc_targeting_block(client, doc_id) -> Optional[str]:

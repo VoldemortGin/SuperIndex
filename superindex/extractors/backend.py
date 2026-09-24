@@ -30,7 +30,7 @@ import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from superindex.extractors.azure_di import (
     PAGE_MARKER,
@@ -175,7 +175,7 @@ class Extractor:
 
     # -- public API -------------------------------------------------------
     def page_texts(self, pdf: "str | Path") -> list[str]:
-        """Per-page plain text. Drop-in for the engine's `_extract_page_texts`."""
+        """Per-page plain text: an engine `page_text_extractor`."""
         pdf = Path(pdf)
         if self.uses_azure:
             return self._azure_or_text("_azure_page_texts", pdf)
@@ -230,8 +230,8 @@ def _text_layer(extractor: Extractor, fn_name: str, pdf: Path):
 def _pypdf2_page_texts(pdf: Path) -> list[str]:
     """Delegate to the engine's own extractor so the fallback is byte-identical."""
     try:
-        from superindex.engine.local_api import LocalAPI
-        return LocalAPI._extract_page_texts(str(pdf))
+        from superindex.engine.local_api import extract_page_texts
+        return extract_page_texts(str(pdf))
     except Exception:  # noqa: BLE001 - engine not importable; inline copy
         import PyPDF2
         with open(pdf, "rb") as f:
@@ -245,33 +245,24 @@ def _scrub(text: str) -> str:
 
 
 # ------------------------------------------------------ engine integration
-def install_into_pageindex(env: Optional[dict[str, str]] = None,
-                           *, verbose: bool = True) -> BackendInfo:
-    """Make the engine's local mode use the active backend.
+def page_text_extractor(env: Optional[dict[str, str]] = None, *, verbose: bool = True,
+                        ) -> tuple[BackendInfo, Optional[Callable[[str], list[str]]]]:
+    """The engine's page text extractor for the active backend.
 
-    The engine reads the PDF text layer in `LocalAPI._extract_page_texts`, a
-    staticmethod returning one string per page. We swap in our own callable
-    that returns the same shape, so nothing inside `superindex/engine/` is edited and
-    the upstream diff stays clean.
-
-    Returns the active `BackendInfo`. A no-op (beyond reporting) when Azure is
-    not configured, because then the built-in behaviour already is the right one.
+    Returns the active `BackendInfo` and the callable to pass as
+    `SuperIndexClient(page_text_extractor=...)` — None when Azure is not
+    configured, because then the engine's built-in text layer already is the
+    right one.
     """
     info = describe(env)
-    if info.name != BACKEND_AZURE:
-        if verbose:
-            announce(env)
-        return info
-
-    from superindex.engine.local_api import LocalAPI
-
-    extractor = Extractor(env, verbose=verbose)
-    LocalAPI._extract_page_texts = staticmethod(  # type: ignore[assignment]
-        lambda file_path: extractor.page_texts(Path(file_path)))
     if verbose:
         announce(env)
-        print("          → 已接管引擎的 PDF 文本抽取（_extract_page_texts）")
-    return info
+    if info.name != BACKEND_AZURE:
+        return info, None
+    extractor = Extractor(env, verbose=verbose)
+    if verbose:
+        print("          → 引擎的 PDF 文本抽取使用 Azure DI（page_text_extractor）")
+    return info, lambda file_path: extractor.page_texts(Path(file_path))
 
 
 def reset_cache() -> None:
@@ -283,5 +274,5 @@ def reset_cache() -> None:
 __all__ = [
     "BACKEND_AZURE", "BACKEND_TEXT_LAYER", "BackendInfo", "Extractor",
     "announce", "azure_config", "describe", "fallback_enabled",
-    "install_into_pageindex", "is_azure_configured", "reset_cache",
+    "is_azure_configured", "page_text_extractor", "reset_cache",
 ]

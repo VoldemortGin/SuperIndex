@@ -33,17 +33,26 @@ as a vendored, unmodified copy (`PageIndex/pageindex/`) and was merged into the
   `requirements.txt`, `README.md`. The flash README's CLI section went with
   `run_pageindex.py`. `naming-rules.md` lives next to this file.
 
-## Customisations applied from the superindex side
+## Extension points added for the superindex side (0.1.1)
 
-These still wrap engine internals instead of editing them (candidates for a
-later simplification now that the engine is ours):
+The superindex modules used to wrap or monkeypatch engine internals; they now
+use formal engine parameters instead:
 
-- `superindex/agent_search.py` wraps `agent_tools._tool_specs` to add the
-  `search_pages` and `calculate` tools.
-- `superindex/image_chat.py` reuses `local_chat` private helpers to send PDF
-  page screenshots.
-- `superindex/extractors/backend.py` replaces `LocalAPI._extract_page_texts`
-  for the Azure DI PDF path.
+- `SuperIndexClient(tools=[AgentTool(...)])` (`agent_tools.AgentTool`): extra
+  local agent tools served after the built-in ones, bound to the chat's
+  document scope; each tool's `guidance` is appended to the system prompt
+  after the client's `instructions`. `superindex/agent_search.py` registers
+  `search_pages` and `calculate` this way.
+- `chat(..., stream=True, extras=ChatExtras(...))` (`local_chat.ChatExtras`):
+  a multimodal last user message, appended instructions, extra Agents SDK
+  tools and a `call_model_input_filter` for one run.
+  `superindex/image_chat.py` sends PDF page screenshots and the
+  `get_page_image` tool this way.
+- `SuperIndexClient(page_text_extractor=...)`: replaces the PDF text-layer
+  extractor (`local_api.extract_page_texts`, PyPDF2).
+  `superindex/extractors/backend.page_text_extractor()` returns the Azure DI
+  one.
+- `agent_tools.resolve_document` (was `_resolve_document`) is public.
 
 ## Pulling a newer upstream
 

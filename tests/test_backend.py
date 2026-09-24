@@ -13,6 +13,7 @@ a stubbed `_analyze`, so no network and no credentials.
 from __future__ import annotations
 
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -24,8 +25,8 @@ from superindex.extractors.backend import (  # noqa: E402
     Extractor,
     describe,
     fallback_enabled,
-    install_into_pageindex,
     is_azure_configured,
+    page_text_extractor,
     reset_cache,
 )
 
@@ -139,25 +140,25 @@ def test_text_layer_fallback() -> None:
 
 
 # ------------------------------------------------------- engine integration
-def test_pageindex_install() -> None:
-    print("\n[引擎接管]")
-    info = install_into_pageindex({}, verbose=False)
-    check("未配置时不接管（返回 text-layer）", info.name == BACKEND_TEXT_LAYER)
+def test_page_text_extractor() -> None:
+    print("\n[引擎抽取钩子]")
+    info, extract = page_text_extractor({}, verbose=False)
+    check("未配置时不接管（返回 text-layer）",
+          info.name == BACKEND_TEXT_LAYER and extract is None)
 
-    info2 = install_into_pageindex(AZ, verbose=False)
-    check("配置后接管并返回 azure-di", info2.name == BACKEND_AZURE)
-    from superindex.engine.local_api import LocalAPI
-    check("LocalAPI._extract_page_texts 已被替换",
-          LocalAPI._extract_page_texts is not None)
-    # 换成 stub，确认调用链真的走了我们的实现
+    info2, extract2 = page_text_extractor(AZ, verbose=False)
+    check("配置后返回 azure-di 与抽取函数", info2.name == BACKEND_AZURE and extract2 is not None)
+    # 换成 stub，确认引擎真的调用我们传入的抽取函数
     ex = Extractor(AZ)
     ex._analyze = lambda pdf: {"content": "HELLO-WORLD",
                                "pages": [{"pageNumber": 1,
                                           "spans": [{"offset": 0, "length": 11}]}]}
-    LocalAPI._extract_page_texts = staticmethod(
-        lambda fp: ex.page_texts(Path(fp)))
-    got = LocalAPI._extract_page_texts("anything.pdf")
-    check("接管后返回 Azure 的结果", got == ["HELLO-WORLD"], str(got))
+    from superindex.engine.local_api import LocalAPI
+    with tempfile.TemporaryDirectory() as store:
+        api = LocalAPI(store, "m", "m",
+                       page_text_extractor=lambda fp: ex.page_texts(Path(fp)))
+        got = api._extract_page_texts("anything.pdf")
+    check("引擎经钩子拿到 Azure 的结果", got == ["HELLO-WORLD"], str(got))
 
 
 def main() -> int:
@@ -167,7 +168,7 @@ def main() -> int:
     test_resolution()
     test_azure_page_split()
     test_text_layer_fallback()
-    test_pageindex_install()
+    test_page_text_extractor()
     reset_cache()
     print()
     print("=" * 74)
