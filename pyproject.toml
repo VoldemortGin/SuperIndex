@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "superindex"
-version = "0.1.1"
+version = "0.1.2"
 description = "Vectorless, page-cited question answering over long financial reports (Azure DI Markdown → tree index → LLM agent)"
 readme = "README.md"
 requires-python = ">=3.11"
