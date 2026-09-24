@@ -36,7 +36,10 @@ load_dotenv(ROOT / ".env")
 
 DATA_DIR = ROOT / "data" / "aia_reports"
 STORE = ROOT / "results" / "pageindex_store"
-STATIC = Path(__file__).resolve().parent / "static"
+# A PyInstaller build unpacks bundled data under sys._MEIPASS; bundle the
+# folder as "webapp/static" there.
+STATIC = (Path(sys._MEIPASS) / "webapp" / "static" if getattr(sys, "frozen", False)
+          else Path(__file__).resolve().parent / "static")
 
 INDEX_MODEL = os.getenv("PAGEINDEX_INDEX_MODEL", "deepseek/deepseek-flash")
 CHAT_MODEL = os.getenv("PAGEINDEX_CHAT_MODEL", "deepseek/deepseek-flash")
@@ -230,7 +233,10 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=8787)
     ap.add_argument("--host", default="127.0.0.1")
     args = ap.parse_args()
+    return run(args.host, args.port)
 
+
+def run(host: str, port: int) -> int:
     status = corpus_status()
     print(f"PageIndex chat server")
     print(f"  index model : {status['index_model']}")
@@ -238,9 +244,9 @@ def main() -> int:
     print(f"  indexed     : {len(status['indexed'])} / {status['total_pdfs']} documents")
     if status["pending"]:
         print(f"  pending     : {len(status['pending'])} still indexing")
-    print(f"  -> http://{args.host}:{args.port}\n")
+    print(f"  -> http://{host}:{port}\n")
 
-    httpd = ThreadingHTTPServer((args.host, args.port), Handler)
+    httpd = ThreadingHTTPServer((host, port), Handler)
     httpd.daemon_threads = True
     try:
         httpd.serve_forever()
