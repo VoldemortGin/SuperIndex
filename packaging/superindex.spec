@@ -4,7 +4,7 @@
 #
 # Default is onedir: dist/superindex/superindex(.exe) + dist/superindex/_internal/.
 # Set SUPERINDEX_ONEFILE=1 for a single self-extracting file dist/superindex(.exe).
-# Run it from the repository root, with packaging/requirements-bundle.txt installed.
+# Run it from the repository root in an env from `uv sync --group build` (see build_*.sh/.ps1).
 import os
 import sys
 from pathlib import Path

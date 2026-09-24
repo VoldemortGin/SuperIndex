@@ -6,7 +6,8 @@
 
 ## 1. 在联网的 Windows 电脑上打包
 
-前提：Python 3.11 或 3.12（64 位，python.org 安装包或 `py` 启动器均可）、本仓库完整代码。
+前提：[uv](https://docs.astral.sh/uv/)、本仓库完整代码。不需要预装 Python：uv 按 `.python-version` 自动下载 3.12（64 位）。
+未安装 uv 时：`powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`，装完重开 PowerShell。
 
 ```powershell
 # 在仓库根目录
@@ -15,11 +16,18 @@ powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1
 powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1 -OneFile
 ```
 
-脚本会：检查 Python → 建 `build\venv-bundle` → 安装 `packaging\requirements-bundle.txt`（锁定版本）
-→ PyInstaller → 冒烟测试（`--help`、`index --no-summary`，均在代理指向无效地址的"断网"环境下）
+脚本会：检查 uv → `uv sync --locked --no-default-groups --group build` 到独立环境 `build\venv-bundle`（严格按 `uv.lock`，不含 dev/pdf 组）
+→ `uv run pyinstaller` → 冒烟测试（`--help`、`index --no-summary`，均在代理指向无效地址的"断网"环境下）
 → 生成 `dist\superindex-windows-x64.zip`。
 
 macOS 上同等流程：`bash packaging/build_macos.sh`（只能产出 macOS 版，不能交叉编译 Windows）。
+
+**依赖清单**：唯一来源是仓库根的 `pyproject.toml` + `uv.lock`（运行时依赖；`build` 组 = PyInstaller；`dev` 组 = pytest/ruff；`pdf` 组 = PageIndex 的 PDF 解析，仅实验脚本用）。
+`packaging\requirements-bundle.txt` 是给**没有 uv、只能用 pip** 时的兜底，由 uv 生成，不要手改；改了依赖后重新生成：
+```
+uv lock
+uv export --frozen --no-default-groups --group build --no-hashes -o packaging/requirements-bundle.txt
+```
 
 **onedir（默认）还是 onefile**：默认 onedir（`superindex\superindex.exe` + `_internal\`）。
 启动快（onefile 每次启动都要把约 90 MB 解压到 `%TEMP%`，本机实测 `--help` 约 12 秒 vs onedir 0.1 秒）、杀软误报少、`%TEMP%` 受限的服务器上也能跑。

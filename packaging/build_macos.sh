@@ -3,41 +3,33 @@
 #
 #   bash packaging/build_macos.sh            # onedir (default)
 #   SUPERINDEX_ONEFILE=1 bash packaging/build_macos.sh
-#   PYTHON=/path/to/python3.12 bash packaging/build_macos.sh
+#   PYTHON=3.11 bash packaging/build_macos.sh     # uv --python (version or path)
 #
-# Output: dist/superindex/ and dist/superindex-macos-<arch>.zip
+# Needs uv (https://docs.astral.sh/uv/); it downloads Python 3.12 (.python-version)
+# if missing. Output: dist/superindex/ and dist/superindex-macos-<arch>.zip
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-VENV="$ROOT/build/venv-bundle"
 DIST="$ROOT/dist"
 APP="$DIST/superindex"
 
-# ── 1. Python 3.11 / 3.12 ──────────────────────────────────────────────────
-PY="${PYTHON:-}"
-if [[ -z "$PY" ]]; then
-  for cand in python3.12 python3.11 python3; do
-    if command -v "$cand" >/dev/null 2>&1; then
-      ver="$("$cand" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
-      if [[ "$ver" == "3.11" || "$ver" == "3.12" ]]; then PY="$(command -v "$cand")"; break; fi
-    fi
-  done
-fi
-[[ -n "$PY" ]] || { echo "error: need Python 3.11 or 3.12 (set PYTHON=...)" >&2; exit 1; }
-echo "==> python: $PY ($("$PY" -V))"
+# ── 1. uv ──────────────────────────────────────────────────────────────────
+command -v uv >/dev/null 2>&1 || {
+  echo "error: uv not found; install: curl -LsSf https://astral.sh/uv/install.sh | sh" >&2; exit 1; }
+# A separate env with only runtime + build deps (no dev/pdf groups), exactly as uv.lock.
+export UV_PROJECT_ENVIRONMENT="$ROOT/build/venv-bundle"
+PY_ARGS=()
+if [[ -n "${PYTHON:-}" ]]; then PY_ARGS=(--python "$PYTHON"); fi
 
-# ── 2. venv + locked dependencies ──────────────────────────────────────────
-if [[ ! -x "$VENV/bin/python" ]]; then
-  "$PY" -m venv "$VENV"
-fi
-"$VENV/bin/python" -m pip install --upgrade pip
-"$VENV/bin/python" -m pip install -r packaging/requirements-bundle.txt
+# ── 2. locked dependencies ─────────────────────────────────────────────────
+uv sync --locked --no-default-groups --group build ${PY_ARGS[@]+"${PY_ARGS[@]}"}
+echo "==> python: $(uv run --no-sync python -V)"
 
 # ── 3. PyInstaller ─────────────────────────────────────────────────────────
 rm -rf "$APP" "$DIST/superindex-onefile" "$ROOT/build/superindex"
-"$VENV/bin/python" -m PyInstaller packaging/superindex.spec \
+uv run --no-sync pyinstaller packaging/superindex.spec \
   --noconfirm --clean --distpath "$DIST" --workpath "$ROOT/build"
 
 if [[ "${SUPERINDEX_ONEFILE:-}" == "1" ]]; then

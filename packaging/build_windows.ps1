@@ -2,8 +2,10 @@
 #
 #   powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1
 #   powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1 -OneFile
-#   powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1 -Python C:\Python312\python.exe
+#   powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1 -Python 3.11
 #
+# Needs uv (https://docs.astral.sh/uv/). uv downloads Python 3.12 (.python-version)
+# when it is missing; -Python is passed to uv as --python (a version or a path).
 # Output: dist\superindex\ (or dist\superindex-onefile\) and a zip next to it.
 # Compatible with Windows PowerShell 5.1. Keep this file ASCII-only: 5.1 reads
 # BOM-less scripts in the ANSI code page.
@@ -19,13 +21,11 @@ Set-StrictMode -Version Latest
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Set-Location $Root
 
-$Venv = Join-Path $Root "build\venv-bundle"
-$VenvPy = Join-Path $Venv "Scripts\python.exe"
 $Dist = Join-Path $Root "dist"
 $Work = Join-Path $Root "build"
 
 # Run a native command; stop on a non-zero exit code. stderr is not treated as
-# an error (pip and PyInstaller log there).
+# an error (uv and PyInstaller log there).
 function Invoke-Native {
     param([string]$Exe, [string[]]$Arguments)
     $saved = $ErrorActionPreference
@@ -41,65 +41,25 @@ function Invoke-Native {
     }
 }
 
-# Returns "3.12 64" for a working interpreter, or $null.
-function Get-PyInfo {
-    param([string]$Exe, [string[]]$Prefix)
-    $saved = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    try {
-        $out = & $Exe @Prefix -c "import struct, sys; print('%d.%d %d' % (sys.version_info[0], sys.version_info[1], struct.calcsize('P') * 8))" 2>$null
-        if ($LASTEXITCODE -ne 0) { return $null }
-        return ([string]$out).Trim()
-    } catch {
-        return $null
-    } finally {
-        $ErrorActionPreference = $saved
-    }
+# -- 1. uv ---------------------------------------------------------------------
+if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
+    throw 'uv not found. Install it, then open a new PowerShell: powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"'
 }
-
-# -- 1. Python 3.11 / 3.12 (64-bit) ------------------------------------------
-$candidates = @()
-if ($Python) {
-    $candidates += , @($Python)
-} else {
-    if (Get-Command py -ErrorAction SilentlyContinue) {
-        $candidates += , @("py", "-3.12")
-        $candidates += , @("py", "-3.11")
-    }
-    if (Get-Command python -ErrorAction SilentlyContinue) {
-        $candidates += , @("python")
-    }
-}
-$BasePy = $null
-foreach ($c in $candidates) {
-    $exe = $c[0]
-    $prefix = @()
-    if ($c.Count -gt 1) { $prefix = @($c[1..($c.Count - 1)]) }
-    $info = Get-PyInfo -Exe $exe -Prefix $prefix
-    if ($info -eq "3.11 64" -or $info -eq "3.12 64") {
-        $BasePy = @{ Exe = $exe; Prefix = $prefix; Info = $info }
-        break
-    }
-    if ($info) { Write-Host "skip $($c -join ' '): Python $info (need 3.11/3.12, 64-bit)" }
-}
-if (-not $BasePy) {
-    throw "Need 64-bit Python 3.11 or 3.12 (python.org installer, or pass -Python C:\path\python.exe)."
-}
-Write-Host "==> python: $($BasePy.Exe) $($BasePy.Prefix -join ' ') ($($BasePy.Info))"
+# A separate env with only runtime + build deps (no dev/pdf groups), exactly as uv.lock.
+$env:UV_PROJECT_ENVIRONMENT = Join-Path $Root "build\venv-bundle"
+$PyArgs = @()
+if ($Python) { $PyArgs = @("--python", $Python) }
 
 $longPaths = Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name LongPathsEnabled -ErrorAction SilentlyContinue
 if (-not $longPaths -or $longPaths.LongPathsEnabled -ne 1) {
     if ($Root.Length -gt 60) {
-        Write-Warning "Long paths are disabled and the repo path is long ($($Root.Length) chars); if pip or PyInstaller fails with a path error, move the repo to a short path such as C:\src\SuperIndex."
+        Write-Warning "Long paths are disabled and the repo path is long ($($Root.Length) chars); if uv or PyInstaller fails with a path error, move the repo to a short path such as C:\src\SuperIndex."
     }
 }
 
-# -- 2. venv + locked dependencies -------------------------------------------
-if (-not (Test-Path $VenvPy)) {
-    Invoke-Native $BasePy.Exe (@($BasePy.Prefix) + @("-m", "venv", $Venv))
-}
-Invoke-Native $VenvPy @("-m", "pip", "install", "--upgrade", "pip")
-Invoke-Native $VenvPy @("-m", "pip", "install", "-r", (Join-Path $Root "packaging\requirements-bundle.txt"))
+# -- 2. locked dependencies ----------------------------------------------------
+Invoke-Native "uv" (@("sync", "--locked", "--no-default-groups", "--group", "build") + $PyArgs)
+Invoke-Native "uv" @("run", "--no-sync", "python", "-c", "import struct, sys; print('==> python: %s (%d-bit)' % (sys.version.split()[0], struct.calcsize('P') * 8))")
 
 # -- 3. PyInstaller ------------------------------------------------------------
 $AppName = "superindex"
@@ -111,7 +71,7 @@ foreach ($p in @((Join-Path $Dist "superindex"), (Join-Path $Dist "superindex.ex
 
 if ($OneFile) { $env:SUPERINDEX_ONEFILE = "1" } else { $env:SUPERINDEX_ONEFILE = "" }
 try {
-    Invoke-Native $VenvPy @("-m", "PyInstaller", (Join-Path $Root "packaging\superindex.spec"),
+    Invoke-Native "uv" @("run", "--no-sync", "pyinstaller", (Join-Path $Root "packaging\superindex.spec"),
         "--noconfirm", "--clean", "--distpath", $Dist, "--workpath", $Work)
 } finally {
     Remove-Item Env:\SUPERINDEX_ONEFILE -ErrorAction SilentlyContinue
