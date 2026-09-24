@@ -47,9 +47,9 @@ pageindex = [
 # which puts the repo root on sys.path; superindex/__init__.py then falls back
 # to the vendored PageIndex/.
 package = false
-# `uv sync` / `uv run` give a full local env; the bundle build opts out with
-# --no-default-groups --group build.
-default-groups = ["dev", "pageindex"]
+# `uv sync` / `uv run` install every dependency group (dev, pageindex, build);
+# the bundle build opts out with --no-default-groups --group build.
+default-groups = "all"
 
 [tool.uv.sources]
 pageindex = { path = "PageIndex", editable = true }

@@ -40,7 +40,7 @@ uv sync
 uv run scripts/superindex.py --help
 ```
 
-- `uv sync` 按 `pyproject.toml` + `uv.lock` 在仓库根建 `.venv`，默认含 `dev`（pytest、ruff）与 `pdf`（PDF 实验脚本）组；跑测试：`uv run pytest`。只要运行时依赖：`uv sync --no-default-groups`。
+- `uv sync` 按 `pyproject.toml` + `uv.lock` 在仓库根建 `.venv`，默认一次性装齐全部依赖组（`dev`：pytest、ruff；`pageindex`：PDF 实验脚本；`build`：PyInstaller），无需再加 `--group`；跑测试：`uv run pytest`。只要运行时依赖：`uv sync --no-default-groups`。
 - 不需要激活 venv：`uv run ...` 自动使用 `.venv`（依赖有变会先自动同步）。
 - `PageIndex/` 已随仓库分发，**不需要**单独安装：`scripts/superindex.py` 会自动使用仓库内的 `PageIndex/`。
 - 没有 uv、只能用 pip 时的兜底：`py -3.12 -m venv .venv` 后 `.\.venv\Scripts\python.exe -m pip install -r packaging\requirements-bundle.txt`，再用 `.\.venv\Scripts\python.exe scripts\superindex.py ...`。
