@@ -1,16 +1,16 @@
-"""Agent tools: the cloud MCP tool contract, executed against a SuperIndexClient.
+"""Agent tools: the tool contract frozen from the upstream PageIndex hosted
+service, executed in-process against a SuperIndexClient.
 
-Tool names and the surviving input-schema structure match the SuperIndex
-cloud MCP server — the local surface hides the documented cloud-only
-parameters — so agent prompts port across the cloud MCP connection and
-this in-process layer. Only the tools that exist in every mode are
-registered (no folders, search_documents, or get_document_image), and the
-guidance strings (tool descriptions) adapt to the local surface the same
-way the agent instructions do — they never teach capabilities that only
-exist on the cloud.
+Tool names and the surviving input-schema structure match that upstream
+contract — the local surface hides the parameters only the hosted service
+supported (folders, relevance ranking). Only the tools that work locally
+are registered (no folders, search_documents, or get_document_image), and
+the guidance strings (tool descriptions) are adapted to the local surface
+the same way the agent instructions are — they never teach capabilities
+that only existed upstream.
 
 Tools never raise: every outcome, including errors, is returned as the
-same JSON envelope the cloud emits ({"success": true, ...} /
+same JSON envelope the upstream contract defines ({"success": true, ...} /
 {"error": ...}) — arguments outside a pruned local signature come back as
 that envelope too, on the direct and the call_tool path alike, except
 browse_documents' ``recursive``: call_tool honors it, because the flat
@@ -56,8 +56,8 @@ _WAIT_FOR_COMPLETION_DESCRIPTION = (
     "until completed. Reduces repeated tool calls."
 )
 
-#: Tool names, descriptions, and parameter schemas, identical to the cloud
-#: MCP server's tools/list.
+#: Tool names, descriptions, and parameter schemas, frozen from the upstream
+#: hosted service's tools/list.
 TOOL_CONTRACT: dict[str, dict[str, Any]] = {
     "browse_documents": {
         "annotations": {"readOnlyHint": True, "openWorldHint": False},
@@ -355,7 +355,7 @@ def _all_documents(client, stop_ids=None) -> list[dict[str, Any]]:
 
 
 def _normalize_created_at(value: Any) -> str:
-    """Emit the cloud tool format (ISO-8601 UTC with 'Z', millisecond
+    """Emit the upstream hosted tool format (ISO-8601 UTC with 'Z', millisecond
     precision) from either mode's createdAt string."""
     if not isinstance(value, str) or not value:
         return ""
@@ -462,8 +462,7 @@ def _not_ready_error(doc_name: str, status: Any, operation: str,
             {
                 "summary": "Document processing has failed",
                 "options": [
-                    "Index the document again with "
-                    "SuperIndexClient.submit_document()",
+                    "Ask the user to re-index it (`superindex index <path> --force`)",
                     "Use browse_documents() to work with other documents",
                 ],
             },
@@ -498,13 +497,12 @@ def _not_ready_error(doc_name: str, status: Any, operation: str,
 
 def _folder_unsupported(param: str) -> tuple[dict, bool]:
     return _failure(
-        f"Folders are not supported in local mode yet — omit {param}.",
+        f"Folders are not supported — omit {param}.",
         None,
         {
-            "summary": "This local library does not have folders yet",
+            "summary": "This library has no folders",
             "options": ["Retry the call without a folder_id",
-                        "Use browse_documents() to list the library root",
-                        "Folders are available on PageIndex cloud (PageIndexCloudClient with an API key)"],
+                        "Use browse_documents() to list the whole library"],
         },
         "INVALID_INPUT",
     )
@@ -588,7 +586,7 @@ def _parse_page_spec(
                     "summary": "The page specification spans too many pages",
                     "options": [
                         "Request a narrower page range",
-                        "The response holds only a few pages per call - page through with several smaller requests",
+                        f"One response holds about {_CHAR_BUDGET:,} characters of page text - request the pages in several smaller calls",
                     ],
                 },
                 "INVALID_INPUT",
@@ -665,7 +663,7 @@ def _serialized_size(value: Any) -> int:
 
 def _split_structure(structure: Any, budget: int) -> list[Any]:
     """Split a formatted structure into chunks of at most ~budget serialized
-    chars. The paginated response shape matches the cloud tool (its chunk
+    chars. The paginated response shape matches the upstream hosted tool (its chunk
     type admits node-or-list); chunk boundaries are implementation-defined.
     An unsplit structure keeps its natural shape; once split, every chunk
     is a list of nodes — the `structure` field must not change JSON type
@@ -721,23 +719,22 @@ def _browse_documents(client, folder_id: str = "root", recursive: bool = False,
         return _folder_unsupported("folder_id")
     if sort not in ("time", "relevance"):
         return _failure(
-            'Invalid sort mode — only the default "time" sort is available '
-            "in local mode.", None,
+            "Invalid sort mode — browse_documents always lists documents "
+            "newest first and takes no sort or query.", None,
             {"summary": "Invalid sort mode",
-             "options": ['Use sort="time" (newest first) or omit sort',
-                         "Semantic ranking is available on PageIndex cloud (PageIndexCloudClient with an API key)"]},
+             "options": ["Retry without sort/query and match the returned names and descriptions against the intent yourself",
+                         "Page through the full library with `offset: next_offset`"]},
             "INVALID_INPUT",
         )
     if sort == "relevance" or query:
-        # Semantic ranking is a cloud capability; like folders, it is not
-        # imitated here.
+        # Semantic ranking was an upstream hosted capability; like folders,
+        # it is not imitated here.
         return _failure(
-            "Relevance ranking is not supported in local mode yet — use "
-            "the default time sort.", None,
-            {"summary": "This local library does not have semantic ranking yet",
+            "Relevance ranking is not supported — browse_documents always "
+            "lists documents newest first and takes no sort or query.", None,
+            {"summary": "browse_documents has no relevance ranking",
              "options": ["Retry without sort/query and match the returned names and descriptions against the intent yourself",
-                         "Page through the full library with `offset: next_offset`",
-                         "Semantic ranking is available on PageIndex cloud (PageIndexCloudClient with an API key)"]},
+                         "Page through the full library with `offset: next_offset`"]},
             "INVALID_INPUT",
         )
     try:
@@ -794,10 +791,11 @@ def _browse_documents(client, folder_id: str = "root", recursive: bool = False,
     if not items and offset == 0:
         next_steps = {
             "summary": "Nothing to show",
-            "options": ["Nothing here. Index documents with "
-                        "SuperIndexClient.submit_document() to get started."],
-            "auto_retry": "Index a document with "
-                          "SuperIndexClient.submit_document() to get started",
+            "options": ["Nothing here. The library has no documents yet — "
+                        "tell the user to index some first "
+                        "(`superindex index <path>`)."],
+            "auto_retry": "Tell the user to index documents with "
+                          "`superindex index <path>` first",
         }
         return _success(data, next_steps)
 
@@ -851,17 +849,12 @@ def _get_document(client, doc_name: str, folder_id: Optional[str] = None,
     elif is_ready:
         suggestions.append("Document is ready for analysis.")
         if page_num > 0:
-            if page_num <= 5:
+            if page_num <= STRUCTURE_FIRST_PAGE_THRESHOLD:
+                all_pages = "1" if page_num == 1 else f"1-{page_num}"
                 suggestions.extend([
-                    f"This is a short document with {page_num} pages.",
-                    f'First explore structure: get_document_structure(doc_name: "{name}")',
-                    f'Then extract all content: get_page_content(doc_name: "{name}", pages: "1-{page_num}")',
-                ])
-            elif page_num <= STRUCTURE_FIRST_PAGE_THRESHOLD:
-                suggestions.extend([
-                    f"This document has {page_num} pages.",
-                    f'First explore structure: get_document_structure(doc_name: "{name}")',
-                    f'Then extract key pages: get_page_content(doc_name: "{name}", pages: "1,5,10")',
+                    f"This is a short document with {page_num} "
+                    f"page{'' if page_num == 1 else 's'}.",
+                    f'Read it directly: get_page_content(doc_name: "{name}", pages: "{all_pages}")',
                 ])
             else:
                 suggestions.extend([
@@ -870,8 +863,8 @@ def _get_document(client, doc_name: str, folder_id: Optional[str] = None,
                     f'Then target specific sections: get_page_content(doc_name: "{name}", pages: "1-3")',
                 ])
     else:
-        suggestions.append("Document processing failed. Index the document "
-                           "again with SuperIndexClient.submit_document().")
+        suggestions.append("Document processing failed. Ask the user to "
+                           "re-index it (`superindex index <path> --force`).")
 
     data: dict[str, Any] = {
         "name": name,
@@ -1277,19 +1270,31 @@ _LOCAL_DOC_NAME_DESCRIPTION = (
 
 _LOCAL_DESCRIPTIONS: dict[str, str] = {
     "browse_documents": (
-        "Primary document retrieval tool — first choice for any "
-        "document-related question. Lists your documents newest first with "
-        "names and descriptions; match them against the user's intent and "
-        "page through with `offset: next_offset` (limit up to 50) while "
-        "`has_more` is true. "
-        'Folder browsing and semantic ranking (sort="relevance") are not '
-        "supported in local mode yet — they work on PageIndex cloud."
+        "Primary document discovery tool — first choice for finding which "
+        "documents exist. Lists your documents newest first with names and "
+        "descriptions; match them against the user's intent and page "
+        "through with `offset: next_offset` (limit up to 50) while "
+        "`has_more` is true."
     ),
-    # Drop the sentence naming the cloud-only image tool, whatever its
-    # wording; the contract-refresh test pins that something was removed.
-    "get_page_content": re.sub(
-        r"\s*[^.]*`get_document_image\(\)`[^.]*\.", "",
-        TOOL_CONTRACT["get_page_content"]["description"]),
+    "get_document": (
+        "Show a document's metadata: description, status, page count "
+        "(`page_count`), creation time (`created_at`) and any custom "
+        "metadata. Every document in the library is already indexed, so "
+        "there is no need to call this before `get_document_structure()` "
+        "or `get_page_content()`."
+    ),
+    "get_page_content": (
+        "Extract page content from an indexed document. `pages` are "
+        "physical page numbers (1-based, the same numbering as "
+        "`start_index`/`end_index` in `get_document_structure()` and `page` "
+        "in `search_pages()` results — not the page labels printed on the "
+        'pages), e.g. "5", "3,7,10", "5-10" or "1-3,7,9-12". Use tight, '
+        "targeted page ranges — never the whole document at once. For "
+        f"documents over {STRUCTURE_FIRST_PAGE_THRESHOLD} pages, call "
+        "`get_document_structure()` first to pick relevant sections. One "
+        f"response holds about {_CHAR_BUDGET:,} characters of page text; "
+        "pages that do not fit are listed in `next_steps` to request next."
+    ),
 }
 
 _LOCAL_PARAM_DESCRIPTIONS: dict[tuple[str, str], str] = {
@@ -1510,7 +1515,7 @@ def build_agent_tools(client, include_management: bool = False,
     """Plain synchronous functions bound to `client`: the built-in
     contract tools over the local store, then the client's own tools.
     Every function returns the JSON envelope as a string and never raises
-    for arguments its signature accepts (cloud-only parameters are absent
+    for arguments its signature accepts (upstream-only parameters are absent
     from the local signatures; the call_tool path answers them with the
     guided envelope).
     """
@@ -1522,9 +1527,10 @@ def build_agent_tools(client, include_management: bool = False,
 # ── agent instructions ──
 
 _INSTRUCTIONS_HEADER = (
-    "SuperIndex is a document platform for uploading and "
-    "managing long PDFs (research papers, financial reports, legal docs, "
-    "textbooks, etc.)."
+    "SuperIndex is a local library of indexed long documents (financial "
+    "reports, research papers, legal docs, textbooks, etc.). Each document "
+    "is stored as Markdown pages with physical page numbers plus a "
+    "hierarchical table of contents."
 )
 
 _READING_WORKFLOW = f"""\
@@ -1535,11 +1541,11 @@ READING WORKFLOW:
 _TOOL_USAGE_RULES = """\
 TOOL USAGE RULES:
 - Invoke a tool only when all required parameters are present or clearly inferable. Never invent placeholder values.
-- If a tool returns an error, present the provided next_steps/options to the user instead of retrying blindly."""
+- If a tool returns an error, read its next_steps/options and act on them (fix the arguments or switch tools); do not repeat the same failing call. Tell the user only about problems that still block the answer."""
 
 _DISCOVERY = """\
 DOCUMENT DISCOVERY:
-- browse_documents() — DEFAULT discovery tool, first choice for any document-related question. The bare call returns your documents newest first with names and descriptions; match them against the user's intent."""
+- browse_documents() — DEFAULT discovery tool, first choice for finding which documents exist. The bare call returns your documents newest first with names and descriptions; match them against the user's intent."""
 
 _DECISION = """\
 DECISION:
@@ -1555,7 +1561,7 @@ _PERSISTENCE = """\
 PERSISTENCE (before concluding the target document is not in the library):
 This protocol applies both when results are empty AND when results are returned but none match the user's intent. Do NOT give up after a single discovery attempt. Follow these steps in order:
 1. browse_documents() and compare every returned name/description against the user's intent
-2. Rephrase the query with synonyms or alternative terms and browse again
+2. Re-check every name/description against the intent using synonyms, abbreviations, or another language
 3. Page through the ENTIRE library with `limit: 50` and `offset: next_offset` until has_more is false — MANDATORY, must be completed before concluding "not found"
 Only after ALL steps have been tried may you conclude the document is not in the library. Do NOT fall back to general knowledge — if the user's question references their own documents, exhaust every discovery path first."""
 
@@ -1570,8 +1576,8 @@ AGENT_INSTRUCTIONS = "\n\n".join([
 ])
 
 
-# Frozen from the cloud MCP server's ``cited_answer`` prompt, minus the
-# bullet naming the cloud-only get_document_image() tool. Local page
+# Frozen from the upstream hosted service's ``cited_answer`` prompt, minus
+# the bullet naming the upstream-only get_document_image() tool. Local page
 # content carries no block_id, so the block rules stay dormant and
 # citations resolve to pages.
 LOCAL_CITATION_PROMPTS: dict[str, str] = {
@@ -1617,7 +1623,7 @@ def _base_instructions(client, include_management: bool = False) -> str:
 
 
 def doc_targeting_block(client, doc_id) -> Optional[str]:
-    """The doc_id targeting text, rendered as the cloud's managed chat
+    """The doc_id targeting text, rendered as the upstream hosted chat
     renders its own: the documents' metadata rows and the directive to
     work within them. Conversation content, never system prompt: the chat
     lanes prepend it as the first user message, and document_context()

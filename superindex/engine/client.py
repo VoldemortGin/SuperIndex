@@ -406,7 +406,7 @@ class SuperIndexClient:
     if not TYPE_CHECKING:
         # The protocol doors live behind chat(protocol=...); their old
         # names are the vendor SDKs' own, so an agent-written
-        # client.messages(...) fails here with the way in. Runtime-only:
+        # client.responses(...) fails here with the way in. Runtime-only:
         # a __getattr__ the type checker can see would silence every
         # attribute typo on the client.
         def __getattr__(self, name):

@@ -17,7 +17,7 @@ def highlight_region(
     Args:
         image: A PIL Image or raw image bytes (JPEG/PNG).
         bbox: ``[x0, y0, x1, y1]`` in units of ``scale`` from the
-            top-left corner, as ``get_block()`` returns it.
+            top-left corner (the upstream PageIndex block coordinate system).
         scale: The coordinate space ``bbox`` lives in (default 1000,
             matching the SuperIndex block coordinate system).
 

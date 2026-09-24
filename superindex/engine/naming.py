@@ -1,4 +1,4 @@
-"""SuperIndex naming v1. Keep the shared naming-v1.json contract in sync."""
+"""SuperIndex naming v1 (see docs/engine/naming-rules.md)."""
 
 import hashlib
 import os

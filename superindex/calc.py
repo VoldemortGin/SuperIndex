@@ -27,10 +27,17 @@ PRECISION = 50
 MAX_EXPRESSION = 1000        # characters
 ROUND_PLACES = 4
 
+# avada-eval's description claims comparisons, which the numeric-result check
+# rejects, and omits the operators this module adds.
+_OPERATORS_UPSTREAM = "+ - * / // % ** and comparisons"
+_OPERATORS = "+ - * / // % **, ^ (power), × and ÷"
+if _OPERATORS_UPSTREAM not in TOOL_DESCRIPTION:
+    raise RuntimeError("avada_eval.llm.TOOL_DESCRIPTION changed; update calc.DESCRIPTION")
+
 DESCRIPTION = (
     "Exact decimal calculator. Use it for EVERY arithmetic step: sums, differences, "
     "growth rates, shares/ratios, unit conversions — never compute in your head. "
-    + TOOL_DESCRIPTION
+    + TOOL_DESCRIPTION.replace(_OPERATORS_UPSTREAM, _OPERATORS)
     + " Name the figures you read via `variables` (e.g. {\"opat_2023\": 6610, "
     "\"opat_2022\": 6300}) and use the names in the expression; the reply echoes "
     "the substituted values."
