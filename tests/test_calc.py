@@ -34,7 +34,7 @@ def test_decimal_precision() -> None:
     assert value("0.1 + 0.2") == "0.3"
     assert value("1.1 * 3") == "3.3"
     out = evaluate("1 / 3")
-    assert out["result"].startswith("0.3333333333333333333333") and out["rounded"] == "0.3333"
+    assert out["result"] == "0." + "3" * 50 and out["rounded"] == "0.3333"
     assert evaluate("0.00001234 * 0.5")["rounded"] == "0.00000617"
     assert value("round(2.5)") == "3" and value("round(2 / 3, 2)") == "0.67"
 
@@ -53,6 +53,8 @@ def test_functions() -> None:
     assert value("ratio(1, 4)") == "0.25"
     assert value("avg(1, 2, 3, 4)") == "2.5"
     assert value("sum(1, 2, 3) + max(1, 234) - min(5, 4) + abs(-1)") == "237"
+    assert value("max(1,234)") == "1234"  # comma with no spaces: thousands separator
+    assert value("1,234.5 + 12,345,678") == "12346912.5"
 
 
 def test_variables_are_substituted_and_echoed() -> None:
@@ -77,26 +79,27 @@ def test_errors_are_readable() -> None:
                                 ("x = 1", "invalid expression"),
                                 ("1; 2", "invalid expression"),
                                 ("", "required"),
-                                ("1,234 + 5", "thousands separators"),
-                                ("'a' * 3", "unsupported constant"),
-                                ("True + 1", "unsupported constant"),
-                                ("1 < 2", "not allowed"),
+                                ("1,23", "Tuple"),
+                                ("'a' * 3", "not a number"),
+                                ("1 < 2", "not a number"),
+                                ("round", "not a number"),
+                                ("cagr(1, 0, 5)", "positive"),
                                 ("pct_change(1)", "missing")):
         with pytest.raises(CalcError, match=message):
             evaluate(expression)
 
 
 def test_rejects_code() -> None:
-    for expression in ("__import__('os')", "open('x')", "(1).real", "(1).__class__",
-                       "[1, 2]", "a[0]", "lambda: 1", "abs(x=1)", "1 if 1 else 2",
-                       "round"):
+    for expression in ("__import__('os')", "open('x')", "(1).__class__",
+                       "a.__class__.__subclasses__()", "[1, 2]", "a[0]", "lambda: 1",
+                       "abs(x=1)", "x := 1"):
         with pytest.raises(CalcError):
             evaluate(expression, {"a": 1})
 
 
 def test_rejects_huge_numbers() -> None:
-    for expression in ("10 ** 5000000", "2 ** 3000000", "10 ** 100", "1e200", "9" * 120):
-        with pytest.raises(CalcError, match="too|range|evaluate"):
+    for expression in ("10 ** 5000000", "2 ** 3000000", "9.5 ** 10000000", "1e2000000"):
+        with pytest.raises(CalcError, match="evaluate"):
             evaluate(expression)
     with pytest.raises(CalcError, match="too long"):
         evaluate("1+" * 600 + "1")

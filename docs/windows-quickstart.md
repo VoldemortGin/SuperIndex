@@ -175,7 +175,7 @@ uv run scripts/superindex.py batch D:\q.jsonl --retrieval-only --match passage
 
 检索前置（默认开）：`ask` / `serve` / `batch` 会先按问题跑 BM25，把 top-5 候选页（文档、页码、章节、片段）拼在问题前交给 Agent；`--no-prefetch` 关闭，`--prefetch-k N` 调整条数（`.env`：`SUPERINDEX_PREFETCH=0`、`SUPERINDEX_PREFETCH_K`）。`batch` 的 `summary.md` 多一列「线索」并统计“候选含答案页但没答对”（模型没用好）与“候选不含答案页”（检索没找到）。`ask -v` 会打印候选。
 
-数值计算：Agent 带 `calculate` 工具（Decimal 精确计算，支持 `pct_change` / `cagr` / `ratio` 和具名变量），系统提示要求增长率、占比、差额、单位换算等一律调用它；调用记录在 `batch` 的工具调用列表里。
+数值计算：Agent 带 `calculate` 工具（基于 [avada-eval](https://pypi.org/project/avada-eval/)（[GitHub](https://github.com/VoldemortGin/avada-eval)） 的 Decimal 精确计算，支持 `pct_change` / `cagr` / `ratio` 和具名变量），系统提示要求增长率、占比、差额、单位换算等一律调用它；调用记录在 `batch` 的工具调用列表里。
 
 PDF 原页截图（默认关，仅用于能看图的模型，如公司网关上的 GPT-4o / GPT-4.1 类部署）：建库时已用 `--pdf-dir` 关联 PDF，然后在 `.env` 设 `SUPERINDEX_PAGE_IMAGE=auto`（或命令行 `--page-image auto`）。
 
