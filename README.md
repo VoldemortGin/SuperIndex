@@ -131,11 +131,17 @@ structure inspected offline before spending anything.
 
 ## Two ways to get text out of a PDF
 
-The default path reads the PDF's own **text layer** with PyPDF2. That is free
-and works well on running prose, but it has two hard limits on financial
-reports:
+**Azure Document Intelligence becomes the default extractor as soon as
+`AZURE_DI_ENDPOINT` and `AZURE_DI_KEY` are set in `.env`.** Every entry point
+takes it up automatically — `scripts/02_qa_test.py` (PageIndex indexing) and
+`nav/build.py` (the two-level navigator) both print which extractor they used
+at startup. With nothing configured you get the built-in text layer, exactly as
+before.
 
-| | text layer (default) | Azure Document Intelligence |
+The fallback reads the PDF's own **text layer** with PyPDF2. That is free and
+works well on running prose, but it has two hard limits on financial reports:
+
+| | text layer | Azure Document Intelligence (default when configured) |
 |---|---|---|
 | Cost | free | per page |
 | Tables | **mangled** — a bar-chart page comes out as `175230`, two numbers fused, label-to-value association gone | real Markdown tables |
@@ -146,16 +152,35 @@ reports:
 Both land in the same place — Markdown with `#` headings — so `nav.build` and
 PageIndex's Markdown path consume either without changes.
 
+**Normally you don't invoke the extractor at all** — configure `.env` and run
+the pipeline as usual:
+
 ```bash
-# validate config, then analyse one page as a smoke test (cheap)
+# 1. check the config (and analyse page 1 of one PDF as a cheap smoke test)
 python scripts/06_azure_extract.py data/aia_reports --check --only FY2021
 
-# convert the corpus to Markdown
-python scripts/06_azure_extract.py data/aia_reports --out corpus_md
+# 2. build the two-level index straight over the PDFs — Azure DI is picked up
+#    automatically, no extra flag needed
+python -m nav.build data/aia_reports --out corpus_index --summarize-files
 
-# index the result with the two-level navigator
+# 3. or run the PageIndex QA pipeline, which takes it up the same way
+python scripts/02_qa_test.py --docs FY2021
+```
+
+`06_azure_extract.py` exists for the case where you want the Markdown **on disk
+as an artefact** (to inspect it, diff it, or feed it to something else):
+
+```bash
+python scripts/06_azure_extract.py data/aia_reports --out corpus_md
 python -m nav.build corpus_md --out corpus_index --summarize-files
 ```
+
+Both entry points accept `--extractor {auto,azure-di,text-layer}` to force a
+backend — useful for measuring what Azure DI actually buys you on your corpus.
+
+If a configured Azure call fails, the run **aborts** rather than silently
+degrading to the text layer (a broken key would otherwise quietly change index
+quality). Set `AZURE_DI_FALLBACK=1` to opt into the soft behaviour.
 
 Configuration lives in `.env` (see the Azure section in `.env.example`) —
 endpoint, key, model, output format, features. The page anchors are injected by
@@ -164,8 +189,10 @@ page boundary, which is why `AZURE_DI_STRING_INDEX_TYPE` must stay
 `unicodeCodePoint` (it keeps offsets aligned with Python string indices).
 
 `extractors/azure_di.py` is plain REST over httpx — no Azure SDK dependency.
-`tests/test_azure_di.py` covers the config, page-marker and error-mapping logic
-offline (28 assertions, no network).
+`extractors/backend.py` decides which extractor is active and takes over
+PageIndex's `LocalAPI._extract_page_texts` when Azure is configured, so nothing
+inside `PageIndex/` is ever edited. Offline tests:
+`tests/test_azure_di.py` (28 assertions) and `tests/test_backend.py` (27).
 
 ---
 

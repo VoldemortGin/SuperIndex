@@ -50,8 +50,9 @@ bash data/aia_reports/download.sh     # 唯一还需要单独获取的东西（1
 
 - **10 份 AIA 报告只索引了 3 份**（1H2021 / FY2021 / FY2022），
   其余 7 份未索引。原因见第五节「为什么中途停了」。
-- **Azure DI 抽取器没有用真实 Azure 凭据端到端验证过** —— 离线逻辑有
-  `tests/test_azure_di.py` 的 28 条断言覆盖，但真实调用需接手人配 key 后跑一次。
+- **Azure DI 抽取器没有用真实 Azure 凭据端到端验证过** —— 它是「配了就默认生效」
+  的路径（见 5.6），离线逻辑有 55 条断言覆盖，但真实调用需接手人配 key 后跑一次
+  `--check --only FY2021`。
 - **`nav/` 只用合成语料验证过**，未在真实公司语料上跑过。
 - **Dify 方案只有设计文档，未落地**。
 - **没有评测集**（这是最大的缺口，见第八节）。
@@ -189,10 +190,12 @@ PAGEINDEX_CHAT_MODEL=deepseek/deepseek-flash
 │   └── ⚠️ 01_build_index.py / 02_qa.py 是早期版本，已被上面两个取代，可删
 │
 ├── extractors/                ★ 文档抽取后端
+│   ├── backend.py             ★ 后端解析：配了 Azure 就默认用它（并接管 PageIndex）
 │   └── azure_di.py            Azure Document Intelligence 客户端（纯 REST，无 SDK 依赖）
 │
 ├── tests/
-│   └── test_azure_di.py       azure_di 的离线测试（28 断言，不联网）
+│   ├── test_azure_di.py       azure_di 的离线测试（28 断言，不联网）
+│   └── test_backend.py        后端解析的离线测试（27 断言，不联网）
 │
 ├── webapp/                    Web 问答界面
 │   ├── server.py              ★ 标准库 http.server，SSE 流式，端口 8787
@@ -285,10 +288,29 @@ stream = client.chat(question, doc_id=scope, stream=True, reasoning_effort=REASO
 - 每一级都有**确定性回退**（年份权重最高）
 - 增量更新：mtime + size 未变则跳过
 
-### 5.6 `extractors/azure_di.py` + `scripts/06_azure_extract.py`（新增）
+### 5.6 `extractors/` + `scripts/06_azure_extract.py`（新增）
 
-用 **Azure AI Document Intelligence** 把 PDF 转成 Markdown，作为默认文本层提取的
-替代方案。解决的是第七节里那两个默认路径的硬伤：
+用 **Azure AI Document Intelligence** 把 PDF 转成 Markdown。
+
+**★ 关键行为：配了就是默认。** `.env` 里同时设好 `AZURE_DI_ENDPOINT` 和
+`AZURE_DI_KEY` 之后，**所有入口自动使用 Azure DI**，不需要任何命令行参数：
+
+| 入口 | 接管方式 |
+|---|---|
+| `scripts/02_qa_test.py` | 猴补丁 `pageindex.local_api.LocalAPI._extract_page_texts` |
+| `nav/build.py` | `read_document()` 里对 PDF 走 `extractor.document_text()` |
+
+没配则完全退回原来的文本层路径，行为不变。两个入口启动时都会打印
+`提取后端: azure-di` 或 `提取后端: text-layer` 并说明原因 —— **绝不静默切换**。
+
+可以用 `--extractor {auto,azure-di,text-layer}` 强制指定，用于对比两种后端的
+实际差异。
+
+**失败策略**：配了 Azure 但调用失败时**直接中止**，不静默退回文本层
+（否则 key 写错会在无人察觉的情况下改变索引质量）。设 `AZURE_DI_FALLBACK=1`
+可开启软退回。`nav.build` 会给出干净的中止提示而非 traceback。
+
+它解决的是第七节里那两个默认路径的硬伤：
 
 | | 默认（PyPDF2 读文本层） | Azure DI |
 |---|---|---|
@@ -529,8 +551,9 @@ $PY -u scripts/02_qa_test.py --skip-index --questions questions_3docs.json \
 # 4. 验证 nav 索引可用（应定位到 友邦保险/2024/annual/ + 股息章节）
 $PY -u -m nav.route samples/test_index "友邦保险 2024 年全年的每股股息是多少？"
 
-# 5. 跑 azure_di 的离线测试（28 条断言，不联网，约 1 秒）
-$PY -u tests/test_azure_di.py
+# 5. 跑离线测试（55 条断言，不联网，约 2 秒）
+$PY -u tests/test_azure_di.py     # 28 条：配置/页标记/错误映射
+$PY -u tests/test_backend.py      # 27 条：后端解析/按页切分/PageIndex 接管
 
 # 6. 检查 Azure DI 配置（未配 key 会给出可操作的报错，这是预期的）
 $PY -u scripts/06_azure_extract.py data/aia_reports --check

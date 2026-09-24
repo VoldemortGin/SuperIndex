@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -28,12 +29,38 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from nav import llm  # noqa: E402
+from extractors.azure_di import AzureDIError  # noqa: E402
 from nav.store import (Chapter, DirEntry, FileEntry, Manifest, file_key)  # noqa: E402
 
 TEXT_EXT = {".md", ".markdown", ".txt"}
 PDF_EXT = {".pdf"}
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 BOLD_ONLY_RE = re.compile(r"^\*\*(.+?)\*\*\s*$")
+PAGE_MARK_RE = re.compile(r"^<!--\s*page:\s*(\d+)\s*-->\s*$")
+
+
+def page_marker_chapters(lines: list[str]) -> list[Chapter]:
+    """Fallback tree for text with page markers but no headings.
+
+    This is what a PDF looks like when it was read from the text layer instead
+    of via Azure Document Intelligence: real page boundaries, but no Markdown
+    headings to build a hierarchy from. One node per page is coarse, but it
+    keeps every page reachable — an empty tree would make the file invisible to
+    retrieval entirely.
+    """
+    marks = []
+    for i, raw in enumerate(lines, start=1):
+        m = PAGE_MARK_RE.match(raw.strip())
+        if m:
+            marks.append((i, int(m.group(1))))
+    if not marks:
+        return []
+    nodes = []
+    for idx, (line_no, page_no) in enumerate(marks):
+        end = marks[idx + 1][0] - 1 if idx + 1 < len(marks) else len(lines)
+        nodes.append(Chapter(title=f"Page {page_no}", level=1,
+                             start=line_no, end=max(line_no, end)))
+    return nodes
 
 
 # ---------------------------------------------------------------- chapters
@@ -136,9 +163,34 @@ def pdf_chapters(path: Path) -> list[Chapter]:
         doc.close()
 
 
-def read_document(path: Path) -> tuple[list[Chapter], list[str]]:
-    """Return (chapter tree, source lines) for one file."""
+def read_document(path: Path, extractor=None) -> tuple[list[Chapter], list[str]]:
+    """Return (chapter tree, source lines) for one file.
+
+    For PDFs the active extraction backend decides what we get, and the three
+    outcomes degrade in a useful order:
+
+    1. **Azure Document Intelligence** — Markdown with real headings, tables and
+       `<!-- page: N -->` markers, so we get a proper chapter hierarchy.
+    2. **Text layer** — page markers but no headings, so we fall back to one
+       node per page. Coarse, but every page stays reachable.
+    3. **Neither** (no backend text at all) — the PDF's own bookmarks, if any.
+    """
     if path.suffix.lower() in PDF_EXT:
+        if extractor is not None:
+            try:
+                text = extractor.document_text(path)
+            except Exception as exc:  # noqa: BLE001
+                # When Azure is configured but broken, stop the whole build:
+                # continuing would silently index the weaker text layer.
+                if getattr(extractor, "strict", False):
+                    raise
+                print(f"    ! {path.name}: {exc}")
+                text = ""
+            if text.strip():
+                lines = text.split("\n")
+                chapters = markdown_chapters(lines) or page_marker_chapters(lines)
+                if chapters:
+                    return chapters, lines
         return pdf_chapters(path), []
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -150,7 +202,7 @@ def read_document(path: Path) -> tuple[list[Chapter], list[str]]:
 
 # ------------------------------------------------------------------- scan
 def scan(root: Path, includes: set[str], excludes: set[str],
-         max_files: Optional[int] = None
+         max_files: Optional[int] = None, extractor=None
          ) -> tuple[Manifest, dict[str, tuple[list[Chapter], list[str]]]]:
     root = root.resolve()
     m = Manifest(root=str(root), built_at=__import__("time").time())
@@ -191,7 +243,7 @@ def scan(root: Path, includes: set[str], excludes: set[str],
                 st = fpath.stat()
             except OSError:
                 continue
-            chapters, lines = read_document(fpath)
+            chapters, lines = read_document(fpath, extractor)
             flat = [c for ch in chapters for c in ch.flatten()]
             fe = FileEntry(
                 rel_path=frp, name=fn, parent=rp, ext=fpath.suffix.lower(),
@@ -331,7 +383,7 @@ def summarize_chapters(m: Manifest, index_dir: Path, model: str, workers: int,
                 print(f"    {done}/{len(jobs)}")
 
     for fe, chapters, lines, _ in targets:
-        m.save_tree(index_dir, fe.tree_key, chapters, lines if fe.ext in TEXT_EXT else None)
+        m.save_tree(index_dir, fe.tree_key, chapters, lines or None)
     return total
 
 
@@ -349,7 +401,33 @@ def main() -> int:
     ap.add_argument("--force", action="store_true", help="recompute existing summaries")
     ap.add_argument("--model", default=llm.DEFAULT_MODEL)
     ap.add_argument("--workers", type=int, default=6)
+    ap.add_argument("--extractor", choices=["auto", "azure-di", "text-layer"],
+                    default="auto",
+                    help="PDF text extractor. 'auto' (default) uses Azure "
+                         "Document Intelligence when AZURE_DI_ENDPOINT and "
+                         "AZURE_DI_KEY are set in .env, else the PDF bookmarks.")
     args = ap.parse_args()
+
+    # Resolve the extraction backend once, up front, and say which one it is.
+    if args.extractor == "text-layer":
+        for var in ("AZURE_DI_ENDPOINT", "AZURE_DI_KEY",
+                    "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT",
+                    "AZURE_DOCUMENT_INTELLIGENCE_KEY"):
+            os.environ.pop(var, None)
+    from extractors.backend import Extractor, is_azure_configured
+    if args.extractor == "azure-di" and not is_azure_configured():
+        print("--extractor azure-di 需要 AZURE_DI_ENDPOINT 与 AZURE_DI_KEY，"
+              "但 .env 里没有配置。", file=sys.stderr)
+        return 1
+    extractor = Extractor() if any(
+        p.suffix.lower() == ".pdf"
+        for p in Path(args.root).rglob("*")) else None
+    if extractor is not None:
+        print(f"提取后端: {extractor.info.name}")
+        print(f"          {extractor.info.detail}")
+    else:
+        print("提取后端: 无需（语料里没有 PDF）")
+    print()
 
     root = Path(args.root)
     if not root.is_dir():
@@ -361,10 +439,39 @@ def main() -> int:
 
     # reuse existing manifest when only summarizing
     existing = out / "manifest.json"
+    try:
+        m, trees = _build(root, out, includes, excludes,
+                          args, extractor, existing)
+    except AzureDIError as exc:
+        print(f"\n❌ 抽取失败，已中止（不产出半成品索引）:\n  {exc}", file=sys.stderr)
+        print("\n  修复方式二选一：", file=sys.stderr)
+        print("    1. 修正 .env 里的 AZURE_DI_ENDPOINT / AZURE_DI_KEY", file=sys.stderr)
+        print("    2. 设 AZURE_DI_FALLBACK=1 允许失败时退回文本层", file=sys.stderr)
+        return 1
+
+    if args.summarize_chapters:
+        print("生成章节摘要 ...")
+        summarize_chapters(m, out, args.model, args.workers, args.force)
+        m.save(out)
+    if args.summarize_files:
+        print("生成文件与目录摘要 ...")
+        summarize_files(m, out, args.model, args.workers, args.force)
+        m.save(out)
+
+    m.save(out)
+    print(f"\n索引已写入 {out}")
+    print(f"  目录 {len(m.dirs)}  文件 {len(m.files)}  "
+          f"有摘要文件 {sum(1 for f in m.files.values() if f.summary)}")
+    return 0
+
+
+def _build(root: Path, out: Path, includes: set[str], excludes: set[str],
+           args, extractor, existing: Path):
+    """Scan + persist trees. Split out so main() can catch AzureDIError cleanly."""
     if existing.is_file() and (args.summarize_files or args.summarize_chapters):
         print(f"载入已有索引 {existing}")
         m = Manifest.load(out)
-        fresh, trees = scan(root, includes, excludes, args.max_files)
+        fresh, trees = scan(root, includes, excludes, args.max_files, extractor)
         added, removed = [], []
         for rp, fe in fresh.files.items():
             if rp in m.files:
@@ -377,12 +484,12 @@ def main() -> int:
                     # summaries are stale, so they are dropped with it)
                     chs, lines = trees[rp]
                     m.save_tree(out, fe.tree_key, chs,
-                                lines if fe.ext in TEXT_EXT else None)
+                                lines or None)
                     added.append(rp + " (changed)")
             else:
                 chs, lines = trees[rp]
                 m.save_tree(out, fe.tree_key, chs,
-                            lines if fe.ext in TEXT_EXT else None)
+                            lines or None)
                 added.append(rp)
             m.files[rp] = fe
         for rp, d in fresh.dirs.items():
@@ -399,30 +506,17 @@ def main() -> int:
             print(f"  - {rp}")
     else:
         print(f"扫描 {root} ...")
-        m, trees = scan(root, includes, excludes, args.max_files)
+        m, trees = scan(root, includes, excludes, args.max_files, extractor)
         for rp, (chapters, lines) in trees.items():
             fe = m.files.get(rp)
             if fe:
                 m.save_tree(out, fe.tree_key, chapters,
-                            lines if fe.ext in TEXT_EXT else None)
+                            lines or None)
         m.save(out)
         print(f"  目录 {len(m.dirs)}, 文件 {len(m.files)}, "
               f"章节节点 {sum(f.n_chapters for f in m.files.values())}")
 
-    if args.summarize_chapters:
-        print("生成章节摘要 ...")
-        summarize_chapters(m, out, args.model, args.workers, args.force)
-        m.save(out)
-    if args.summarize_files:
-        print("生成文件与目录摘要 ...")
-        summarize_files(m, out, args.model, args.workers, args.force)
-        m.save(out)
-
-    m.save(out)
-    print(f"\n索引已写入 {out}")
-    print(f"  目录 {len(m.dirs)}  文件 {len(m.files)}  "
-          f"有摘要文件 {sum(1 for f in m.files.values() if f.summary)}")
-    return 0
+    return m, trees
 
 
 if __name__ == "__main__":
