@@ -1,4 +1,4 @@
-"""`python -m superindex batch` — run a question set through the `ask` chain.
+"""`uv run scripts/superindex.py batch` — run a question set through the `ask` chain.
 
 Question files:
     .json   the scripts/questions.json layout ({"questions": [...]}) or a list

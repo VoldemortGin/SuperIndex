@@ -12,7 +12,6 @@ param(
     [string[]]$Markdown = @("samples\aia_ar2021_excerpt.md", "samples\di_native_excerpt.md"),
     [string]$Questions = "samples\questions_sample.jsonl",
     [string]$Store = "",
-    [string]$Python = "",
     [switch]$Summary,
     [string[]]$Extra = @()
 )
@@ -23,10 +22,10 @@ Set-StrictMode -Version Latest
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Set-Location $Root
 
-if (-not $Python) {
-    $VenvPy = Join-Path $Root ".venv\Scripts\python.exe"
-    if (Test-Path $VenvPy) { $Python = $VenvPy } else { $Python = "python" }
+if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
+    throw 'uv not found. Install it, then open a new PowerShell: powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"'
 }
+$Cli = @("run", "scripts/superindex.py")
 
 function Invoke-Native {
     param([string]$Exe, [string[]]$Arguments)
@@ -48,15 +47,15 @@ $StoreArgs = @()
 if ($Store) { $StoreArgs = @("--store", $Store) }
 
 foreach ($Md in $Markdown) {
-    $IndexArgs = @("-m", "superindex", "index", $Md) + $StoreArgs
+    $IndexArgs = $Cli + @("index", $Md) + $StoreArgs
     if (-not $Summary) { $IndexArgs += "--no-summary" }
     Write-Host "== index $Md"
-    Invoke-Native $Python $IndexArgs
+    Invoke-Native "uv" $IndexArgs
 }
 
 $Out = Join-Path $Root ("results\batch\" + (Get-Date -Format "yyyyMMdd-HHmmss"))
 Write-Host "== batch $Questions"
-Invoke-Native $Python (@("-m", "superindex", "batch", $Questions, "--out", $Out) + $StoreArgs + $Extra)
+Invoke-Native "uv" ($Cli + @("batch", $Questions, "--out", $Out) + $StoreArgs + $Extra)
 
 Write-Host ""
 Write-Host "summary: $(Join-Path $Out 'summary.md')"

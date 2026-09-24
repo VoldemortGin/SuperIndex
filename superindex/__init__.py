@@ -1,6 +1,6 @@
 """SuperIndex: PageIndex question answering over Azure DI Markdown.
 
-`python -m superindex index|ask|search|serve|batch` — see `superindex.cli`.
+`uv run scripts/superindex.py index|ask|search|serve|batch` — see `superindex.cli`.
 """
 import importlib.util
 import sys

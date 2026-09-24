@@ -629,7 +629,7 @@ pkill -f "webapp/server.py" && nohup $PY -u webapp/server.py > results/webapp.lo
 
 **本次完成**
 
-- `python -m superindex`：Markdown 建库（`index`）→ `search` / `ask` / `serve` / `batch`；支持 Azure DI 原生 Markdown（页标记、表格）。
+- `uv run scripts/superindex.py`：Markdown 建库（`index`）→ `search` / `ask` / `serve` / `batch`；支持 Azure DI 原生 Markdown（页标记、表格）。
 - BM25 关键词检索（`search_pages` 工具）：`--match page`（默认）/ `passage`（页内小段打分，仍返回整页）。
 - `batch` 批量问答（txt/jsonl/csv/json 题集、`--resume`、粗评分）与 `--retrieval-only` 纯检索评测。
 - PyInstaller 打包（`packaging/`）与 Windows 源码运行（`docs/windows-quickstart.md`，含公司 LLM API 配置与上手清单）。

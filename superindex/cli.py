@@ -1,11 +1,11 @@
-"""`python -m superindex` — index Azure DI Markdown, ask questions, serve the web UI.
+"""superindex — index Azure DI Markdown, ask questions, serve the web UI.
 
-    python -m superindex index corpus_md/ [--store DIR] [--no-summary]
-    python -m superindex ask "What was the 2021 final dividend?" [--doc NAME_OR_ID ...]
-    python -m superindex search "final dividend 2021" [--doc NAME_OR_ID ...] [--top-k 5]
-    python -m superindex serve [--port 8787] [--store DIR]
-    python -m superindex batch questions.jsonl [--out DIR] [--concurrency 1] [--resume]
-    python -m superindex batch questions.jsonl --retrieval-only [--top-k 5]
+    uv run scripts/superindex.py index corpus_md/ [--store DIR] [--no-summary]
+    uv run scripts/superindex.py ask "What was the 2021 final dividend?" [--doc NAME_OR_ID ...]
+    uv run scripts/superindex.py search "final dividend 2021" [--doc NAME_OR_ID ...] [--top-k 5]
+    uv run scripts/superindex.py serve [--port 8787] [--store DIR]
+    uv run scripts/superindex.py batch questions.jsonl [--out DIR] [--concurrency 1] [--resume]
+    uv run scripts/superindex.py batch questions.jsonl --retrieval-only [--top-k 5]
 
 `search`, `ask`, `serve` and `batch` take `--match page|passage` (keyword
 search scoring, SUPERINDEX_BM25_MATCH; see `superindex.bm25`).

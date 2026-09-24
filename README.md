@@ -10,9 +10,9 @@ The corpus is the five most recent **annual reports** plus the five matching
 **interim reports**, taken from AIA's
 [results & presentations archive](https://www.aia.com/en/investor-relations/overview/results-presentations).
 
-> Windows 上直接用 Python 源码运行 `superindex`（建库 / 问答 / 网页 / 批量问答）：见 [`docs/windows-quickstart.md`](docs/windows-quickstart.md)。
+> Windows 上直接用 Python 源码运行 `superindex`（建库 / 问答 / 网页 / 批量问答）：见 [`docs/windows-quickstart.md`](docs/windows-quickstart.md)。环境用 [uv](https://docs.astral.sh/uv/) 管理：`uv sync` 装依赖，`uv run scripts/superindex.py <子命令>` 运行，`uv run pytest` 跑测试。
 >
-> 常用：`python -m superindex search "final dividend" --top-k 3`（BM25 检索自检，不调 LLM）；`python -m superindex batch q.jsonl`（批量问答，出 `summary.md`）；`batch q.jsonl --retrieval-only --match page|passage`（纯检索评测）。
+> 常用：`uv run scripts/superindex.py search "final dividend" --top-k 3`（BM25 检索自检，不调 LLM）；`uv run scripts/superindex.py batch q.jsonl`（批量问答，出 `summary.md`）；`batch q.jsonl --retrieval-only --match page|passage`（纯检索评测）。
 > `--match` 默认 `page`；`passage` 在长页多主题时更好，建议在真实 DI 年报题集上用 `--retrieval-only` 两种各跑一次复核。公司/云端 LLM API（OpenAI 兼容网关、Azure OpenAI）配置见 quickstart §3b。
 
 ---
