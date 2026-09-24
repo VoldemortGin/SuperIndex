@@ -54,6 +54,7 @@ superindex.exe index report.md --no-summary           # 不调 LLM，只建目�
 superindex.exe index D:\corpus_md --force             # 重建未改动的文件
 superindex.exe ask "2021 年末期股息是多少？"
 superindex.exe ask "..." --doc aia_ar2021 -v          # 限定文档，-v 打印工具调用
+superindex.exe search "末期股息 2023" --top-k 5       # 关键词(BM25)检索，不调 LLM，便于排查
 superindex.exe serve --port 8787                      # 浏览器打开 http://127.0.0.1:8787
 superindex.exe serve --host 0.0.0.0 --port 8787       # 局域网访问（注意防火墙）
 ```

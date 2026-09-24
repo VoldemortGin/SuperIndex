@@ -2,6 +2,7 @@
 
     python -m superindex index corpus_md/ [--store DIR] [--no-summary]
     python -m superindex ask "What was the 2021 final dividend?" [--doc NAME_OR_ID ...]
+    python -m superindex search "final dividend 2021" [--doc NAME_OR_ID ...] [--top-k 5]
     python -m superindex serve [--port 8787] [--store DIR]
 
 Models and endpoints come from `.env` (working directory, then the
@@ -52,10 +53,16 @@ def _store(args: argparse.Namespace) -> Path:
 
 
 def make_client(settings: LLMSettings, store: Path, instructions: str | None = None) -> Any:
-    """A PageIndexClient over the store, on the configured chat model."""
+    """A PageIndexClient over the store, on the configured chat model, whose
+    agent also has the `search_pages` keyword tool."""
     chat_model = settings.require("chat")
     configure_litellm()
     from pageindex import PageIndexClient
+
+    from superindex import agent_search
+
+    agent_search.install()
+    instructions = "\n\n".join(t for t in (instructions, agent_search.GUIDANCE) if t)
 
     return PageIndexClient(
         index_model=settings.index_model or chat_model,
@@ -105,8 +112,7 @@ def cmd_index(args: argparse.Namespace) -> int:
 
 
 # ───────────────────────────────────────────────────────────── ask
-def _resolve_docs(client: Any, wanted: list[str]) -> list[str]:
-    docs = client.list_documents(limit=100).get("documents", [])
+def _resolve_docs(docs: list[dict[str, Any]], wanted: list[str]) -> list[str]:
     ids = []
     for w in wanted:
         match = [d["id"] for d in docs if w in (d.get("id"), d.get("name"))]
@@ -127,7 +133,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
         return 1
     scope: str | list[str] | None = None
     if args.doc:
-        ids = _resolve_docs(client, args.doc)
+        ids = _resolve_docs(client.list_documents(limit=100).get("documents", []), args.doc)
         scope = ids[0] if len(ids) == 1 else ids
     stream = client.chat(args.question, doc_id=scope, stream=True,
                          reasoning_effort=settings.reasoning_effort)
@@ -139,6 +145,36 @@ def cmd_ask(args: argparse.Namespace) -> int:
             arguments = json.dumps(ev.get("arguments"), ensure_ascii=False)
             print(f"\n[tool] {ev.get('name')} {arguments}", file=sys.stderr, flush=True)
     print()
+    return 0
+
+
+# ───────────────────────────────────────────────────────────── search
+def cmd_search(args: argparse.Namespace) -> int:
+    from pageindex.local_store import DocStore
+
+    from superindex import bm25
+
+    store = _store(args)
+    docs = [m for m in DocStore(str(store)).list_metas() if m.get("status") == "completed"]
+    if not docs:
+        print(f"no documents in {store} — run `index` first", file=sys.stderr)
+        return 1
+    scope = _resolve_docs(docs, args.doc) if args.doc else None
+    result = bm25.search(store, args.query, doc_ids=scope, top_k=args.top_k)
+    for name in result.built:
+        print(f"(built missing keyword index for {name})", file=sys.stderr)
+    if args.json:
+        print(json.dumps([h.to_dict() for h in result.hits], ensure_ascii=False, indent=2))
+        return 0
+    if not result.hits:
+        print(f"no match in {result.searched} document(s)")
+        return 0
+    for rank, hit in enumerate(result.hits, start=1):
+        label = f" (printed {hit.page_label})" if hit.page_label else ""
+        print(f"{rank}. [{hit.score:.2f}] {hit.doc_name}  p.{hit.page}{label}")
+        if hit.section:
+            print(f"   section: {hit.section}")
+        print(f"   {hit.snippet}\n")
     return 0
 
 
@@ -193,6 +229,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-v", "--verbose", action="store_true", help="print tool calls to stderr")
     _add_llm_flags(p)
     p.set_defaults(func=cmd_ask)
+
+    p = sub.add_parser("search", help="keyword (BM25) search over the store, no LLM")
+    p.add_argument("query")
+    p.add_argument("--doc", action="append",
+                   help="document name, id or name fragment (repeatable; default: all)")
+    p.add_argument("--top-k", type=int, default=5, help="pages to show (default 5)")
+    p.add_argument("--store", help="store directory (SUPERINDEX_STORE)")
+    p.add_argument("--json", action="store_true", help="print the hits as JSON")
+    p.set_defaults(func=cmd_search)
 
     p = sub.add_parser("serve", help="start the web chat UI over the store")
     p.add_argument("--port", type=int, default=8787)

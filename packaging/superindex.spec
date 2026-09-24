@@ -55,6 +55,8 @@ hiddenimports = [
     "webapp.server",
     "superindex.cli",
     "superindex.md_ingest",
+    "superindex.bm25",
+    "superindex.agent_search",
     "nav.build",
     "nav.store",
     "nav.llm",
