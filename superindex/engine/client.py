@@ -1,10 +1,9 @@
-"""PageIndex SDK client: the 0.2.x cloud surface, now with a local mode."""
+"""SuperIndex SDK client: the local document store and own-model chat."""
 from __future__ import annotations
 
 import os
 import re
 import threading
-import time
 import warnings
 from typing import (TYPE_CHECKING, Any, Callable, Iterator, Literal, Mapping,
                     Optional, Union, cast, overload)
@@ -76,7 +75,7 @@ def _citation_key(m: re.Match) -> Optional[tuple[str, int, Optional[str]]]:
 
 
 def _parse_citations(text: str) -> list[dict[str, Any]]:
-    """``<doc=…;page=…;block=…>`` tags (the managed chat's format), then
+    """``<doc=…;page=…;block=…>`` tags (the upstream hosted chat's format), then
     ``<cite doc= page= block=/>`` tags; deduplicated, ``block_id`` only
     when the tag carries one."""
     found: list[dict[str, Any]] = []
@@ -104,22 +103,9 @@ def _agents_sdk_model_name(model: str) -> str:
 
 _LOCAL_INDEX_KEYS = ("model", "summary_model", "backend", "storage_path")
 
-# Near-synonyms of "cloud" that would otherwise parse as model names —
-# a silent wrong mode. They error, pointing at the real word.
-_RESERVED_MODE_WORDS = {"hosted", "managed"}
-
-
-def _env_cloud_key(spelling: str, inline: str = "api_key=...") -> str:
-    # .env support lives in utils' import-time load_dotenv(): load it
-    # before the read, or a key in .env is visible only by import order.
-    from . import utils  # noqa: F401
-    key = os.environ.get("PAGEINDEX_API_KEY")
-    if not key:
-        raise SuperIndexAPIError(
-            f"{spelling} reads the PageIndex API key from the "
-            "PAGEINDEX_API_KEY environment variable, which is not set — "
-            f"export it, or pass the key inline ({inline}).")
-    return key
+# Mode words that would otherwise parse as model names — a silent wrong
+# model. The hosted service is not supported; they error instead.
+_UNSUPPORTED_MODE_WORDS = {"cloud", "pageindex-cloud", "hosted", "managed"}
 
 
 # One argument vocabulary regardless of spelling: these values are shape-
@@ -135,110 +121,72 @@ _ARG_TYPES: "dict[str, tuple[type, ...]]" = {
 def _declared_mode(value, side: str):
     if isinstance(value, str):
         value = value.strip().lower()
-    if value not in (None, "cloud", "local"):
+    if value not in (None, "local"):
         raise SuperIndexAPIError(
-            f'{side} "mode" must be "cloud" or "local", not {value!r}.')
+            f'{side} "mode" must be "local", not {value!r} — SuperIndex '
+            "runs locally only.")
     return value
 
 
-_CloudKey = Union[str, Callable[[], str], None]
+def _unsupported_mode_word(side: str, value: str) -> SuperIndexAPIError:
+    return SuperIndexAPIError(
+        f'{side}="{value}" is not supported — SuperIndex runs locally only. '
+        f'Pass a model name, or "local".')
 
 
-def _resolve_index_slot(index) -> "tuple[_CloudKey, dict[str, Any]]":
-    """The ``index=`` slot as (cloud api_key, local overrides). A dict
-    declares its side by its keys; an optional "mode" states it and must
-    agree. Keyless cloud spellings ("cloud" / "pageindex-cloud",
-    {"mode": "cloud"}) return the environment read as a thunk, so the
-    caller's mode cross-check runs before the environment is touched."""
-    from .types import PAGEINDEX_CLOUD
+def _resolve_index_slot(index) -> dict[str, Any]:
+    """The ``index=`` slot as local overrides. A dict declares the local
+    store by its keys; an optional "mode" must say "local"."""
     if isinstance(index, str):
         # Normalized compare: a case/whitespace variant of a mode word
         # must never fall through and silently become a model name.
         word = index.strip().lower()
-        if word in (PAGEINDEX_CLOUD, "cloud"):
-            return lambda: _env_cloud_key(f'index="{index.strip()}"',
-                                          'index={"api_key": ...}'), {}
         if word == "local":
-            return None, {}
-        if word in _RESERVED_MODE_WORDS:
-            raise SuperIndexAPIError(
-                f'index="{index}" is not a mode word — the cloud spelling '
-                'is index="cloud" (key from PAGEINDEX_API_KEY) or '
-                'index={"api_key": ...}.')
+            return {}
+        if word in _UNSUPPORTED_MODE_WORDS:
+            raise _unsupported_mode_word("index", index)
         if index.strip():
-            return None, {"index_model": index}
+            return {"index_model": index}
         raise SuperIndexAPIError(
             "index is an empty string — pass a local index model name, "
-            'or "cloud".')
+            'or "local".')
     if isinstance(index, Mapping):
         # None-valued keys mean "absent", exactly like the flat arguments.
         conf = {name: value for name, value in index.items()
                 if value is not None}
         declared = _declared_mode(conf.pop("mode", None), "index")
         if not conf:
-            if declared == "cloud":
-                return lambda: _env_cloud_key('index={"mode": "cloud"}',
-                                              'index={"api_key": ...}'), {}
             if declared == "local":
-                return None, {}
+                return {}
             raise SuperIndexAPIError(
-                "index is an empty dict — its keys pick the side: "
-                '{"api_key": ...} for cloud documents, or '
-                f"{', '.join(_LOCAL_INDEX_KEYS)} for the local store.")
-        unknown = set(conf) - {"api_key"} - set(_LOCAL_INDEX_KEYS)
+                "index is an empty dict — it takes "
+                f"{', '.join(_LOCAL_INDEX_KEYS)}.")
+        unknown = set(conf) - set(_LOCAL_INDEX_KEYS)
         if unknown:
             raise SuperIndexAPIError(
                 f"Unknown index keys ({', '.join(sorted(unknown))}) — "
-                'cloud takes "api_key"; local takes '
-                f"{', '.join(_LOCAL_INDEX_KEYS)}.")
-        if "api_key" in conf:
-            if declared == "local":
-                raise SuperIndexAPIError(
-                    'index declares mode "local" but carries api_key — '
-                    "an API key means cloud documents. Drop one of them.")
-            if len(conf) > 1:
-                raise SuperIndexAPIError(
-                    "index mixes cloud and local keys — cloud documents "
-                    'take {"api_key": ...} alone; the cloud pipeline does '
-                    "its own indexing.")
-            key = conf["api_key"]
-            if not key or not isinstance(key, str):
-                raise SuperIndexAPIError(
-                    'index["api_key"] must be a non-empty string.')
-            return key, {}
-        if declared == "cloud":
-            raise SuperIndexAPIError(
-                'index declares mode "cloud" but carries local keys '
-                f"({', '.join(sorted(conf))}) — the cloud pipeline does "
-                'its own indexing; cloud takes "api_key" only.')
+                f"index takes {', '.join(_LOCAL_INDEX_KEYS)}.")
         mapped = {"index_model": conf.get("model"),
                   "summary_model": conf.get("summary_model"),
                   "index_backend": conf.get("backend"),
                   "storage_path": conf.get("storage_path")}
-        return None, {name: value for name, value in mapped.items()
-                      if value is not None}
+        return {name: value for name, value in mapped.items()
+                if value is not None}
     raise SuperIndexAPIError("index must be a string or a dict.")
 
 
-def _resolve_chat_slot(chat) -> "tuple[Optional[str], dict[str, Any]]":
-    """The ``chat=`` slot as (mode, own-model overrides) — mode is
-    "managed", "own", or None (nothing declared beyond the overrides)."""
-    from .types import PAGEINDEX_CLOUD
+def _resolve_chat_slot(chat) -> dict[str, Any]:
+    """The ``chat=`` slot as own-model overrides."""
     if isinstance(chat, str):
         word = chat.strip().lower()
-        if word in (PAGEINDEX_CLOUD, "cloud"):
-            return "managed", {}
         if word == "local":
-            return "own", {}
-        if word in _RESERVED_MODE_WORDS:
-            raise SuperIndexAPIError(
-                f'chat="{chat}" is not a mode word — the managed chat is '
-                'chat="cloud".')
+            return {}
+        if word in _UNSUPPORTED_MODE_WORDS:
+            raise _unsupported_mode_word("chat", chat)
         if chat.strip():
-            return "own", {"chat_model": chat}
+            return {"chat_model": chat}
         raise SuperIndexAPIError(
-            "chat is an empty string — pass a model name, or "
-            '"cloud" for the managed chat.')
+            'chat is an empty string — pass a model name, or "local".')
     if isinstance(chat, Mapping):
         # None-valued keys mean "absent", exactly like the flat arguments.
         conf = {name: value for name, value in chat.items()
@@ -249,19 +197,11 @@ def _resolve_chat_slot(chat) -> "tuple[Optional[str], dict[str, Any]]":
             raise SuperIndexAPIError(
                 ("chat is an empty dict" if not conf else
                  f"Unknown chat keys ({', '.join(sorted(unknown))})")
-                + ' — chat takes "model" and "backend" (your own model), '
-                'or {"mode": "cloud"} / "cloud" for the managed chat.')
-        if declared == "cloud":
-            if conf:
-                raise SuperIndexAPIError(
-                    'chat declares mode "cloud" but carries '
-                    f"({', '.join(sorted(conf))}) — the managed chat "
-                    "selects its own model. Drop the mode, or the keys.")
-            return "managed", {}
+                + ' — chat takes "model" and "backend".')
         mapped = {"chat_model": conf.get("model"),
                   "chat_backend": conf.get("backend")}
-        return "own", {name: value for name, value in mapped.items()
-                       if value is not None}
+        return {name: value for name, value in mapped.items()
+                if value is not None}
     raise SuperIndexAPIError("chat must be a string or a dict.")
 
 
@@ -269,127 +209,81 @@ class SuperIndexClient:
     """
     Python SDK client for SuperIndex.
 
-    Two independent sides, each locally run or cloud-managed:
-
-    - **index** — where documents live. With an ``api_key`` they live in
-      your PageIndex cloud account, indexed by the managed pipeline,
-      exactly like the 0.2.x SDK. Without one they are indexed on your
-      machine by the open-source pipeline (your own LLM provider key,
-      e.g. ``OPENAI_API_KEY``) and stored under ``storage_path``.
-    - **chat** — who answers. With a chat model configured
-      (``chat_model=`` / ``chat=``), the document-QA agent runs in your
-      process against your own model and credentials — in both index
-      modes. On a cloud client with no chat model, the managed cloud
-      chat answers.
-
-    ``api_key`` moves your documents, never your model: ``chat_model``
-    always means your own model on your own keys. The fourth combination
-    (local documents + managed chat) cannot be expressed — the managed
-    chat cannot read your disk.
+    Documents are indexed on your machine (your own LLM provider key,
+    e.g. ``OPENAI_API_KEY``) and stored under ``storage_path``; the
+    document-QA agent runs in your process against your own chat model
+    and credentials.
 
     Usage:
-        client = SuperIndexClient()                  # local docs + your model
-        client = SuperIndexClient(api_key="...")     # cloud docs + managed chat
-        client = SuperIndexClient(api_key="...",     # cloud docs + your model
-                                 chat_model="openai/gpt-5.2")
+        client = SuperIndexClient()
+        client = SuperIndexClient(chat_model="openai/gpt-5.2")
 
     ``index=`` / ``chat=`` are the grouped spelling of the same flat
     arguments — a string as shorthand, a dict for the full config; each
-    side picks one spelling per client. ``index="cloud"`` (or the label
-    ``"pageindex-cloud"``) is the keyless cloud spelling (the key comes
-    from the ``PAGEINDEX_API_KEY`` environment variable — which is read
-    only when the code explicitly says cloud; a bare ``SuperIndexClient()``
-    stays local regardless of the environment).
+    side picks one spelling per client.
 
     Args:
-        api_key (str, optional): PageIndex cloud API key
-            (https://developer.pageindex.ai/api-keys). Omit for local mode.
         index (str | dict, optional): The index side, grouped —
-            ``"cloud"`` / ``"pageindex-cloud"`` (cloud, key from the
-            environment), ``"local"``, a local index model name, or a
-            dict: ``{"api_key": ...}`` for cloud, ``{"model",
-            "summary_model", "backend", "storage_path"}`` for local. An
-            optional ``"mode"`` key (``"cloud"`` / ``"local"``) states
-            the side and must agree with the other keys; ``{"mode":
-            "cloud"}`` alone reads the key from the environment. Not
-            combinable with this side's flat arguments.
+            ``"local"``, a local index model name, or a dict
+            ``{"model", "summary_model", "backend", "storage_path"}``. An
+            optional ``"mode"`` key must be ``"local"``. Not combinable
+            with this side's flat arguments.
         chat (str | dict, optional): The chat side, grouped — a model
-            name (your own model), ``"cloud"`` / ``"pageindex-cloud"``
-            (managed chat, cloud clients only), ``"local"`` (your own
-            model, the default one), or ``{"model", "backend"}``. An
-            optional ``"mode"`` key states the side: ``{"mode":
-            "cloud"}`` alone is the managed chat, ``"local"`` is your
-            own model and must agree with the other keys. Not
-            combinable with this side's flat arguments.
-        mode (str, optional): Client-level declaration of where the
-            documents live — ``"cloud"`` or ``"local"`` — checked
-            against the other arguments (``mode="local"`` with an
-            api_key errors). ``mode="cloud"`` alone reads the key from
-            the ``PAGEINDEX_API_KEY`` environment variable. Always
-            optional: the arguments themselves already carry the mode.
-        index_model (str, optional): Local mode only — LLM used to index
-            documents (structure and summaries). Defaults to the SDK
-            default (fast and cheap).
+            name, ``"local"`` (the default model), or ``{"model",
+            "backend"}``. An optional ``"mode"`` key must be ``"local"``.
+            Not combinable with this side's flat arguments.
+        mode (str, optional): ``"local"`` — accepted for compatibility;
+            the client is always local.
+        index_model (str, optional): LLM used to index documents
+            (structure and summaries). Defaults to the SDK default (fast
+            and cheap).
         chat_model (str, optional): Your own model for the chat surfaces
             (``chat``, ``chat_completions``), exposed as
-            ``client.chat_model`` — on a cloud client, setting it runs
-            the document-QA agent in your process over the cloud
-            documents (page content then flows through your process to
-            your model provider). Chat names route through LiteLLM and
+            ``client.chat_model``. Chat names route through LiteLLM and
             mean what LiteLLM says they mean; bare names are
             OpenAI-compatible shorthand, and ``openai/Qwen/...`` is the
             form for an OpenAI-compatible server that itself serves
             slashed model ids (vLLM, TGI). Defaults to the SDK default
-            (strong); reads ``None`` on a cloud client where the managed
-            chat answers.
-        model (str, optional): Local mode only — one model for both roles:
-            sets the default for ``index_model`` and ``chat_model`` at
-            once. The role-specific arguments win over it. (Also the
-            0.2.8-era name for the indexing model — old configs keep
-            working unchanged.)
-        summary_model (str, optional): Local mode only — legacy: overrides
-            the model used for node summaries and document descriptions;
-            ``index_model`` covers this.
-        retrieve_model (str, optional): Legacy name for ``chat_model`` —
-            same meaning everywhere, cloud clients included.
-        storage_path (str or os.PathLike, optional): Local mode only —
-            directory where indexed documents are stored. Defaults to
-            ``./.pageindex``.
-        index_backend (dict, optional): Local mode only — connection
-            overrides for the indexing lane's LLM calls. Keys are
-            LiteLLM's own connection params — ``api_key``, ``api_base``,
-            ``api_version``, ``aws_*``, … — passed through verbatim.
+            (strong).
+        model (str, optional): One model for both roles: sets the default
+            for ``index_model`` and ``chat_model`` at once. The
+            role-specific arguments win over it. (Also the 0.2.8-era name
+            for the indexing model — old configs keep working unchanged.)
+        summary_model (str, optional): Legacy: overrides the model used
+            for node summaries and document descriptions; ``index_model``
+            covers this.
+        retrieve_model (str, optional): Legacy name for ``chat_model``.
+        storage_path (str or os.PathLike, optional): Directory where
+            indexed documents are stored. Defaults to ``./.pageindex``.
+        index_backend (dict, optional): Connection overrides for the
+            indexing lane's LLM calls. Keys are LiteLLM's own connection
+            params — ``api_key``, ``api_base``, ``api_version``,
+            ``aws_*``, … — passed through verbatim.
         chat_backend (dict, optional): Default connection overrides for
-            the chat surfaces — a chat-side argument like ``chat_model``,
-            so on a cloud client it selects own-model chat. A call's own
-            ``backend`` keys win over it. The dict reaches whichever
-            door runs, in that door's vocabulary (see each method) —
-            ``api_key`` / ``base_url`` mean the same thing on all three.
+            the chat surfaces. A call's own ``backend`` keys win over it.
+            The dict reaches whichever door runs, in that door's
+            vocabulary (see each method) — ``api_key`` / ``base_url``
+            mean the same thing on every door.
         instructions (str, optional): Standing guidance for the answering
             agent — persona, language, format — appended after the
-            managed system prompt on every chat surface, the managed
-            cloud chat included, and in ``agent_instructions()`` and the
-            ``*_agent_config()`` bundles. Not a chat-side spelling: it
-            combines with any ``chat=`` and never selects own-model chat.
-            ``chat(instructions=...)`` adds to it per call. Indexing
-            has no prompt to extend.
+            managed system prompt on every chat surface, and in
+            ``agent_instructions()`` and ``openai_agent_config()``.
+            ``chat(instructions=...)`` adds to it per call. Indexing has
+            no prompt to extend.
+        tools (list[AgentTool], optional): Extra tools for the chat
+            agent, served after the built-in tools.
+        page_text_extractor (callable, optional): Replaces the PDF page
+            text extraction used while indexing.
 
-    PageIndexCloudClient / SuperIndexLocalClient pin the index side at
-    construction instead of inferring it from api_key.
+    SuperIndexLocalClient is the same client under its older name.
 
-    Local mode differences (all documented per method): indexing is
-    synchronous, only PDFs are supported, and folders / ``beta_headers`` /
-    the deprecated retrieval API (``submit_query``, ``get_retrieval``) are
-    cloud-only.
+    Local differences from the upstream SDK (documented per method):
+    indexing is synchronous, only PDFs are supported, and there are no
+    folders.
     """
-
-    BASE_URL = "https://api.pageindex.ai"
-
-    _pin: Optional[str] = None  # the pinned subclasses' index side
 
     def __init__(
         self,
-        api_key: Optional[str] = None,
         *,
         index: Optional[Union[Mapping[str, Any], str]] = None,
         chat: Optional[Union[Mapping[str, Any], str]] = None,
@@ -406,11 +300,6 @@ class SuperIndexClient:
         tools: Optional[list[AgentTool]] = None,
         page_text_extractor: Optional[Callable[[str], list[str]]] = None,
     ):
-        if api_key == "":
-            raise SuperIndexAPIError(
-                "api_key is an empty string. Pass a real PageIndex API key for "
-                "cloud mode, or omit api_key entirely for local mode."
-            )
         if instructions is not None and not isinstance(instructions, str):
             raise SuperIndexAPIError(
                 f"instructions must be a str, got {type(instructions).__name__}. "
@@ -421,8 +310,7 @@ class SuperIndexClient:
         # ``model`` sets every role, so it claims both sides.
         index_flat: dict[str, Any] = {
             name: value for name, value in
-            (("api_key", api_key),
-             ("index_model", index_model),
+            (("index_model", index_model),
              ("summary_model", summary_model),
              ("index_backend", index_backend),
              ("storage_path", storage_path), ("model", model))
@@ -449,49 +337,12 @@ class SuperIndexClient:
                 "chat= and the flat chat-side arguments "
                 f"({', '.join(sorted(chat_flat))}) are two spellings of "
                 "the same thing — use one or the other.")
-        # ``mode=`` is a cross-check, not a spelling: it combines with
-        # either spelling of the index side and must agree with it. The
-        # pinned classes declare the side by class; their errors name the
-        # class, never a mode= the user did not write.
-        declared = _declared_mode(mode, "client") or self._pin
-        pinned = type(self).__name__ if self._pin else None
-        if index is not None:
-            cloud_key, index_conf = _resolve_index_slot(index)
-            if declared == "local" and cloud_key is not None:
-                raise SuperIndexAPIError(
-                    f"{pinned} pins local documents — that index= selects "
-                    "cloud documents. Drop it, or use PageIndexCloudClient."
-                    if pinned else
-                    'mode="local" disagrees with index= — that index '
-                    "selects cloud documents. Drop one of them.")
-            if declared == "cloud" and cloud_key is None:
-                raise SuperIndexAPIError(
-                    f"{pinned} pins cloud documents — that index= "
-                    "configures the local store. Drop it, or use "
-                    "SuperIndexLocalClient."
-                    if pinned else
-                    'mode="cloud" disagrees with index= — that index '
-                    "configures the local store. Drop one of them.")
-            if callable(cloud_key):
-                cloud_key = cloud_key()
-        else:
-            cloud_key = api_key
-            if declared == "local" and api_key is not None:
-                raise SuperIndexAPIError(
-                    'mode="local" conflicts with api_key — an API key '
-                    "means cloud documents. Drop one of them.")
-            if declared == "cloud" and cloud_key is None:
-                cloud_key = _env_cloud_key('mode="cloud"')
-            index_conf = {name: value for name, value in index_flat.items()
-                          if name != "api_key"}
-        if chat is not None:
-            chat_mode, chat_conf = _resolve_chat_slot(chat)
-        else:
-            chat_mode = "own" if chat_flat else None
-            chat_conf = chat_flat
+        _declared_mode(mode, "client")
+        index_conf = (_resolve_index_slot(index) if index is not None
+                      else index_flat)
+        chat_conf = _resolve_chat_slot(chat) if chat is not None else chat_flat
         # Every spelling lands here: strings are stripped, wrong types and
-        # empty values refuse loudly — an empty chat-side value must never
-        # silently select own-model chat.
+        # empty values refuse loudly.
         for side, slot, conf in (("index", index, index_conf),
                                  ("chat", chat, chat_conf)):
             for name, value in conf.items():
@@ -509,95 +360,48 @@ class SuperIndexClient:
                         f"{shown} is empty — it configures nothing. Pass a "
                         "real value, or drop the argument.")
 
-        if cloud_key is not None:
-            if index_conf:
-                raise SuperIndexAPIError(
-                    "Cloud documents are indexed by the PageIndex pipeline "
-                    "— the index-side arguments "
-                    f"({', '.join(sorted(index_conf))}) have nothing to "
-                    "configure there; remove them. (chat_model= / chat= "
-                    "stay yours: they run the chat agent in your process "
-                    "with your own model.)")
-            self.api_key = cloud_key
-            from .cloud_api import CloudAPI
-            self._api = CloudAPI(self)
-            if chat_mode == "own":
-                from .utils import ConfigLoader
-                overrides = {name: value for name, value in chat_conf.items()
-                             if name in ("chat_model", "retrieve_model")
-                             and value}
-                opt = ConfigLoader().load(overrides or None)
-                self.chat_model = opt.chat_model
-                self.chat_backend = chat_conf.get("chat_backend")
-                _preload_litellm()
-            else:
-                # Managed chat: the endpoint selects its own model.
-                self.chat_model = None
-                self.chat_backend = None
-        else:
-            if chat_mode == "managed":
-                if pinned:
-                    exits = (f"{pinned} pins local documents: use "
-                             "PageIndexCloudClient (or SuperIndexClient("
-                             "api_key=...))")
-                else:
-                    exits = ('Go cloud (api_key=... or index="cloud")'
-                             + (' and drop mode="local"' if mode is not None
-                                else ""))
-                raise SuperIndexAPIError(
-                    "The managed chat needs cloud documents — it cannot "
-                    f"read the local store. {exits}, or set your own chat "
-                    "model instead.")
-            from .utils import ConfigLoader
-            overrides = {name: value for name, value in
-                         {**index_conf, **chat_conf}.items()
-                         if name in ("model", "index_model", "summary_model",
-                                     "chat_model", "retrieve_model")
-                         and value}
-            opt = ConfigLoader().load(overrides or None)
-            self.model = opt.model
-            self.index_model = opt.index_model
-            self.summary_model = opt.summary_model
-            self.chat_model = opt.chat_model
-            self.chat_backend = chat_conf.get("chat_backend")
-            self.storage_path = index_conf.get("storage_path") or ".pageindex"
-            from .local_api import LocalAPI
-            self._api = LocalAPI(
-                storage_path=self.storage_path,
-                model=self.model,
-                summary_model=self.summary_model,
-                index_backend=index_conf.get("index_backend"),
-                page_text_extractor=page_text_extractor,
-            )
-            # LiteLLM's multi-second import would otherwise land on the
-            # first chat call; failures resurface there with real context.
-            _preload_litellm()
+        from .utils import ConfigLoader
+        overrides = {name: value for name, value in
+                     {**index_conf, **chat_conf}.items()
+                     if name in ("model", "index_model", "summary_model",
+                                 "chat_model", "retrieve_model")
+                     and value}
+        opt = ConfigLoader().load(overrides or None)
+        self.model = opt.model
+        self.index_model = opt.index_model
+        self.summary_model = opt.summary_model
+        self.chat_model = opt.chat_model
+        self.chat_backend = chat_conf.get("chat_backend")
+        self.storage_path = index_conf.get("storage_path") or ".pageindex"
+        from .local_api import LocalAPI
+        self._api = LocalAPI(
+            storage_path=self.storage_path,
+            model=self.model,
+            summary_model=self.summary_model,
+            index_backend=index_conf.get("index_backend"),
+            page_text_extractor=page_text_extractor,
+        )
+        # LiteLLM's multi-second import would otherwise land on the
+        # first chat call; failures resurface there with real context.
+        _preload_litellm()
 
     @property
     def _local_chat(self) -> bool:
         # Derived, never stored: own-model chat is exactly "a chat model
-        # is configured" (None on a managed-chat client). Blank configures
-        # nothing — the constructor refuses it, and assignment must agree.
+        # is configured". Blank configures nothing — the constructor
+        # refuses it, and assignment must agree.
         model = getattr(self, "chat_model", None)
         if isinstance(model, str):
             return bool(model.strip())
         return model is not None
 
-    def _require_own_chat(self, lane: str) -> None:
-        # The one refusal for the Responses lane and the doors
-        # behind them: shared, so the doors cannot drift from chat().
-        if self._local_chat:
-            return
-        if not getattr(self, "api_key", None):
+    def _require_own_chat(self) -> None:
+        # The one refusal for every chat door: shared, so the doors cannot
+        # drift from chat().
+        if not self._local_chat:
             raise SuperIndexAPIError(
-                "chat_model is empty — it configures nothing, and a local "
-                "client has no managed chat to fall back to. Set "
+                "chat_model is empty — it configures nothing. Set "
                 "chat_model=... to run the agent with your own model.")
-        raise SuperIndexAPIError(
-            f"{lane} drives your own chat model — construct the client "
-            "with chat_model=... (or a chat= model); the managed cloud chat "
-            "serves the answer lane and chat(protocol=\"chat_completions\") "
-            "only.")
 
     if not TYPE_CHECKING:
         # The protocol doors live behind chat(protocol=...); their old
@@ -639,38 +443,30 @@ class SuperIndexClient:
         """
         Submit a PDF document for processing. Returns {'doc_id': ..., 'name': ...}.
 
-        Cloud: uploads the file; processing is asynchronous. Pass
-        ``wait=True`` to block until the document is ready, or poll
-        ``get_document(doc_id)['status']`` yourself.
-
-        Local: indexes the document in this call and stores it under
+        Indexes the document in this call and stores it under
         ``storage_path``. Defaults to Flash indexing: layout-based extraction,
         refined for retrieval (a deterministic merge, then an LLM expansion
         pass); node summaries, the expansion pass, and the document
         description use ``summary_model``. Pass ``mode="standard"`` for a
         full LLM-built tree (slower). ``beta_headers`` and ``folder_id`` are
-        cloud-only.
+        not supported (they raise).
 
         Args:
             file_path (str): Path to the PDF file.
-            mode (str, optional): Processing mode. Local defaults to "flash";
-                pass "standard" for a full LLM-built tree. Cloud modes are
-                passed through (e.g. "mcp").
-            beta_headers (list[str], optional): Cloud-only beta feature headers.
-            folder_id (str, optional): Cloud-only folder (workspace) ID.
+            mode (str, optional): Processing mode. Defaults to "flash";
+                pass "standard" for a full LLM-built tree.
+            beta_headers (list[str], optional): Not supported; raises.
+            folder_id (str, optional): Not supported; raises.
             metadata (dict, optional): Your own JSON-serializable tags for the
                 document; returned in get_document/get_tree/get_ocr responses
-                and list_documents entries (both modes).
-            wait (bool): Return only once the document is ready for use.
-                Cloud: polls status until "completed" (raises on "failed" or
-                after 30 minutes). Local: indexing is synchronous already, so
-                this changes nothing. Leave False to submit many documents
-                concurrently and poll afterwards.
+                and list_documents entries.
+            wait (bool): Indexing is synchronous already, so this changes
+                nothing; kept for compatibility.
 
         Returns:
             dict: {'doc_id': ..., 'name': ...}. 'name' is the stored document
                 name: a taken name gains a numeric suffix (name_1..name_99)
-                and a UserWarning is emitted. Older cloud servers omit 'name'.
+                and a UserWarning is emitted.
         """
         result = self._api.submit_document(
             file_path=file_path, mode=mode,
@@ -683,47 +479,7 @@ class SuperIndexClient:
                 f'"{stored}".',
                 stacklevel=2,
             )
-        if wait:
-            self._wait_until_ready(result["doc_id"])
         return result
-
-    def _wait_until_ready(self, doc_id: str, timeout: float = 1800.0) -> None:
-        import requests
-        interval = 2.0
-        deadline = time.monotonic() + timeout
-        poll_failures = 0
-        while True:
-            try:
-                status = self.get_document(doc_id).get("status")
-                poll_failures = 0
-            except (SuperIndexAPIError, requests.RequestException) as exc:
-                if getattr(exc, "status_code", None) in (401, 403, 404):
-                    raise  # a definite answer, not a poll failure
-                # Tolerate transient poll failures; a 30-minute wait should
-                # not die on one 502 or dropped connection.
-                poll_failures += 1
-                if poll_failures >= 3:
-                    raise SuperIndexAPIError(
-                        f"Could not poll document status (doc_id: {doc_id}): "
-                        f"{exc}. Processing continues in the cloud — poll "
-                        "get_document(doc_id) for status."
-                    ) from exc
-                status = None
-            if status == "completed":
-                return
-            if status == "failed":
-                raise SuperIndexAPIError(
-                    f"Document processing failed (doc_id: {doc_id})."
-                )
-            if time.monotonic() >= deadline:
-                raise SuperIndexAPIError(
-                    f"Timed out after {int(timeout)}s waiting for document "
-                    f"processing (doc_id: {doc_id}, last status: {status}). "
-                    "Processing continues in the cloud — poll "
-                    "get_document(doc_id) for status."
-                )
-            time.sleep(interval)
-            interval = min(interval * 1.5, 15.0)
 
     # ---------- OCR FUNCTIONALITY ----------
 
@@ -740,7 +496,7 @@ class SuperIndexClient:
             dict: {'doc_id', 'status', 'retrieval_ready', 'result', ...}.
             With 'page', result entries are {'page_index', 'markdown', ...}.
 
-        Local: the "OCR" result is the text extracted from the PDF while
+        The "OCR" result is the text extracted from the PDF while
         indexing (no OCR model runs locally, so scanned/image-only PDFs have
         no local text).
         """
@@ -766,67 +522,6 @@ class SuperIndexClient:
                 f"(status: {result.get('status', 'unknown')})"
             )
         return [p for p in all_pages if p["page_index"] in wanted]
-
-    def get_block(self, doc_id: str, block_id: str) -> dict[str, Any]:
-        """
-        One layout block of a cloud document — the page, bounding box, type
-        and content behind a ``block_id`` from page content or a
-        block-level citation. Cloud-only: local page content has no
-        blocks, so local mode raises SuperIndexAPIError.
-
-        Args:
-            doc_id (str): Document ID.
-            block_id (str): Block ID as page content and citations carry
-                it, e.g. ``"p3_text_5"``.
-
-        Returns:
-            dict: The block as the API returns it: {'doc_id', 'page',
-            'block_id', 'bbox', 'block_type', ...}. ``bbox`` is
-            ``[x0, y0, x1, y1]`` in thousandths of the page's width and
-            height (0-1000), origin top-left. SuperIndexAPIError with
-            ``status_code == 404`` when the document or the block does not
-            exist.
-        """
-        return self._require_cloud(
-            "get_block is cloud-only — local page content has no layout "
-            "blocks. Create the client with an api_key to look up blocks."
-        ).get_block(doc_id=doc_id, block_id=block_id)
-
-    def get_page_image(self, doc_id: str, page: int) -> str:
-        """
-        A short-lived URL to one page, rendered as a JPEG. Cloud-only:
-        local mode renders no page images.
-
-        Args:
-            doc_id (str): Document ID.
-            page (int): 1-based page number.
-
-        Returns:
-            str: The URL. Fetch the bytes with ``requests.get(url).content``,
-            or pass it to a vision model that takes image URLs.
-        """
-        return self._require_cloud(
-            "get_page_image is cloud-only — local mode has no page-image "
-            "rendering. Create the client with an api_key to get page images."
-        ).get_page_image(doc_id=doc_id, page=page)
-
-    def get_document_image(self, doc_id: str, img_id: str) -> str:
-        """
-        A short-lived URL to an image OCR extracted from the document.
-        Cloud-only: local mode stores no images.
-
-        Args:
-            doc_id (str): Document ID.
-            img_id (str): Image ID as page content carries it,
-                e.g. ``"img-7.jpeg"``.
-
-        Returns:
-            str: The URL, as ``get_page_image`` returns one.
-        """
-        return self._require_cloud(
-            "get_document_image is cloud-only — local mode has no embedded "
-            "image storage. Create the client with an api_key."
-        ).get_document_image(doc_id=doc_id, img_id=img_id)
 
     # ---------- TREE GENERATION ----------
 
@@ -873,34 +568,6 @@ class SuperIndexClient:
             return result.get("retrieval_ready", False)
         except SuperIndexAPIError:
             return False
-
-    # ---------- RETRIEVAL (cloud-only, deprecated) ----------
-
-    def submit_query(self, doc_id: str, query: str, thinking: bool = False) -> dict[str, Any]:
-        """
-        Submit a retrieval query for a document. Returns {'retrieval_id': ...}.
-
-        Cloud-only: the cloud API marks this endpoint deprecated in favor of
-        chat completions, so local mode does not implement it — raises
-        SuperIndexAPIError. Use ``chat()`` instead.
-        """
-        return self._require_cloud(
-            "submit_query is cloud-only — the retrieval API is deprecated in "
-            "favor of chat completions; use chat() instead."
-        ).submit_query(doc_id=doc_id, query=query, thinking=thinking)
-
-    def get_retrieval(self, retrieval_id: str) -> dict[str, Any]:
-        """
-        Get retrieval status and results for a submitted query.
-
-        Cloud-only: the cloud API marks this endpoint deprecated in favor of
-        chat completions, so local mode does not implement it — raises
-        SuperIndexAPIError. Use ``chat()`` instead.
-        """
-        return self._require_cloud(
-            "get_retrieval is cloud-only — the retrieval API is deprecated in "
-            "favor of chat completions; use chat() instead."
-        ).get_retrieval(retrieval_id=retrieval_id)
 
     # ---------- CHAT ----------
 
@@ -1056,9 +723,8 @@ class SuperIndexClient:
         Ask a question about your documents.
 
         The answer lane (no ``protocol``): thin sugar over the same engine
-        as ``chat_completions()`` in every mode — same wire, minus the
-        envelope. Returns the answer string (a ``ChatStream`` when
-        streaming). Multi-turn: keep your own role/content list of the
+        as ``chat_completions()`` — same wire, minus the envelope. Returns
+        the answer string (a ``ChatStream`` when streaming). Multi-turn: keep your own role/content list of the
         visible conversation (append each answer as an assistant message;
         join a stream into one only with ``show_process=False``) and pass
         it back.
@@ -1066,9 +732,8 @@ class SuperIndexClient:
         The protocol lanes: ``protocol="chat_completions"`` is the answer
         lane's own engine with its envelope kept — the Chat Completions
         response (``choices``/``usage``), or its chunk dicts when
-        streaming; it is the one protocol the managed cloud chat serves
-        too. ``protocol="responses"``: own-model chat driven natively over
-        the OpenAI Responses API. Input and output are that protocol's own
+        streaming. ``protocol="responses"``: own-model chat driven natively
+        over the OpenAI Responses API. Input and output are that protocol's own
         shapes — the history may carry its transcript (Responses items),
         and the return is its response envelope, streaming its native
         events. A round-tripped transcript continues the
@@ -1079,37 +744,31 @@ class SuperIndexClient:
 
         Args:
             messages: A question string, or the conversation history —
-                role/content messages on every lane. With your own chat
-                model, ``system`` rows join the managed prompt on the
-                answer lane and ``protocol="chat_completions"``, wherever
-                they sit (the managed endpoint forwards them verbatim);
-                the other protocol lanes pass rows to the wire as they
+                role/content messages on every lane. ``system`` rows join
+                the managed prompt on the answer lane and
+                ``protocol="chat_completions"``, wherever they sit; the
+                other protocol lanes pass rows to the wire as they
                 are (use ``instructions`` for persona there). Responses
                 also accepts its native transcript items; own-model Chat
                 Completions takes text history only.
             doc_id: Document ID or list of IDs to scope the conversation.
-                Keep it identical across a conversation's calls. Local
-                documents: also enforced at the tool layer, not just
-                prompted. Cloud documents: the managed chat scopes
-                server-side; own-model chat targets at the prompt level.
-            folder_id: Folder ID to steer discovery toward that folder's
-                documents. Cloud-only. The managed chat scopes it
-                server-side; own-model chat leads the conversation with
-                the folder's targeting text (``folder_context``), ahead
-                of the document block. ``"root"`` is the whole library.
-                Keep it identical across a conversation's calls.
+                Keep it identical across a conversation's calls. Also
+                enforced at the tool layer, not just prompted.
+            folder_id: Local libraries have no folders: only ``"root"``
+                (the whole library) or ``""`` is accepted; any other
+                value raises. Keep it identical across a conversation's
+                calls.
             stream: Answer lane: return a ``ChatStream`` — iterate it for
                 the answer as text chunks as they are produced
                 (``show_process`` is on by default, so the run's process
                 arrives woven in; ``show_process=False`` gives the bare
                 answer), or read its ``.events`` property instead for the
                 run as typed event dicts — thinking/answer deltas, each
-                tool call and its full result (own-model chat only; never
-                clipped). One run serves one view. Protocol lanes: the
-                protocol's own event stream.
-            model: Own-model chat only — backend model name (defaults
-                to ``chat_model``).
-            reasoning_effort: Own-model chat only — how hard the model
+                tool call and its full result (never clipped). One run
+                serves one view. Protocol lanes: the protocol's own event
+                stream.
+            model: Backend model name (defaults to ``chat_model``).
+            reasoning_effort: How hard the model
                 thinks (``"low"`` / ``"medium"`` / ``"high"``; what a
                 backend accepts is its own). Each lane sends its native
                 spelling: LiteLLM's ``reasoning_effort``, Responses
@@ -1119,10 +778,8 @@ class SuperIndexClient:
                 the text stream for display: thinking flows as
                 "[thinking] " sections, each tool call as a "[tool_call]
                 name arguments" line with its "[tool_result]" line, and
-                the answer unlabeled. **On by default**, weaving what the mode
-                serves: the in-process agent's full run; on a managed
-                client, the tool calls the endpoint streams (its wire
-                carries no thinking and no tool results). Pass ``False``
+                the answer unlabeled. **On by default**, weaving the
+                in-process agent's full run. Pass ``False``
                 for the bare answer stream — do that before appending a
                 streamed answer to the conversation history.
                 ``True`` shows everything; a dict (typed as
@@ -1144,49 +801,36 @@ class SuperIndexClient:
             protocol: ``None`` for the answer lane, or
                 ``"chat_completions"`` / ``"responses"``
                 — the wire protocol, engine, and input/output shapes of
-                this call. Own-model chat only, except
-                ``"chat_completions"``, which the managed chat serves too.
+                this call.
             instructions: Persona or extra guidance for this call,
                 appended after the managed system prompt (which stays: it
                 carries the tool guidance) and the client's own
-                ``instructions``. A string on every lane. On the answer lane and
-                ``protocol="chat_completions"`` it precedes any ``system``
-                rows in the history; the managed cloud chat receives them
-                all as its one leading system message.
-            citations: Own-model chat: cite every claim the way SuperIndex
-                chat does — ``<cite doc="…" page="…"/>`` tags, ``block="…"``
-                added where the cloud document has blocks. The guidance is
-                the PageIndex MCP server's ``cited_answer`` prompt, joining
-                the system prompt after the managed prompt and before
-                ``instructions``; local documents get the SDK's copy
-                (pages only); another format: ``citation_prompt()`` passed
-                through ``instructions=`` instead. Managed chat:
-                ``chat_completions``'s ``enable_citations`` — the endpoint
-                cites in its own inline markup, not ``<cite>`` tags, and
-                the resolved citations it returns ride the response
-                envelope, so they need ``chat_completions()`` or
-                ``protocol="chat_completions"``; the answer lane returns
-                the answer string alone.
-            max_turns: Own-model chat only — cap on agent turns per call
+                ``instructions``. A string on every lane. On the answer
+                lane and ``protocol="chat_completions"`` it precedes any ``system``
+                rows in the history.
+            citations: Cite every claim the way SuperIndex chat does —
+                ``<cite doc="…" page="…"/>`` tags. The guidance
+                (``citation_prompt()``, page-level) joins the system
+                prompt after the managed prompt and before
+                ``instructions``; for another format pass
+                ``citation_prompt()`` through ``instructions=`` instead.
+            max_turns: Cap on agent turns per call
                 (default 10). The lanes raise at the cap.
-            backend: Own-model chat only — connection overrides for this
+            backend: Connection overrides for this
                 call's backend, merged over the client's ``chat_backend``
                 (per-call keys win): LiteLLM's connection params on the
                 answer lane and ``protocol="chat_completions"``; the
                 openai SDK's client params on Responses. Passed through
                 verbatim.
-            extra_headers: Own-model chat only — extra HTTP headers
+            extra_headers: Extra HTTP headers
                 merged into each backend request; caller headers win.
                 LiteLLM's anthropic adapter owns ``anthropic-beta`` on the
                 answer lane and ``protocol="chat_completions"``.
             extra_body: The wire's own request fields beyond this
                 method's parameters, in the lane's wire names (Responses
-                ``max_output_tokens``;
-                the managed chat endpoint's ``temperature`` /
-                ``enable_citations``), merged last so they win.
-                The managed endpoint, Responses, and
-                OpenAI-compatible chat backends take these verbatim in
-                the request body. Other own-model chat backends take
+                ``max_output_tokens``), merged last so they win.
+                Responses and OpenAI-compatible chat backends take these
+                verbatim in the request body. Other chat backends take
                 LiteLLM's own params, mapped or refused per provider
                 (``response_format`` is unsupported there). The managed
                 prompt, conversation and tools are not fields here (``system`` /
@@ -1196,7 +840,7 @@ class SuperIndexClient:
                 are refused too: each has its own argument. Credentials
                 belong in ``backend``, never here.
             extras (ChatExtras, optional): Additions for this run of the
-                streamed answer lane (own chat model only): a multimodal
+                streamed answer lane: a multimodal
                 last user message, appended instructions, extra Agents SDK
                 tools and a ``call_model_input_filter``. See
                 ``local_chat.ChatExtras``.
@@ -1248,22 +892,18 @@ class SuperIndexClient:
                 "citations must be True or False — for another format pass "
                 "citation_prompt(format=...) as instructions= (own-model "
                 "chat).")
-        enable_citations = False
-        if citations:
-            if self._local_chat:
-                text = self.citation_prompt()
-                instructions = (f"{text}\n\n{instructions}"
-                                if instructions else text)
-            else:
-                enable_citations = True
+        if citations and self._local_chat:
+            text = self.citation_prompt()
+            instructions = (f"{text}\n\n{instructions}"
+                            if instructions else text)
         if extras is not None and not (stream and protocol is None
                                        and self._local_chat):
             raise SuperIndexAPIError(
                 "extras extend the streamed answer lane of your own chat "
                 "model — pass stream=True, no protocol, on a client with "
                 "chat_model=... set.")
+        self._require_own_chat()
         if protocol == "responses":
-            self._require_own_chat(f"chat(protocol={protocol!r})")
             body = extra_body
             if reasoning_effort:
                 # OpenAI's own effort field, beside the caller's other
@@ -1291,37 +931,21 @@ class SuperIndexClient:
         if protocol == "chat_completions":
             return self.chat_completions(
                 messages, stream=stream, stream_metadata=True, doc_id=doc_id,
-                enable_citations=enable_citations, folder_id=folder_id,
-                model=model, max_turns=max_turns,
+                folder_id=folder_id, model=model, max_turns=max_turns,
                 reasoning_effort=reasoning_effort, extra_body=extra_body,
                 extra_headers=extra_headers, backend=backend)
         if stream:
-            # the default means "on where available"
+            # the default means "on"
             resolved = True if show_process is None else show_process
-            if self._local_chat:
-                from .local_chat import run_chat_stream
-                return run_chat_stream(self, messages, doc_id=doc_id,
-                                       folder_id=folder_id, model=model,
-                                       reasoning_effort=reasoning_effort,
-                                       show_process=resolved,
-                                       max_turns=max_turns, backend=backend,
-                                       extra_headers=extra_headers,
-                                       extra_body=extra_body, extras=extras)
-            from .local_chat import run_cloud_chat_stream
-            chunks = self.chat_completions(messages, stream=True,
-                                           stream_metadata=True,
-                                           enable_citations=enable_citations,
-                                           doc_id=doc_id, model=model,
-                                           folder_id=folder_id,
-                                           reasoning_effort=reasoning_effort,
-                                           max_turns=max_turns,
-                                           backend=backend,
-                                           extra_headers=extra_headers,
-                                           extra_body=extra_body)
-            return run_cloud_chat_stream(
-                cast(Iterator[dict[str, Any]], chunks), resolved)
+            from .local_chat import run_chat_stream
+            return run_chat_stream(self, messages, doc_id=doc_id,
+                                   folder_id=folder_id, model=model,
+                                   reasoning_effort=reasoning_effort,
+                                   show_process=resolved,
+                                   max_turns=max_turns, backend=backend,
+                                   extra_headers=extra_headers,
+                                   extra_body=extra_body, extras=extras)
         result = self.chat_completions(messages, doc_id=doc_id, model=model,
-                                       enable_citations=enable_citations,
                                        folder_id=folder_id,
                                        reasoning_effort=reasoning_effort,
                                        max_turns=max_turns, backend=backend,
@@ -1362,13 +986,9 @@ class SuperIndexClient:
         text-only stream (``stream=True`` without ``stream_metadata``):
         that is ``chat(stream=True, show_process=False)``.
 
-        With no chat model configured (a plain cloud client): the managed
-        hosted chat endpoint. With one — local mode, or a cloud client
-        constructed with ``chat_model=``/``chat=`` (own-model chat) — a
-        managed document-QA agent runs in your process over the mode's
-        tools (local store, or the live cloud tool set) against your own
-        LLM backend, routed through LiteLLM — model names mean what
-        LiteLLM says they mean.
+        A managed document-QA agent runs in your process over the local
+        store's tools against your own LLM backend, routed through
+        LiteLLM — model names mean what LiteLLM says they mean.
         Bare names are OpenAI-compatible shorthand (the OpenAI SDK's usual
         env config — OPENAI_API_KEY, OPENAI_BASE_URL — selects the
         backend, so any OpenAI-compatible server works; write
@@ -1388,50 +1008,39 @@ class SuperIndexClient:
             messages: Conversation messages with 'role' and 'content' keys,
                 or a bare query string (it becomes a single user message).
                 System/developer messages, wherever they sit, join the
-                managed system prompt after the client's ``instructions``
-                (the managed endpoint receives them as its one leading
-                system message); the history is text only: tool-role
-                turns are rejected on both engines, and message
-                fields beyond role/content are dropped.
+                managed system prompt after the client's
+                ``instructions``; the history is text only: tool-role
+                turns are rejected, and message fields beyond
+                role/content are dropped.
             stream: Enable streaming responses.
             doc_id: Document ID or list of IDs to scope the conversation.
                 Keep it identical across a conversation's calls — the
                 targeting block it adds is re-set each call and is part
-                of the cached prompt prefix. Local documents: also
-                enforced at the tool layer, not just prompted. Cloud
-                documents: the managed chat scopes server-side;
-                own-model chat targets at the prompt level.
-            folder_id: Folder ID to steer discovery toward that folder's
-                documents (cloud-only): the managed chat scopes it
-                server-side; own-model chat leads the conversation with
-                the folder's targeting text, ahead of the document block.
-                ``"root"`` is the whole library.
+                of the cached prompt prefix. Also enforced at the tool
+                layer, not just prompted.
+            folder_id: Only ``"root"`` (the whole library) or ``""`` —
+                local libraries have no folders; any other value raises.
             temperature: Sampling temperature, passed through to the model.
             stream_metadata: With stream=True, yield chunk dicts instead of
                 text pieces.
-            enable_citations: Managed chat only — the endpoint cites
-                inline and returns the resolved citations (``citations``
-                in the response; with ``stream_metadata=True`` a trailing
-                citations chunk). Own-model chat raises; its
-                ``chat(citations=True)`` adds ``<cite>`` markup only,
-                nothing is resolved.
-            model: Own-model chat only — backend model name (defaults to
-                ``chat_model``). The managed endpoint selects its own.
-            max_turns: Own-model chat only — cap on agent turns per call.
-            top_p: Own-model chat only — nucleus sampling, passed
-                through to the model.
-            max_tokens: Own-model chat only — per-call output cap,
+            enable_citations: Not supported — raises; cite with
+                ``chat(citations=True)``, which adds ``<cite>`` markup
+                (nothing is resolved).
+            model: Backend model name (defaults to ``chat_model``).
+            max_turns: Cap on agent turns per call.
+            top_p: Nucleus sampling, passed through to the model.
+            max_tokens: Per-call output cap,
                 passed through; it bounds each backend call in the agent
                 loop (the way max_turns bounds the loop), not the whole
                 run.
-            reasoning_effort: Own-model chat only — passed through verbatim as
+            reasoning_effort: Passed through verbatim as
                 LiteLLM's ``reasoning_effort``; each provider maps it to
                 its own thinking control, and the values mean what the
                 backend says they mean. Unset sends nothing (the
                 backend's default applies).
             extra_body: Extra request fields beyond this method's
-                parameters, merged last so they win. The managed endpoint
-                and OpenAI-compatible backends take them verbatim in the
+                parameters, merged last so they win. OpenAI-compatible
+                backends take them verbatim in the
                 request body; LiteLLM-routed providers take them as
                 LiteLLM's own params (mapped or refused per provider).
                 The managed prompt, conversation and tools are not
@@ -1439,11 +1048,11 @@ class SuperIndexClient:
                 ``messages`` / ``tools`` are refused), nor are ``stream``
                 / ``doc_id``: each has its own argument. Credentials belong
                 in ``backend``, never here.
-            extra_headers: Own-model chat only — extra HTTP headers merged into
+            extra_headers: Extra HTTP headers merged into
                 each backend request; caller headers win. One exception:
                 LiteLLM's anthropic adapter owns the ``anthropic-beta``
                 header (your value is dropped there).
-            backend: Own-model chat only — connection overrides for this call's
+            backend: Connection overrides for this call's
                 backend, merged over the client's ``chat_backend``
                 (per-call keys win). Keys are LiteLLM's own connection
                 params — ``api_key``, ``base_url``, ``api_version``,
@@ -1463,53 +1072,16 @@ class SuperIndexClient:
             messages = [{"role": "user", "content": messages}]
         from .local_chat import _refuse_skeleton
         _refuse_skeleton(extra_body)
-        if self._local_chat:
-            from .local_chat import run_chat_completions
-            return run_chat_completions(
-                self, messages, stream=stream, doc_id=doc_id,
-                folder_id=folder_id,
-                temperature=temperature, stream_metadata=stream_metadata,
-                enable_citations=enable_citations, model=model,
-                max_turns=max_turns, top_p=top_p, max_tokens=max_tokens,
-                reasoning_effort=reasoning_effort, extra_body=extra_body,
-                extra_headers=extra_headers, backend=backend,
-            )
-        if not getattr(self, "api_key", None):
-            raise SuperIndexAPIError(
-                "chat_model is empty — it configures nothing, and a local "
-                "client has no managed chat to fall back to. Set "
-                "chat_model=... to run the agent with your own model.")
-        if (model or max_turns is not None or top_p is not None
-                or max_tokens is not None or reasoning_effort
-                or extra_headers or backend):
-            raise SuperIndexAPIError(
-                "model, max_turns, top_p, max_tokens, reasoning_effort, "
-                "extra_headers and backend drive your own chat "
-                "model, which this client does not configure — construct "
-                "the client with chat_model=... (or a chat= model) to run the "
-                "agent in your process, or drop them to use the managed "
-                "chat endpoint, which selects its own model."
-            )
-        # The endpoint takes one system message, first: the client's
-        # instructions and the history's system rows fold into it.
-        from .local_chat import _system_text
-        texts = [self.instructions] if self.instructions else []
-        history = []
-        for message in messages:
-            role = message.get("role") if isinstance(message, dict) else None
-            if role in ("system", "developer"):
-                texts.append(_system_text(message.get("content")))
-            else:
-                history.append(message)
-        texts = [t for t in texts if t.strip()]
-        messages = ([{"role": "system", "content": "\n\n".join(texts)}]
-                    if texts else []) + history
-        from .cloud_api import CloudAPI
-        return cast(CloudAPI, self._api).chat_completions(
-            messages=messages, stream=stream, doc_id=doc_id,
+        self._require_own_chat()
+        from .local_chat import run_chat_completions
+        return run_chat_completions(
+            self, messages, stream=stream, doc_id=doc_id,
             folder_id=folder_id,
             temperature=temperature, stream_metadata=stream_metadata,
-            enable_citations=enable_citations, extra_body=extra_body,
+            enable_citations=enable_citations, model=model,
+            max_turns=max_turns, top_p=top_p, max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort, extra_body=extra_body,
+            extra_headers=extra_headers, backend=backend,
         )
 
     def _responses(
@@ -1534,8 +1106,7 @@ class SuperIndexClient:
         The engine behind ``chat(protocol="responses")``: document QA over
         the OpenAI Responses protocol.
 
-        Own-model chat only — local mode, or a cloud client constructed
-        with ``chat_model=``/``chat=``. Drives your backend's /responses
+        Drives your backend's /responses
         end to end (no translation layer). The envelope is official
         Responses shape — ``output`` carries the model-produced items
         and parses with the openai SDK types — and the whole process
@@ -1567,13 +1138,10 @@ class SuperIndexClient:
             doc_id: Document ID or list of IDs to scope the conversation.
                 Keep it identical across a conversation's calls — the
                 targeting block it adds is re-set each call and is part
-                of the cached prompt prefix. Local documents: also
-                enforced at the tool layer; cloud documents:
-                prompt-level targeting only.
-            folder_id: Folder ID to steer discovery toward that folder's
-                documents (cloud-only), as the leading targeting text
-                ahead of the document block. ``"root"`` is the whole
-                library.
+                of the cached prompt prefix. Also enforced at the tool
+                layer.
+            folder_id: Only ``"root"`` (the whole library) or ``""`` —
+                local libraries have no folders; any other value raises.
             instructions: Appended to the managed system prompt.
             temperature / top_p: Passed through to the model.
             max_turns: Cap on agent turns per call.
@@ -1597,7 +1165,7 @@ class SuperIndexClient:
                 ``api_key``, ``base_url``, ``organization``, … — passed
                 verbatim; unknown keys raise.
         """
-        self._require_own_chat("chat(protocol='responses')")
+        self._require_own_chat()
         from .local_chat import run_responses
         return run_responses(
             self, input, model=model, stream=stream, doc_id=doc_id,
@@ -1613,12 +1181,11 @@ class SuperIndexClient:
     def get_document(self, doc_id: str) -> dict[str, Any]:
         """
         Get document metadata: {'id', 'name', 'description', 'status',
-        'createdAt', 'pageNum', 'folderId', 'metadata'}. Status is one of
-        "queued", "processing", "completed", "failed" (local documents are
-        always "completed"; local 'folderId' is always None). 'metadata'
-        is your own tags from ``submit_document``, or None.
+        'createdAt', 'pageNum', 'folderId', 'metadata'}. Status is always
+        "completed" and 'folderId' always None. 'metadata' is your own
+        tags from ``submit_document``, or None.
 
-        'createdAt' is UTC with no timezone marker, in both modes. To show
+        'createdAt' is UTC with no timezone marker. To show
         it in the user's timezone::
 
             from datetime import datetime, timezone
@@ -1643,13 +1210,18 @@ class SuperIndexClient:
             return docs[0]["id"]
         raise SuperIndexAPIError(f"No document named {name!r} found.")
 
+    def get_document_path(self, doc_id: str) -> str:
+        """
+        A document's path — its name: local libraries have no folders.
+        """
+        return self.get_document(doc_id)["name"]
+
     def delete_document(self, doc_id: str) -> dict[str, Any]:
         """
         Delete a SuperIndex document and all its associated data.
 
         Returns:
-            dict: {'message': 'Document deleted successfully.'}, or an empty
-            dict if the cloud API responds with no body.
+            dict: {'message': 'Document deleted successfully.'}.
         """
         return self._api.delete_document(doc_id=doc_id)
 
@@ -1666,18 +1238,13 @@ class SuperIndexClient:
         Args:
             limit (int): Maximum documents to return (1-100).
             offset (int): Number of documents to skip.
-            folder_id (str, optional): Cloud-only folder filter.
-            recursive (bool): Include documents in ``folder_id``'s
-                descendant folders, flattened into one list. Cloud-only;
-                local libraries have no folders.
+            folder_id (str, optional): Not supported — local libraries
+                have no folders; raises.
+            recursive (bool): No effect — there are no folders to
+                descend into.
 
         Returns:
             dict: {'documents': [...], 'total', 'limit', 'offset'}.
-
-        Each document carries ``path``, its folder chain rendered
-        ``"Parent/Child"`` — what a flat listing otherwise loses. None
-        at the library root, for a folder reached only through a share
-        of something below it, and for every local document.
         """
         return self._api.list_documents(limit=limit, offset=offset,
                                         folder_id=folder_id, recursive=recursive)
@@ -1691,85 +1258,43 @@ class SuperIndexClient:
         Plain functions for any agent framework (LangChain, PydanticAI, ...).
         For the OpenAI Agents SDK, prefer ``as_openai_tools()``.
 
-        Cloud: the full live read tool set, discovered from the PageIndex
-        MCP server when this method is called — one function per tool,
-        signature and docstring synthesized from the server's schemas, calls
-        executed from your process over MCP. Raises SuperIndexAPIError if the
-        server cannot be reached. Local: the built-in tools over the local
-        store (``browse_documents``, ``get_document``,
-        ``get_document_structure``, ``get_page_content``).
+        The built-in tools over the local store (``browse_documents``,
+        ``get_document``, ``get_document_structure``,
+        ``get_page_content``), then the client's own ``tools``.
 
         Each function takes JSON-serializable arguments, returns a JSON
-        string (binary results such as ``get_document_image`` as a size
-        stub — a string cannot carry an image; the framework adapters
-        can), and reports failures inside that JSON instead of raising —
-        except a cloud 401/403, a 429/5xx that outlived the bridge's
-        retries, an unreachable server or a RATE_LIMITED /
-        USAGE_LIMIT_REACHED tool error, which raise SuperIndexAPIError.
+        string, and reports failures inside that JSON instead of raising.
 
         Args:
             include_management (bool): Also expose tools that modify the
-                library. Local: adds ``remove_document``. Cloud: the URL
-                is the gate — the default serves what the read-only
-                endpoint (``?tools=read``) registers; True connects to
-                the full ``/mcp`` list (upload, delete, ...).
+                library (adds ``remove_document``).
         """
         from .agent_tools import build_agent_tools
         return build_agent_tools(self, include_management)
 
-    def as_openai_tools(self, include_management: bool = False,
-                        hosted: bool = False) -> list:
+    def as_openai_tools(self, include_management: bool = False) -> list:
         """
         Tools for the OpenAI Agents SDK — pass to ``Agent(tools=...)``
         (or ``openai_agent_config()`` for all the Agent slots in one
-        call). In-process cloud tools abort the run on a 401/403, a
-        429/5xx that outlived the bridge's retries, an unreachable server
-        or a RATE_LIMITED / USAGE_LIMIT_REACHED tool error: the
-        framework's AgentsException, the SuperIndexAPIError as its
-        ``__cause__``.
-
-        Cloud (default): the full live read tool set (search, folders,
-        images — as enabled for your key) as function tools, discovered
-        from the PageIndex MCP server and executed from your process —
-        works with any model backend. The tools are the framework's own
-        MCP conversion, so results reach the model in its shapes: text
-        as text, images (e.g. ``get_document_image``) as images. Pass
-        ``hosted=True`` to
-        hand the connection to OpenAI instead: one hosted MCP tool, tool
-        calls executed server-side (lowest latency; requires an
-        OpenAI-hosted model on the Responses API). The framework's own
-        ``MCPServerStreamableHttp`` — ``params={"url":
-        f"{BASE_URL}/mcp?tools=read", "headers": {"Authorization":
-        "Bearer <your PageIndex API key>"}}`` (drop ``?tools=read`` for
-        the full tool set) — is the async-native alternative for its
-        ``mcp_servers=`` slot.
-
-        Local: the in-process tools, any model backend; ``hosted`` does
-        not apply.
+        call): the in-process tools, any model backend. The tools are the
+        framework's own MCP conversion of an in-process server, so
+        results reach the model in its shapes.
 
         ``openai-agents`` is imported only when this method is called.
 
         Args:
             include_management (bool): Also expose tools that modify the
-                library (delete, upload). Default off: on cloud the URL
-                is the gate — in-process and ``hosted=True`` alike
-                connect to the read-only endpoint (``/mcp?tools=read``);
-                True switches to the full ``/mcp`` list.
-            hosted (bool): Cloud only — hand the MCP connection to OpenAI
-                for server-side tool execution (OpenAI models only).
+                library (``remove_document``).
         """
         from .integrations.openai_agents import build_openai_tools
-        return build_openai_tools(self, include_management, hosted)
+        return build_openai_tools(self, include_management)
 
     def _local_doc_scope(self, doc_id):
-        """doc_id for the tool layer: passed through locally (structural
-        allowlist), dropped on cloud — its tools take no allowlist, so
-        own-model chat targets at the prompt level only."""
+        """doc_id for the tool layer: validated, then passed through as
+        the structural allowlist."""
         from .agent_tools import _require_doc_selection
         _require_doc_selection(doc_id)
-        if not getattr(self, "api_key", None):
-            return doc_id
-        return None
+        return doc_id
 
     def openai_agent_config(
         self,
@@ -1786,11 +1311,8 @@ class SuperIndexClient:
             agent = Agent(**client.openai_agent_config())
 
         Sugar over the explicit form — ``agent_instructions`` as the
-        instructions and ``as_openai_tools`` as the tools; clients with a
-        configured ``chat_model`` — local mode, or cloud with
-        ``chat_model=`` — also carry it (a plain cloud client omits
-        ``model`` so the framework default applies). To target a folder
-        or documents, prepend ``folder_context(folder_id)`` /
+        instructions and ``as_openai_tools`` as the tools, plus the
+        configured ``chat_model``. To target documents, prepend
         ``document_context(doc_id)`` to your first message; to
         customize further, switch to those methods directly. You run this
         config in your own environment, so its model auth comes from
@@ -1852,19 +1374,15 @@ class SuperIndexClient:
         Orchestration guidance for document QA agents — pass as the agent's
         system prompt (or append to your own).
 
-        Cloud: the live instructions the PageIndex MCP server serves for
-        your key's tool set, fetched over the same session as
-        ``agent_tools()`` — server-side guidance updates arrive without an
-        SDK release. Raises SuperIndexAPIError if the server cannot be
-        reached. Local: the built-in guidance for the in-process tools.
-        The client's ``instructions``, if set, follow the guidance.
+        The built-in guidance for the in-process tools. The client's
+        ``instructions``, if set, follow the guidance, then each extra
+        tool's ``guidance``.
 
         Static by design: document targeting is conversation content, not
         guidance — see ``document_context()``.
 
-        ``include_management``: fetch the guidance for the full tool set,
-        matching tools built with ``include_management=True`` (cloud;
-        local guidance is a single set).
+        ``include_management``: accepted for symmetry with the tool
+        builders; the guidance is a single set.
         """
         from .agent_tools import _base_instructions
         return _base_instructions(self, include_management)
@@ -1898,11 +1416,10 @@ class SuperIndexClient:
     def citation_prompt(self, format: str = "cite") -> str:
         """
         The citation discipline for cited answers — grounding rules plus
-        how each citation is written — as served by the PageIndex MCP
-        server's ``cited_answer`` prompt — what own-model
-        ``chat(citations=True)`` adds. Fetch it here to append to
+        how each citation is written — what ``chat(citations=True)``
+        adds. Fetch it here to append to
         ``agent_instructions()`` for an agent you build with a framework,
-        or to pass another format through own-model ``chat``'s
+        or to pass another format through ``chat``'s
         ``instructions=`` in place of ``citations=True`` — it is
         guidance, so it belongs in the system prompt.
 
@@ -1910,9 +1427,8 @@ class SuperIndexClient:
         ``<cite doc= page= block=/>`` tags SuperIndex chat writes and
         renders — the default) or ``"markdown"`` (a bracketed
         ``[doc, p. N]`` reference, for hosts that strip tags); any
-        other value raises. Local documents: the SDK's
-        frozen copy of the same prompt (page-level — local page
-        content has no blocks).
+        other value raises. Page-level: local page content has no
+        blocks.
         """
         from .agent_tools import fetch_citation_prompt
         return fetch_citation_prompt(self, format or "cite")
@@ -1924,13 +1440,9 @@ class SuperIndexClient:
     ) -> list[dict[str, Any]]:
         """
         The citations in a cited answer, each with the id of the document
-        it names and, for a block-level citation on a cloud document, the
-        block behind it from ``get_block()`` — page, bounding box, type and
-        content: the managed chat's ``citations`` entries, plus ``doc_id``
-        and the block's ``text``. Reads both tag formats SuperIndex chat
-        writes: ``<cite doc= page= block=/>`` (own-model
-        ``chat(citations=True)``) and ``<doc=…;page=…;block=…>`` (the
-        managed chat). The markdown format of
+        it names. Reads both tag formats: ``<cite doc= page= block=/>``
+        (``chat(citations=True)``) and ``<doc=…;page=…;block=…>`` (the
+        upstream hosted chat's format). The markdown format of
         ``citation_prompt()`` is prose for readers and is not parsed.
 
         Args:
@@ -1944,13 +1456,9 @@ class SuperIndexClient:
 
         Returns:
             list: One dict per distinct citation: ``{'document', 'doc_id',
-            'page'}`` for a page-level citation, plus ``'block_id'`` and
-            the block's fields as ``get_block()`` returns them (``'bbox'``,
-            ``'block_type'``, ...) for a block-level one. A document not in
-            the library keeps ``doc_id: None``; a block the document does
-            not have (a model's slip), or that cannot be looked up (local
-            mode, a document you cannot read), keeps its citation without
-            a bbox.
+            'page'}``, plus ``'block_id'`` when the tag carries one (local
+            page content has no blocks, so nothing more is looked up). A
+            document not in the library keeps ``doc_id: None``.
         """
         if not isinstance(answer, str):
             raise SuperIndexAPIError("answer must be a str — the answer text "
@@ -1989,13 +1497,6 @@ class SuperIndexClient:
             block_id = citation.get("block_id")
             if block_id:
                 entry["block_id"] = block_id
-                if entry["doc_id"]:
-                    try:
-                        entry.update(self.get_block(entry["doc_id"], block_id))
-                    except SuperIndexAPIError as exc:
-                        # Local raises carry no status; 429/5xx propagate.
-                        if exc.status_code not in (None, 403, 404):
-                            raise
             resolved.append(entry)
         return resolved
 
@@ -2022,9 +1523,7 @@ class SuperIndexClient:
             dict: ``{'answer': str, 'citations': list}`` where each
             citation carries ``'anchor'``, ``'index'`` and the fields
             ``get_citations()`` returns (``'document'``, ``'doc_id'``,
-            ``'page'``, and for block-level citations ``'block_id'`` plus,
-            when the block could be read, ``'bbox'``, ``'block_type'``,
-            ``'text'``).
+            ``'page'``, and for block-level citations ``'block_id'``).
         """
         entries = self.get_citations(answer, doc_id=doc_id)
         index: dict[Any, int] = {
@@ -2044,175 +1543,6 @@ class SuperIndexClient:
                            **entry} for i, entry in enumerate(entries, 1)],
         }
 
-    def folder_context(self, folder_id: str) -> str:
-        """
-        Folder targeting text for the first user message, placed as
-        ``document_context`` is (and ahead of it, the managed chat's
-        order): the folder's name and metadata, and the directive to
-        discover its documents there, rendered as the managed chat renders
-        its own ``folder_id``. ``chat(folder_id=...)`` places it for you.
-        Cloud-only: local libraries have no folders. ``"root"`` is the
-        library itself: ``""``, nothing to place, as the managed chat
-        places nothing for it. Raises SuperIndexAPIError if the folder does
-        not exist.
-        """
-        from .agent_tools import folder_targeting_block
-        if folder_id is None:
-            raise SuperIndexAPIError("folder_id must be a string.")
-        return folder_targeting_block(self, folder_id) or ""
-
-    # ---------- FOLDER MANAGEMENT ----------
-
-    def create_folder(
-        self,
-        name: str,
-        description: Optional[str] = None,
-        parent_folder_id: Optional[str] = None,
-    ) -> dict[str, Any]:
-        """
-        Create a folder (workspace). Cloud-only: local mode raises
-        SuperIndexAPIError.
-        """
-        return self._require_cloud(
-            "create_folder is cloud-only — folders are not supported in local "
-            "mode. Create the client with an api_key to use folders."
-        ).create_folder(
-            name=name, description=description, parent_folder_id=parent_folder_id,
-        )
-
-    def list_folders(self, parent_folder_id: Optional[str] = None) -> dict[str, Any]:
-        """
-        List folders. Cloud-only: local mode raises SuperIndexAPIError.
-        """
-        return self._require_cloud(
-            "list_folders is cloud-only — folders are not supported in local "
-            "mode. Create the client with an api_key to use folders."
-        ).list_folders(
-            parent_folder_id=parent_folder_id,
-        )
-
-    # ---------- PATH HELPERS ----------
-
-    def _folder_paths(self) -> dict[str, str]:
-        folders = {f["id"]: f for f in self.list_folders()["folders"]}
-        paths = {}
-        for folder_id in folders:
-            names, current = [], folder_id
-            while current in folders and len(names) < len(folders):
-                names.append(folders[current]["name"])
-                current = folders[current].get("parent_folder_id")
-            paths[folder_id] = "/".join(reversed(names))
-        return paths
-
-    def get_document_path(self, doc_id: str) -> str:
-        """
-        A document's path: its folder's path and its name, e.g.
-        ``"Research/Papers/attention.pdf"``. Just the name when the
-        document sits outside the API's folders, as at the library root
-        and for every local document.
-        """
-        doc = self.get_document(doc_id)
-        folder = doc.get("folderId") and self._folder_paths().get(doc["folderId"])
-        return f"{folder}/{doc['name']}" if folder else doc["name"]
-
-    def get_folder_path(self, folder_id: str) -> str:
-        """
-        A cloud folder's path: its ancestors' names and its own, root
-        first, e.g. ``"Research/Papers"``. Cloud-only. Raises
-        SuperIndexAPIError if the folder does not exist.
-        """
-        self._require_cloud(
-            "get_folder_path is cloud-only — folders are not supported in "
-            "local mode. Create the client with an api_key.")
-        path = self._folder_paths().get(folder_id)
-        if path is None:
-            raise SuperIndexAPIError(f"Folder {folder_id!r} not found.")
-        return path
-
-    def get_folder_id(self, path: str) -> str:
-        """
-        The ID of the cloud folder at ``path``, written as
-        ``get_folder_path`` writes it, e.g. ``"Research/Papers"``.
-        Cloud-only. Raises SuperIndexAPIError if no folder, or more than
-        one, has that path.
-        """
-        self._require_cloud(
-            "get_folder_id is cloud-only — folders are not supported in "
-            "local mode. Create the client with an api_key.")
-        paths = self._folder_paths()
-        ids = [fid for fid, p in paths.items() if p == path]
-        if not ids and isinstance(path, str):
-            ids = [fid for fid, p in paths.items() if p == path.strip("/")]
-        if len(ids) != 1:
-            raise SuperIndexAPIError(
-                f"{path!r} names {len(ids)} folders ({', '.join(ids)})."
-                if ids else f"No folder at path {path!r}.")
-        return ids[0]
-
-    def _require_cloud(self, message: str):
-        from .cloud_api import CloudAPI
-        if not isinstance(self._api, CloudAPI):
-            raise SuperIndexAPIError(message)
-        return self._api
-
-
-class PageIndexCloudClient(SuperIndexClient):
-    """Cloud mode — the class name says cloud, so the key may come from
-    the environment: ``PageIndexCloudClient()`` reads PAGEINDEX_API_KEY.
-    The shortest env-key cloud spelling."""
-
-    _pin = "cloud"
-
-    def __init__(
-        self,
-        api_key: Optional[str] = None,
-        *,
-        index: Optional[Union[Mapping[str, Any], str]] = None,
-        chat: Optional[Union[Mapping[str, Any], str]] = None,
-        chat_model: Optional[str] = None,
-        retrieve_model: Optional[str] = None,
-        chat_backend: Optional[dict[str, Any]] = None,
-        instructions: Optional[str] = None,
-    ):
-        if index is None:
-            if api_key is None:
-                # .env keys arrive via utils' import-time load_dotenv().
-                from . import utils  # noqa: F401
-                api_key = os.environ.get("PAGEINDEX_API_KEY")
-            if not api_key:
-                raise SuperIndexAPIError(
-                    "PageIndexCloudClient requires a PageIndex API key — "
-                    "pass api_key=..., or export PAGEINDEX_API_KEY. Get one "
-                    "at https://developer.pageindex.ai/api-keys."
-                )
-        super().__init__(api_key, index=index, chat=chat,
-                         chat_model=chat_model, retrieve_model=retrieve_model,
-                         chat_backend=chat_backend, instructions=instructions)
-
 
 class SuperIndexLocalClient(SuperIndexClient):
-    """Local mode — no api_key parameter, no cloud access."""
-
-    _pin = "local"
-
-    def __init__(
-        self,
-        *,
-        index: Optional[Union[Mapping[str, Any], str]] = None,
-        chat: Optional[Union[Mapping[str, Any], str]] = None,
-        index_model: Optional[str] = None,
-        chat_model: Optional[str] = None,
-        model: Optional[str] = None,
-        summary_model: Optional[str] = None,
-        retrieve_model: Optional[str] = None,
-        storage_path: Optional[Union[str, os.PathLike[str]]] = None,
-        index_backend: Optional[dict[str, Any]] = None,
-        chat_backend: Optional[dict[str, Any]] = None,
-        instructions: Optional[str] = None,
-    ):
-        super().__init__(None, index=index, chat=chat,
-                         index_model=index_model, chat_model=chat_model,
-                         model=model, summary_model=summary_model,
-                         retrieve_model=retrieve_model, storage_path=storage_path,
-                         index_backend=index_backend, chat_backend=chat_backend,
-                         instructions=instructions)
+    """The same client under its older name."""

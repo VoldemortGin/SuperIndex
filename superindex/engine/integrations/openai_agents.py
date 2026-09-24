@@ -1,14 +1,8 @@
 """OpenAI Agents SDK adapter for the Agent(tools=...) slot.
 
-Cloud clients default to the live read tool set via the MCP bridge; pass
-hosted=True to use a single HostedMCPTool instead (the model connects to
-the PageIndex cloud MCP server from OpenAI's side — the read-only
-``?tools=read`` endpoint by default). Local clients get the in-process
-tools.
-
-Either way the tool set reaches the framework as an MCP server (an
-in-process one over the bridge or the local store), and the FunctionTools
-are the framework's own conversion of it: the schema goes to the model
+The tool set reaches the framework as an in-process MCP server over the
+local store, and the FunctionTools are the framework's own conversion of
+it: the schema goes to the model
 verbatim, and tool results reach it in the framework's shapes (text as
 text, images as images). The SDK carries MCP types and renders nothing.
 """
@@ -21,9 +15,8 @@ from ..errors import SuperIndexAPIError, _superindex_cause
 
 def _tool_failure(ctx, error):
     """The framework's tool-failure formatter, narrowed: a SuperIndex failure
-    the invoker re-raised (auth, limits, post-retry transport) escapes the run
-    instead of becoming model-visible text; anything else keeps the
-    framework default."""
+    a tool re-raised escapes the run instead of becoming model-visible text;
+    anything else keeps the framework default."""
     from agents.tool import default_tool_error_function
     if _superindex_cause(error) is not None:
         raise error
@@ -75,28 +68,14 @@ def build_mcp_server(client, include_management: bool = False, doc_ids=None):
 
 
 def build_openai_tools(client, include_management: bool = False,
-                       hosted: bool = False, doc_ids=None) -> list:
+                       doc_ids=None) -> list:
     try:
-        from agents import HostedMCPTool
         from agents.mcp import MCPUtil
     except ImportError as exc:
         raise SuperIndexAPIError(
             "as_openai_tools requires the OpenAI Agents SDK — "
             "pip install openai-agents."
         ) from exc
-    if getattr(client, "api_key", None) and hosted:
-        # include_management picks the endpoint — the URL itself is the
-        # gate (?tools=read serves only readOnlyHint-annotated tools), so
-        # nothing needs the Responses API approval flow.
-        suffix = "" if include_management else "?tools=read"
-        return [HostedMCPTool(tool_config={
-            "type": "mcp",
-            "server_label": "pageindex",
-            "server_url": f"{client.BASE_URL}/mcp{suffix}",
-            "headers": {"Authorization": f"Bearer {client.api_key}"},
-            "require_approval": "never",
-        })]
-
     server = build_mcp_server(client, include_management, doc_ids)
     return [MCPUtil.to_function_tool(tool, server, False)
             for tool in server.tools]

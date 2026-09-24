@@ -3,11 +3,10 @@ from typing import TYPE_CHECKING as _TYPE_CHECKING
 
 from .agent_tools import AgentTool
 from .chat_stream import ChatStream
-from .client import SuperIndexClient, PageIndexCloudClient, SuperIndexLocalClient
+from .client import SuperIndexClient, SuperIndexLocalClient
 from .errors import SuperIndexAPIError
 from .local_chat import ChatExtras
-from .types import (ChatConfig, ChatProcessOptions, CloudIndexConfig,
-                    IndexConfig, LocalIndexConfig)
+from .types import ChatConfig, ChatProcessOptions, IndexConfig, LocalIndexConfig
 
 if _TYPE_CHECKING:
     from .flash import page_index_flash
@@ -17,9 +16,9 @@ if _TYPE_CHECKING:
     from .tree_optimize import optimize_tree
 
 __all__ = [
-    "SuperIndexClient", "PageIndexCloudClient", "SuperIndexLocalClient",
+    "SuperIndexClient", "SuperIndexLocalClient",
     "SuperIndexAPIError",
-    "IndexConfig", "CloudIndexConfig", "LocalIndexConfig", "ChatConfig",
+    "IndexConfig", "LocalIndexConfig", "ChatConfig",
     "ChatProcessOptions", "ChatStream", "AgentTool", "ChatExtras",
     "page_index", "page_index_main", "page_index_flash",
     "optimize_tree", "md_to_tree", "highlight_region",
@@ -31,9 +30,9 @@ _LAZY = {
     "optimize_tree": ".tree_optimize",
     "md_to_tree": ".page_index_md",
 }
-_SUBMODULES = {"agent_tools", "chat_stream", "client", "cloud_api", "errors",
+_SUBMODULES = {"agent_tools", "chat_stream", "client", "errors",
                "flash", "imaging", "integrations", "local_api", "local_chat",
-               "local_store", "mcp_bridge", "page_index_classic",
+               "local_store", "page_index_classic",
                "page_index_md", "tree_optimize", "types", "utils"}
 
 

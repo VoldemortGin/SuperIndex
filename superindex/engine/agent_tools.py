@@ -14,10 +14,7 @@ same JSON envelope the cloud emits ({"success": true, ...} /
 {"error": ...}) — arguments outside a pruned local signature come back as
 that envelope too, on the direct and the call_tool path alike, except
 browse_documents' ``recursive``: call_tool honors it, because the flat
-no-folders shape it asks for is trivially true here. The exceptions to
-never-raise, all cloud: a 401/403, a 429/5xx that outlived the bridge's
-retries, an unreachable server and a RATE_LIMITED / USAGE_LIMIT_REACHED
-tool error re-raise SuperIndexAPIError.
+no-folders shape it asks for is trivially true here.
 """
 from __future__ import annotations
 
@@ -27,15 +24,10 @@ import difflib
 import inspect
 import json
 import re
-import threading
 import time
-import weakref
 from typing import Any, Callable, Optional
 
-import requests
-
 from .errors import SuperIndexAPIError
-from .mcp_bridge import render_prompt_text, render_text
 
 TOOL_RESPONSE_CHAR_LIMIT = 100_000
 STRUCTURE_FIRST_PAGE_THRESHOLD = 20
@@ -1193,8 +1185,7 @@ def tool_names(include_management: bool = False) -> tuple[str, ...]:
 
 def _coerce_bool_args(schema: dict, kwargs: dict[str, Any]) -> None:
     """Models routinely send booleans as JSON strings ("false"); the bare
-    truthiness tests downstream would read those as True. Runs on both
-    dispatch paths — call_tool and the cloud bridge invoker."""
+    truthiness tests downstream would read those as True."""
     properties = (schema or {}).get("properties", {})
     for key, spec in properties.items():
         value = kwargs.get(key)
@@ -1230,7 +1221,7 @@ def call_tool(client, name: str, arguments: dict[str, Any],
         return _dumps(payload), is_error
     # Underscore-prefixed keys are the SDK's private channel (the scope
     # below), never model arguments. None ≡ omitted (the contract's
-    # "omit if ..." semantics, same as the cloud bridge invoker).
+    # "omit if ..." semantics).
     kwargs = {key: value for key, value in (arguments or {}).items()
               if not key.startswith("_") and value is not None}
     _coerce_bool_args(TOOL_CONTRACT.get(name, {}).get("schema", {}), kwargs)
@@ -1362,60 +1353,29 @@ def _annotation_for(spec: dict) -> Any:
     return Optional[base] if nullable else base
 
 
-_ACCOUNT_LIMITS = {"RATE_LIMITED": 429, "USAGE_LIMIT_REACHED": 402}
-
-
-def _raise_account_limit(blocks: list) -> None:
-    """The cloud's account-level tool errors (retried server-side already;
-    the model can act on neither) re-raise as the status they stand for."""
-    try:
-        payload = json.loads(blocks[0]["text"])
-        status = _ACCOUNT_LIMITS[payload["errorCode"]]
-    except (LookupError, TypeError, ValueError):
-        return
-    message = str(payload.get("error") or payload["errorCode"])
-    for key in ("retry_after_seconds", "open_url"):
-        if key in payload:
-            message += f" ({key}: {payload[key]})"
-    raise SuperIndexAPIError(message, status_code=status)
-
-
-def _bridge_invoker(bridge, name: str, schema: dict,
-                    ) -> "Callable[[dict], tuple[list, bool]]":
-    """One cloud tool call proxied over MCP: string booleans are coerced
-    (same as call_tool), None-valued arguments are dropped (None ≡ omitted,
-    matching the contract's "omit if ..." semantics) and failures are
-    contained in the error envelope — except auth failures, what
-    survived the bridge's own retries (401/403/429/5xx), an unreachable
-    server and the cloud's RATE_LIMITED / USAGE_LIMIT_REACHED tool errors
-    (429 / 402), which re-raise: the model can act on none of them. Returns
-    (content blocks, is_error), like the bridge."""
-    def _invoke(arguments: dict[str, Any]) -> tuple[list, bool]:
-        try:
-            arguments = {key: value for key, value in arguments.items()
-                         if value is not None}
-            _coerce_bool_args(schema, arguments)
-            blocks, is_error = bridge.call_tool(name, arguments)
-        except Exception as exc:
-            if isinstance(exc, SuperIndexAPIError) and (
-                    exc.status_code in (401, 403, 429)
-                    or (exc.status_code or 0) >= 500
-                    or (exc.status_code is None and isinstance(
-                        exc.__cause__, requests.RequestException))):
-                raise
-            payload, _ = _failure(
-                f"{name} failed: {exc}", None,
-                {"summary": "Unexpected error while running the tool",
-                 "options": ["Try the request again"],
-                 "auto_retry": "This is likely a temporary issue - you can "
-                               "try the request again"},
-                "INTERNAL_ERROR",
-            )
-            return [{"type": "text", "text": _dumps(payload)}], True
-        if is_error:
-            _raise_account_limit(blocks)
-        return blocks, is_error
-    return _invoke
+def _render_text(blocks: list) -> str:
+    """The text-only rendering of MCP content: text verbatim, base64
+    payloads as a size stub (dumped whole they hand the model the raw
+    blob)."""
+    texts = []
+    for block in blocks:
+        if isinstance(block, dict) and block.get("type") == "text":
+            texts.append(block.get("text", ""))
+        elif isinstance(block, dict) and isinstance(block.get("data"), str):
+            kind = block.get("mimeType") or block.get("type") or "binary"
+            size_kb = max(1, len(block["data"]) * 3 // 4096)
+            texts.append(f"[{kind} content omitted: ~{size_kb} KB]")
+        elif (isinstance(block, dict)
+              and isinstance(block.get("resource"), dict)
+              and isinstance(block["resource"].get("blob"), str)):
+            # EmbeddedResource nests its base64 one level down.
+            resource = block["resource"]
+            kind = resource.get("mimeType") or "binary"
+            size_kb = max(1, len(resource["blob"]) * 3 // 4096)
+            texts.append(f"[{kind} content omitted: ~{size_kb} KB]")
+        else:
+            texts.append(json.dumps(block, ensure_ascii=False))
+    return "\n".join(texts)
 
 
 def _make_tool_function(name: str, description: str, schema: dict,
@@ -1436,7 +1396,7 @@ def _make_tool_function(name: str, description: str, schema: dict,
                         for param in properties)
     if not params_usable:
         def inner(**kwargs: Any) -> str:
-            return render_text(_invoke(kwargs)[0])
+            return _render_text(_invoke(kwargs)[0])
     else:
         ordered = ([p for p in properties if p in required]
                    + [p for p in properties if p not in required])
@@ -1446,7 +1406,7 @@ def _make_tool_function(name: str, description: str, schema: dict,
         )
         args_literal = "{" + ", ".join(f"'{p}': {p}" for p in ordered) + "}"
         namespace: dict[str, Any] = {"_invoke": _invoke,
-                                     "_render": render_text}
+                                     "_render": _render_text}
         exec(f"def _synthesized({rendered}):\n"
              f"    return _render(_invoke({args_literal})[0])", namespace)
         inner = namespace["_synthesized"]
@@ -1482,33 +1442,6 @@ def _make_tool_function(name: str, description: str, schema: dict,
     proxy.__name__ = proxy.__qualname__ = name or "tool"
     proxy.__doc__ = _tool_docstring(description or "", properties)
     return proxy
-
-
-_BRIDGES: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
-_BRIDGES_LOCK = threading.Lock()
-
-
-def _cloud_bridge(client, gated: bool = False):
-    """One bridge per client and endpoint gate (``gated`` = the read-only
-    ?tools=read endpoint); tool discovery and instructions share a session
-    per gate. Weak-keyed off the instance so clients stay picklable; the
-    lock closes the check-then-set race under concurrent first calls."""
-    with _BRIDGES_LOCK:
-        # A rotated api_key or moved BASE_URL rebuilds the bridges.
-        auth = (client.BASE_URL, client.api_key)
-        bridges, seen = _BRIDGES.get(client) or ({}, None)
-        if seen != auth:
-            bridges = {}
-        bridge = bridges.get(gated)
-        if bridge is None:
-            from .mcp_bridge import McpBridge
-            bridge = McpBridge(
-                f"{auth[0]}/mcp" + ("?tools=read" if gated else ""),
-                {"Authorization": f"Bearer {auth[1]}"},
-            )
-            bridges[gated] = bridge
-            _BRIDGES[client] = (bridges, auth)
-        return bridge
 
 
 def _require_doc_selection(doc_ids) -> None:
@@ -1556,27 +1489,9 @@ def _tool_specs(client, include_management: bool = False, doc_ids=None,
                 ) -> "list[tuple[str, str, dict, Callable[[dict], tuple[list, bool]]]]":
     """(name, description, schema, invoke) per tool, for adapters that take
     the wire schema verbatim. ``invoke`` returns (content blocks, is_error):
-    the MCP content as the server sent it, one text block from the local
-    tools. Schemas are copies (frameworks keep the dict by reference).
-    ``doc_ids`` is the local chat scope, already validated and dropped on
-    cloud by ``_local_doc_scope``."""
-    if getattr(client, "api_key", None):
-        bridge = _cloud_bridge(client, gated=not include_management)
-        tools_meta = bridge.list_tools()
-        if not tools_meta:
-            raise SuperIndexAPIError(
-                "The MCP server returned no tools — a zero-tool agent would "
-                "answer from the model's own knowledge, not the documents, "
-                "with nothing to signal it."
-            )
-        return [(str(meta.get("name") or "tool"),
-                 meta.get("description") or "",
-                 copy.deepcopy(meta.get("inputSchema"))
-                 or {"type": "object", "properties": {}},
-                 _bridge_invoker(bridge, str(meta.get("name") or "tool"),
-                                 meta.get("inputSchema") or {}))
-                for meta in tools_meta]
-
+    one text block per call. Schemas are copies (frameworks keep the dict
+    by reference). ``doc_ids`` is the chat scope, already validated by
+    ``_local_doc_scope``."""
     def local_invoke(name: str) -> "Callable[[dict], tuple[list, bool]]":
         def invoke(arguments: dict) -> tuple[list, bool]:
             text, is_error = call_tool(client, name, arguments,
@@ -1592,18 +1507,12 @@ def _tool_specs(client, include_management: bool = False, doc_ids=None,
 
 def build_agent_tools(client, include_management: bool = False,
                       ) -> list[Callable[..., str]]:
-    """Plain synchronous functions bound to `client`.
-
-    Cloud: one function per tool of the live cloud MCP tool set, signatures
-    synthesized from the server's schemas, calls proxied over MCP. Local:
-    the built-in contract tools over the local store. Every function returns
-    the JSON envelope as a string (binary content, such as a cloud page
-    image, as a size stub) and never raises for arguments its
-    signature accepts — except a cloud 401/403, a 429/5xx that outlived
-    the bridge's retries, an unreachable server or a RATE_LIMITED /
-    USAGE_LIMIT_REACHED tool error, which re-raise
-    SuperIndexAPIError (cloud-only parameters are absent from the local
-    signatures; the call_tool path answers them with the guided envelope).
+    """Plain synchronous functions bound to `client`: the built-in
+    contract tools over the local store, then the client's own tools.
+    Every function returns the JSON envelope as a string and never raises
+    for arguments its signature accepts (cloud-only parameters are absent
+    from the local signatures; the call_tool path answers them with the
+    guided envelope).
     """
     return [_make_tool_function(name, description, schema, invoke)
             for name, description, schema, invoke
@@ -1690,42 +1599,21 @@ CITATIONS
 
 
 def fetch_citation_prompt(client, format: str) -> str:
-    """The MCP server's ``cited_answer`` prompt as system-prompt text;
-    ``format`` rides as its one argument. Local: the frozen copy,
+    """The frozen ``cited_answer`` prompt as system-prompt text,
     page-level."""
     if format not in LOCAL_CITATION_PROMPTS:
         raise SuperIndexAPIError(
             f"citations format {format!r} is not one of "
             f"{', '.join(LOCAL_CITATION_PROMPTS)}.")
-    if not getattr(client, "api_key", None):
-        return LOCAL_CITATION_PROMPTS[format]
-    _, messages = _cloud_bridge(client, gated=True).get_prompt(
-        "cited_answer", {"format": format})
-    text = render_prompt_text(messages)
-    if not text.strip():
-        raise SuperIndexAPIError(
-            "The MCP server returned an empty cited_answer prompt.")
-    return text
+    return LOCAL_CITATION_PROMPTS[format]
 
 
 def _base_instructions(client, include_management: bool = False) -> str:
-    """Cloud: the live instructions the MCP server serves for the tool set
-    actually shipped. Local: the built-in subset instructions."""
-    if not getattr(client, "api_key", None):
-        base = AGENT_INSTRUCTIONS
-    else:
-        base = _cloud_bridge(
-            client, gated=not include_management).instructions()
-        if not isinstance(base, str) or not base.strip():
-            raise SuperIndexAPIError(
-                "The MCP server returned no agent instructions — refusing "
-                "to substitute the SDK's local-subset guidance, which does "
-                "not cover the cloud tool set."
-            )
-    own = [getattr(client, "instructions", None)]
-    if not getattr(client, "api_key", None):
-        own += [tool.guidance for tool in client.tools]
-    return "\n\n".join([base, *[text for text in own if text]])
+    """The built-in instructions, then the client's own and each extra
+    tool's guidance."""
+    own = [getattr(client, "instructions", None),
+           *[tool.guidance for tool in client.tools]]
+    return "\n\n".join([AGENT_INSTRUCTIONS, *[text for text in own if text]])
 
 
 def doc_targeting_block(client, doc_id) -> Optional[str]:
@@ -1748,7 +1636,7 @@ def doc_targeting_block(client, doc_id) -> Optional[str]:
             details.append(client.get_document(one_id))
         except SuperIndexAPIError as exc:
             # Batch only a definite not-found/denied (local raises carry no
-            # status); a cloud transport failure (429/5xx) propagates raw.
+            # status).
             if exc.status_code not in (None, 403, 404):
                 raise
             missing.append(str(one_id))
@@ -1772,36 +1660,16 @@ def doc_targeting_block(client, doc_id) -> Optional[str]:
 
 
 def folder_targeting_block(client, folder_id) -> Optional[str]:
-    """The folder_id targeting text, rendered as the cloud's managed chat
-    renders its own: the folder's name and metadata and the directive to
-    discover its documents there. None for no folder — None, "", and
-    "root", the library itself, which the managed chat leaves untargeted.
-    A folder proper is cloud-only: local libraries have none."""
+    """Always None: local libraries have no folders. None, "" and "root"
+    (the library itself) are accepted; any other folder_id raises."""
     if folder_id is None:
         return None
     if not isinstance(folder_id, str):
         raise SuperIndexAPIError("folder_id must be a string.")
     if folder_id in ("", "root"):
         return None
-    if not getattr(client, "api_key", None):
-        raise SuperIndexAPIError(
-            "folder_id is cloud-only — folders are not supported in local "
-            "mode. Create the client with an api_key to use folders.")
-    folders = client.list_folders().get("folders") or []
-    folder = next((f for f in folders if f.get("id") == folder_id), None)
-    if folder is None:
-        raise SuperIndexAPIError(
-            f"Folder not found or access denied: {folder_id}")
-    metadata = {key: folder[key] for key in ("id", "name", "description")
-                if folder.get(key)}
-    return (
-        f"The user has specified folder: {folder.get('name')}\n"
-        f"Folder metadata: {json.dumps(metadata, ensure_ascii=False)}\n"
-        "Discover its documents with "
-        f'browse_documents(folder_id="{folder_id}", recursive=true) '
-        f'or search_documents(query, folder_id="{folder_id}", '
-        "recursive=true)."
-    )
+    raise SuperIndexAPIError(
+        "folder_id is not supported — local libraries have no folders.")
 
 
 def targeting_block(client, doc_id, folder_id=None) -> Optional[str]:

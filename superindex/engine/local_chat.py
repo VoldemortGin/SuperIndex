@@ -1,6 +1,5 @@
-"""Own-model chat: document-QA agents over the local or cloud agent
-tools, and the runs behind both ChatStream views, which also weave the
-managed endpoint's chunk stream."""
+"""Own-model chat: document-QA agents over the local agent tools, and
+the runs behind both ChatStream views."""
 from __future__ import annotations
 
 import asyncio
@@ -26,8 +25,7 @@ CHAT_HEADER = (
 # ── shared: prompt, doc targeting, validation, sync bridges ──
 
 def _managed_instructions(client, extra_system: list[str]) -> str:
-    # Local: the built-in subset guidance. Own-model chat over cloud
-    # documents: the live instructions the MCP server serves.
+    # The built-in subset guidance.
     base: str = _base_instructions(client)
     return "\n\n".join([CHAT_HEADER, base,
                         *[t for t in extra_system if t.strip()]])
@@ -421,16 +419,13 @@ def _conversation_cache_key(model_name: str, instructions: str, doc_id,
     return "pageindex-" + hashlib.sha256(seed.encode()).hexdigest()[:16]
 
 
-def _model_backend_error(exc, lane: str, client=None) -> SuperIndexAPIError:
+def _model_backend_error(exc, lane: str) -> SuperIndexAPIError:
     """Wrap a provider failure; the sol-class refusal (chatcmpl rejects
     function tools while reasoning is on) gets its documented exits
     appended, since the fix is a different route, not a retry. The exits
     are per-lane: of the chat lane's three, two are dead ends for a
     Responses-lane caller — it IS the other lane, and its reasoning knob is
-    ``reasoning``, not ``reasoning_effort``. On a cloud client an
-    auth-shaped failure gets the own-model architecture spelled out —
-    the misreading it corrects ("the cloud runs my model") surfaces
-    exactly here."""
+    ``reasoning``, not ``reasoning_effort``."""
     message = f"The model backend failed: {exc}"
     if "Function tools with reasoning_effort" in str(exc):
         message += (
@@ -443,22 +438,11 @@ def _model_backend_error(exc, lane: str, client=None) -> SuperIndexAPIError:
             if lane == "chat"
             else "."
         )
-    if (getattr(client, "api_key", None)
-            and (getattr(exc, "status_code", None) == 401
-                 or "api key" in str(exc).lower().replace("_", " "))):
-        message += (
-            " — note: your chat model runs in your process on your own "
-            "provider credentials; the PageIndex api_key does not cover "
-            "it. Set the provider key (or chat_backend)")
-        message += (
-            ", or drop the chat model configuration to use the managed "
-            "cloud chat." if lane == "chat" else "."
-        )
     return SuperIndexAPIError(message,
                              status_code=getattr(exc, "status_code", None))
 
 
-def _translate_run_error(exc, max_turns, lane, client=None) -> SuperIndexAPIError:
+def _translate_run_error(exc, max_turns, lane) -> SuperIndexAPIError:
     """The uncaught-run ladder every agent door shares."""
     from agents.exceptions import AgentsException, MaxTurnsExceeded
     if isinstance(exc, MaxTurnsExceeded):
@@ -469,7 +453,7 @@ def _translate_run_error(exc, max_turns, lane, client=None) -> SuperIndexAPIErro
             # a tool failure the invoker re-raised, wrapped on its way out
             return SuperIndexAPIError(str(cause), status_code=cause.status_code)
         return SuperIndexAPIError(f"The agent backend failed: {exc}")
-    return _model_backend_error(exc, lane, client)
+    return _model_backend_error(exc, lane)
 
 
 def _run_kwargs(max_turns) -> dict:
@@ -758,7 +742,7 @@ async def _chat_events_agen(client, agent, items, run_kwargs):
         completed = True
     except (MaxTurnsExceeded, AgentsException, openai.OpenAIError) as exc:
         raise _translate_run_error(exc, run_kwargs.get("max_turns"),
-                                   "chat", client) from exc
+                                   "chat") from exc
     finally:
         if not completed and hasattr(streamed, "cancel"):
             streamed.cancel()  # abandoned/failed: stop the agent task
@@ -832,69 +816,6 @@ def _weave(events, options) -> Iterator[str]:
         close = getattr(events, "close", None)
         if close is not None:
             close()  # cancel the underlying run on abandonment
-
-
-def _cloud_chunk_events(chunks) -> Iterator[dict]:
-    """Typed events from the managed endpoint's chunk stream: answer
-    deltas, and each tool call (name + accumulated arguments) from the
-    block_metadata tags — the endpoint interleaves tool-argument JSON
-    into delta.content, distinguished only by those tags. It streams no
-    thinking and no tool results. Outside a tool block, chunks without
-    block_metadata (an older server) are answer text."""
-    tool = None  # [name, argument pieces] while inside a tool_use block
-    try:
-        for chunk in chunks:
-            if not isinstance(chunk, dict):
-                continue
-            meta = chunk.get("block_metadata") or {}
-            kind = meta.get("type")
-            if kind == "mcp_tool_use_start":
-                tool = [meta.get("tool_name") or "tool", []]
-                continue
-            choices = chunk.get("choices") or []
-            delta = (choices[0].get("delta") or {}) if choices else {}
-            content = delta.get("content")
-            if kind == "tool_use_stop":
-                if tool is not None:
-                    name, pieces = tool
-                    arguments = "".join(map(str, pieces))
-                    try:
-                        arguments = json.loads(arguments)
-                    except ValueError:
-                        pass
-                    yield {"type": "tool_call", "call_id": None,
-                           "name": name, "arguments": arguments}
-                    tool = None
-                continue
-            if kind == "tool_use" or tool is not None:
-                # inside an open block nothing is answer text: argument
-                # chunks accumulate under any tag rather than leaking
-                if tool is not None and content:
-                    tool[1].append(content)
-                continue
-            if content:
-                yield {"type": "answer", "delta": content}
-    finally:
-        close = getattr(chunks, "close", None)
-        if close is not None:
-            close()
-
-
-def run_cloud_chat_stream(chunks,
-                          show_process: Union[bool, Mapping[str, Any]] = True,
-                          ) -> ChatStream:
-    """chat(stream=True) on a managed client: the text view weaves what
-    the endpoint serves — tool-call lines from its block_metadata tags
-    (that wire carries no thinking and no tool results); .events needs
-    the in-process agent."""
-    options = (None if show_process is False
-               else _process_options(show_process))
-    return ChatStream(
-        text=lambda: _weave(_cloud_chunk_events(chunks), options),
-        events=("chat events are produced by the in-process agent, "
-                "which the managed chat endpoint does not serve — "
-                "construct the client with chat_model=... (or a chat= "
-                "model) to run the agent in your process."))
 
 
 @dataclasses.dataclass
@@ -983,10 +904,8 @@ def run_chat_completions(client, messages, stream: bool = False,
                          ) -> Union[dict, Iterator[str], Iterator[dict]]:
     if enable_citations:
         raise SuperIndexAPIError(
-            "enable_citations needs the managed chat endpoint — "
-            + ("drop the chat model configuration to use it, or "
-               if getattr(client, "api_key", None) else "")
-            + "cite with your own model via chat(citations=True).")
+            "enable_citations is not supported — cite with your own "
+            "model via chat(citations=True).")
     _require_openai_agents("chat")
     _validate_max_turns(max_turns)
     agent, items, model_name = _chat_agent(
@@ -1007,7 +926,7 @@ def run_chat_completions(client, messages, stream: bool = False,
                 Runner.run(agent, input=items, **run_kwargs)))
         except (MaxTurnsExceeded, AgentsException,
                 openai.OpenAIError) as exc:
-            raise _translate_run_error(exc, max_turns, "chat", client) from exc
+            raise _translate_run_error(exc, max_turns, "chat") from exc
         return {
             "id": f"chatcmpl-{uuid.uuid4().hex}",
             "object": "chat.completion",
@@ -1048,7 +967,7 @@ def run_chat_completions(client, messages, stream: bool = False,
             completed = True
         except (MaxTurnsExceeded, AgentsException,
                 openai.OpenAIError) as exc:
-            raise _translate_run_error(exc, max_turns, "chat", client) from exc
+            raise _translate_run_error(exc, max_turns, "chat") from exc
         finally:
             if not completed and hasattr(streamed, "cancel"):
                 streamed.cancel()  # abandoned/failed: stop the agent task
@@ -1158,7 +1077,7 @@ def run_responses(client, input, model: Optional[str] = None,
         except (MaxTurnsExceeded, AgentsException,
                 openai.OpenAIError) as exc:
             raise _translate_run_error(exc, max_turns,
-                                       "responses", client) from exc
+                                       "responses") from exc
         transcript = result.to_input_list()[len(items):]
         return envelope(transcript, result.raw_responses)
 
@@ -1222,11 +1141,11 @@ def run_responses(client, input, model: Optional[str] = None,
             if (isinstance(exc, MaxTurnsExceeded)
                     or recorded.get("status") not in ("failed", "incomplete")):
                 raise _translate_run_error(exc, max_turns,
-                                           "responses", client) from exc
+                                           "responses") from exc
             completed = True
         except openai.OpenAIError as exc:
             raise _translate_run_error(exc, max_turns,
-                                       "responses", client) from exc
+                                       "responses") from exc
         finally:
             if not completed and hasattr(streamed, "cancel"):
                 streamed.cancel()  # abandoned/failed: stop the agent task
