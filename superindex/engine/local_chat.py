@@ -10,7 +10,8 @@ import queue
 import threading
 import time
 import uuid
-from typing import Any, Callable, Iterator, Mapping, Optional, Union
+from collections.abc import Callable
+from typing import Any, Iterator, Mapping, Optional, Union
 
 from .agent_tools import _base_instructions, targeting_block
 from .chat_stream import ChatStream

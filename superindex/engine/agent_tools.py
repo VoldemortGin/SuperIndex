@@ -1469,7 +1469,7 @@ class AgentTool:
     schema: dict[str, Any]
     run: Callable[[Any, dict[str, Any], Any], tuple[str, bool]]
     fallback: str
-    guidance: Optional[str] = None
+    guidance: str | None = None
 
     def spec(self, client, doc_ids=None,
              ) -> "tuple[str, str, dict, Callable[[dict], tuple[list, bool]]]":

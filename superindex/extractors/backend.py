@@ -28,9 +28,10 @@ from __future__ import annotations
 import os
 import sys
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 from superindex.extractors.azure_di import (
     PAGE_MARKER,
@@ -246,7 +247,7 @@ def _scrub(text: str) -> str:
 
 # ------------------------------------------------------ engine integration
 def page_text_extractor(env: Optional[dict[str, str]] = None, *, verbose: bool = True,
-                        ) -> tuple[BackendInfo, Optional[Callable[[str], list[str]]]]:
+                        ) -> tuple[BackendInfo, Callable[[str], list[str]] | None]:
     """The engine's page text extractor for the active backend.
 
     Returns the active `BackendInfo` and the callable to pass as
