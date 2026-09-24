@@ -22,7 +22,7 @@ powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1 -OneFile
 
 macOS 上同等流程：`bash packaging/build_macos.sh`（只能产出 macOS 版，不能交叉编译 Windows）。
 
-**依赖清单**：唯一来源是仓库根的 `pyproject.toml` + `uv.lock`（运行时依赖；`build` 组 = PyInstaller；`dev` 组 = pytest/ruff；`pageindex` 组 = PageIndex 的 PDF 解析，仅实验脚本用）。
+**依赖清单**：唯一来源是仓库根的 `pyproject.toml` + `uv.lock`（运行时依赖；`build` 组 = PyInstaller；`dev` 组 = pytest/ruff；`pageindex` 组 = 可编辑安装的 PageIndex，仅实验脚本用；PDF 截图渲染用的 pypdfium2 + Pillow 在运行时依赖里）。
 `packaging\requirements-bundle.txt` 是给**没有 uv、只能用 pip** 时的兜底，由 uv 生成，不要手改；改了依赖后重新生成：
 ```
 uv lock
@@ -30,7 +30,7 @@ uv export --frozen --no-default-groups --group build --no-hashes -o packaging/re
 ```
 
 **onedir（默认）还是 onefile**：默认 onedir（`superindex\superindex.exe` + `_internal\`）。
-启动快（onefile 每次启动都要把约 90 MB 解压到 `%TEMP%`，本机实测 `--help` 约 12 秒 vs onedir 0.1 秒）、杀软误报少、`%TEMP%` 受限的服务器上也能跑。
+启动快（onefile 每次启动都要把约 105 MB 解压到 `%TEMP%`，本机实测 `--help` 约 12 秒 vs onedir 0.1 秒）、杀软误报少、`%TEMP%` 受限的服务器上也能跑。
 只有"必须是单个 exe"时才用 `-OneFile`。
 
 ## 2. 离线部署
@@ -72,6 +72,8 @@ superindex.exe serve --host 0.0.0.0 --port 8787       # 局域网访问（注意
 
 - **不要并发 index**：文档库的文件锁在 Windows 上不生效，两个 `index` 同时写同一个 store 可能损坏 `manifest.json`。
   `serve` 运行时也尽量不要对同一 store 执行 `index`。
-- 只支持 Markdown 输入（PDF 解析栈已从包中剔除）；PDF 需先用 Azure DI 转成 Markdown。
+- 只支持 Markdown 输入（PageIndex 的 PDF 解析栈已从包中剔除）；PDF 需先用 Azure DI 转成 Markdown。
+  包内带 pypdfium2（含 libpdfium）+ Pillow，仅用于把关联的源 PDF 页渲染成截图给多模态模型（`index --pdf-dir`、`--page-image auto`，见 `.env.example`），
+  为此包体积增加约 15 MB（macOS arm64 实测：onedir 91 MB → 106 MB，zip 46 MB → 53 MB）。
 - 杀毒软件可能拦截或隔离新生成的 exe，必要时把解压目录加入白名单。
 - 包内 Windows 版只能在 Windows 上构建；Windows 7 / Server 2008 不受支持（Python 3.11+ 要求 Windows 8.1 / Server 2012 R2 以上）。

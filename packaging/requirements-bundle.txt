@@ -132,6 +132,8 @@ packaging==26.3
     #   pyinstaller-hooks-contrib
 pefile==2024.8.26 ; sys_platform == 'win32'
     # via pyinstaller
+pillow==12.3.0
+    # via superindex
 propcache==0.5.4
     # via
     #   aiohttp
@@ -156,6 +158,8 @@ pyinstaller-hooks-contrib==2026.7
 pyjwt==2.14.0
     # via mcp
 pypdf2==3.0.1
+    # via superindex
+pypdfium2==5.13.0
     # via superindex
 python-dotenv==1.2.2
     # via

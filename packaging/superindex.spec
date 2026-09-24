@@ -15,9 +15,11 @@ ROOT = Path(SPECPATH).resolve().parent
 PAGEINDEX = ROOT / "PageIndex"
 ONEFILE = os.environ.get("SUPERINDEX_ONEFILE", "").strip() == "1"
 
-# Only the Markdown path ships: PDF parsing (pypdfium2 / pageindex.flash),
-# image highlighting (Pillow), litellm's proxy server and its optional Rust OCR
-# bridge (loaded behind try/except ImportError) are never reached.
+# Only the Markdown path ships: PageIndex's PDF parsing (pageindex.flash) and
+# citation highlighting (pageindex.imaging), litellm's proxy server and its
+# optional Rust OCR bridge (loaded behind try/except ImportError) are never
+# reached. pypdfium2 (its hooks collect libpdfium) and Pillow do ship: they
+# render PDF page screenshots (superindex.page_render).
 PDF_ONLY = ("pageindex.flash", "pageindex.imaging")
 LITELLM_UNUSED = ("litellm.proxy", "litellm.rust_bridge._native")
 
@@ -60,6 +62,11 @@ hiddenimports = [
     "superindex.calc",
     "superindex.prefetch",
     "superindex.batch",
+    "superindex.page_render",
+    "superindex.page_images",
+    "superindex.image_chat",
+    "PIL.Image",
+    "PIL.JpegImagePlugin",
     "nav.build",
     "nav.store",
     "nav.llm",
@@ -73,7 +80,7 @@ if sys.platform == "win32":
     hiddenimports += ["pywintypes", "win32api", "win32con", "win32job"]
 
 excludes = [
-    "pypdfium2", "pypdfium2_raw", *PDF_ONLY, "PIL", "litellm.rust_bridge._native",
+    *PDF_ONLY, "litellm.rust_bridge._native",
     "tkinter", "_tkinter", "pytest", "_pytest", "IPython", "matplotlib",
     "numpy", "pandas", "torch", "onnxruntime", "fastembed", "fastapi",
 ]

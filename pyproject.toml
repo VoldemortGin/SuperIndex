@@ -5,8 +5,9 @@ description = "PageIndex question answering over Azure DI Markdown"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 # Runtime dependencies of superindex / webapp / nav and the vendored PageIndex/
-# (Markdown path only: no pypdfium2 / Pillow). Pinned to the tested versions;
-# uv.lock pins everything else.
+# (Markdown path; pypdfium2 + Pillow only render PDF page screenshots,
+# superindex/page_render.py). Pinned to the tested versions; uv.lock pins
+# everything else.
 dependencies = [
     "litellm==1.97.0",
     "openai==2.54.0",
@@ -23,6 +24,8 @@ dependencies = [
     "colorama==0.4.6; sys_platform == 'win32'",
     "pywin32==311; sys_platform == 'win32'",
     "simpleeval==1.0.8",
+    "pypdfium2==5.13.0",
+    "Pillow==12.3.0",
 ]
 
 [dependency-groups]
@@ -34,13 +37,12 @@ build = [
     "pyinstaller==6.22.3",
     "pyinstaller-hooks-contrib==2026.7",
 ]
-# Vendored PageIndex installed editable, with its PDF stack, for the
-# scripts/0x_* experiments and standalone webapp/server.py. Never in the bundle
-# (scripts/superindex.py and the PyInstaller spec use PageIndex/ from the path).
+# Vendored PageIndex installed editable (its PDF stack, pypdfium2 + Pillow, is
+# in the main dependencies), for the scripts/0x_* experiments and standalone
+# webapp/server.py. Never in the bundle (scripts/superindex.py and the
+# PyInstaller spec use PageIndex/ from the path).
 pageindex = [
     "pageindex",
-    "pypdfium2==5.13.0",
-    "Pillow==12.3.0",
 ]
 
 [tool.uv]

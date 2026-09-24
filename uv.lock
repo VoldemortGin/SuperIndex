@@ -1460,7 +1460,9 @@ dependencies = [
     { name = "mcp" },
     { name = "openai" },
     { name = "openai-agents" },
+    { name = "pillow" },
     { name = "pypdf2" },
+    { name = "pypdfium2" },
     { name = "python-dotenv" },
     { name = "pywin32", marker = "sys_platform == 'win32'" },
     { name = "pyyaml" },
@@ -1483,8 +1485,6 @@ dev = [
 ]
 pageindex = [
     { name = "pageindex" },
-    { name = "pillow" },
-    { name = "pypdfium2" },
 ]
 
 [package.metadata]
@@ -1494,7 +1494,9 @@ requires-dist = [
     { name = "mcp", specifier = "==2.2.0" },
     { name = "openai", specifier = "==2.54.0" },
     { name = "openai-agents", specifier = "==0.20.0" },
+    { name = "pillow", specifier = "==12.3.0" },
     { name = "pypdf2", specifier = "==3.0.1" },
+    { name = "pypdfium2", specifier = "==5.13.0" },
     { name = "python-dotenv", specifier = "==1.2.2" },
     { name = "pywin32", marker = "sys_platform == 'win32'", specifier = "==311" },
     { name = "pyyaml", specifier = "==6.0.2" },
@@ -1515,11 +1517,7 @@ dev = [
     { name = "pytest", specifier = "==9.1.1" },
     { name = "ruff", specifier = "==0.16.8" },
 ]
-pageindex = [
-    { name = "pageindex", editable = "PageIndex" },
-    { name = "pillow", specifier = "==12.3.0" },
-    { name = "pypdfium2", specifier = "==5.13.0" },
-]
+pageindex = [{ name = "pageindex", editable = "PageIndex" }]
 
 [[package]]
 name = "tiktoken"
