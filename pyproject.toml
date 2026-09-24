@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "superindex"
-version = "0.1.0"
+version = "0.1.1"
 description = "Vectorless, page-cited question answering over long financial reports (Azure DI Markdown → tree index → LLM agent)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -84,4 +84,4 @@ packages = ["superindex"]
 # The package plus README/LICENSE/NOTICE (added automatically; hatchling
 # always adds .gitignore too). tests/ needs samples/ and scripts/, which are
 # repository-only, so it stays out.
-include = ["/superindex", "/pyproject.toml", "/README.md"]
+include = ["/superindex", "/pyproject.toml", "/README.md", "/CHANGELOG.md"]
