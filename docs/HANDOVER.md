@@ -622,3 +622,28 @@ pkill -f "webapp/server.py" && nohup $PY -u webapp/server.py > results/webapp.lo
 | 重复文本吃掉 top-k | top_k=3 里可能 2 个槽位放同一段文字 |
 | 推理是最大的延迟杠杆 | `reasoning_effort=low` 降 **44%** 墙钟 |
 | 元数据是唯一解 | 重复段落相似度恒等 1.0，任何 embedding 都区分不了 |
+
+---
+
+## 2026-09-23 进展与后续
+
+**本次完成**
+
+- `python -m superindex`：Markdown 建库（`index`）→ `search` / `ask` / `serve` / `batch`；支持 Azure DI 原生 Markdown（页标记、表格）。
+- BM25 关键词检索（`search_pages` 工具）：`--match page`（默认）/ `passage`（页内小段打分，仍返回整页）。
+- `batch` 批量问答（txt/jsonl/csv/json 题集、`--resume`、粗评分）与 `--retrieval-only` 纯检索评测。
+- PyInstaller 打包（`packaging/`）与 Windows 源码运行（`docs/windows-quickstart.md`，含公司 LLM API 配置与上手清单）。
+
+**已知限制**
+
+- DI 样例（`samples/`）为手写/合成，需用真实 DI 年报回归（先 `batch --retrieval-only` 对比 page/passage）。
+- 小模型（Ollama 7B 级）常不主动调用 `search_pages`，只靠目录树导航。
+- DocStore 的文件锁在 Windows 上无效，勿多进程同时写同一 store。
+- 依赖 PageIndex 私有接口 `_tool_specs` / `_resolve_document`，升级 PageIndex 需回归。
+- `batch` 命中为粗评分（数字全包含），需人工复核。
+
+**候选后续**
+
+1. 检索前置：Agent 启动前先跑 BM25，把候选页号/片段注入提示，不依赖模型主动调用工具。
+2. page / passage 两路结果做 RRF 融合。
+3. 用公司 embedding API 做向量召回，与 BM25 混合；无 reranker，用 RRF 合并排序。

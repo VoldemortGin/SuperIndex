@@ -3,11 +3,24 @@
 直接用 Python 源码运行 `superindex`：建库（`index`）、检索自检（`search`）、问答（`ask`）、网页（`serve`）、批量问答（`batch`）。
 以下命令都在 **PowerShell** 里、**仓库根目录**执行。想要免 Python 的可执行程序，见 [`packaging/README.md`](../packaging/README.md)。
 
+## 最快上手（公司电脑）
+
+1. `git clone https://github.com/VoldemortGin/SuperIndex.git`，`cd SuperIndex`
+2. `py -3.12 -m venv .venv`，`.\.venv\Scripts\Activate.ps1`
+3. `pip install -r packaging\requirements-bundle.txt`
+4. `Copy-Item .env.example .env`，按 [§3b](#3b-使用公司云端-llm-api非-ollama) 填公司 API（有企业代理/自签证书时一并配好）
+5. 连通自检：§3b 末尾的一行 litellm 调用输出 `OK`
+6. 建库（先不调 LLM）：`python -m superindex index D:\corpus_md --no-summary`（DI 产出的 Markdown 目录）
+7. 检索自检：`python -m superindex search "final dividend" --top-k 3`
+8. 对比两种匹配：`python -m superindex batch D:\q.jsonl --retrieval-only --match page`，再跑一次 `--match passage`，比较两份 `summary.md`
+9. 问答：`python -m superindex ask "..." -v`，或 `python -m superindex serve --port 8787`
+10. 端到端：`python -m superindex batch D:\q.jsonl --concurrency 2`；满意后再去掉 `--no-summary` 带摘要重建（`--force --concurrency 2`）
+
 ## 1. 前置条件
 
 - **Python 3.11 或 3.12**（64 位，python.org 安装包，安装时勾选 *Add python.exe to PATH*；锁定的依赖只在这两个版本验证过，3.10 装不上）。`py -3.12 --version` 能输出版本即可。
 - **Git**（`git --version`）。
-- **Ollama** 已安装并在运行，且已拉好**支持 tool calling** 的模型（qwen2.5 / qwen3 / llama3.1 …）：
+- **Ollama**（用公司/云端 API 时不需要，见 §3b）已安装并在运行，且已拉好**支持 tool calling** 的模型（qwen2.5 / qwen3 / llama3.1 …）：
   ```powershell
   ollama pull qwen2.5:7b
   setx OLLAMA_CONTEXT_LENGTH 32768     # 调大上下文；执行后退出并重启 Ollama
@@ -55,6 +68,47 @@ PAGEINDEX_REASONING_EFFORT=
 | `PAGEINDEX_API_KEY_OVERRIDE` | 否 | Ollama 不校验，随便填 |
 | `PAGEINDEX_REASONING_EFFORT` | 必须留空 | 非推理模型收到该参数会报 "does not support thinking" |
 | `SUPERINDEX_STORE` | 否 | 文档库位置，默认 `results\superindex_store\` |
+
+## 3b. 使用公司/云端 LLM API（非 Ollama）
+
+只改 `.env` 的模型几行，其余命令不变。`.env.example` 里有同样的注释模板。**模型必须支持 tool calling**（问答靠工具调用读页面）。
+
+**OpenAI 兼容网关**（公司自建网关、vLLM、各类代理；注意 `/v1` 后缀）：
+
+```
+PAGEINDEX_INDEX_MODEL=openai/<模型名>
+PAGEINDEX_CHAT_MODEL=openai/<模型名>
+PAGEINDEX_BASE_URL=https://<网关地址>/v1
+PAGEINDEX_API_KEY_OVERRIDE=<你的 key>
+PAGEINDEX_REASONING_EFFORT=
+```
+
+**Azure OpenAI**（`azure/` 后面是**部署名**，不是模型名；终结点/密钥/版本用 litellm 自己的变量，`PAGEINDEX_BASE_URL` 与 `PAGEINDEX_API_KEY_OVERRIDE` 留空）：
+
+```
+PAGEINDEX_INDEX_MODEL=azure/<部署名>
+PAGEINDEX_CHAT_MODEL=azure/<部署名>
+AZURE_API_BASE=https://<资源名>.openai.azure.com/
+AZURE_API_KEY=<你的 key>
+AZURE_API_VERSION=<门户里给的 api-version，如 2024-10-21>
+```
+
+- 若设置了 `PAGEINDEX_BASE_URL` / `PAGEINDEX_API_KEY_OVERRIDE`，它们会覆盖 `AZURE_API_BASE` / `AZURE_API_KEY`（Azure 两种写法都能用，二选一即可，避免混用）。
+- `PAGEINDEX_REASONING_EFFORT`：只对支持的推理模型（如 o 系列、gpt-5 系列）设 `low`；普通模型留空，否则会报参数不支持。
+- **企业代理 / 自签证书**：在 `.env` 或 PowerShell 里设置
+  `HTTPS_PROXY=http://<代理>:<端口>`（内网网关不走代理时加 `NO_PROXY=<网关域名>`），
+  `SSL_CERT_FILE=D:\certs\corp-ca.pem` 与 `REQUESTS_CA_BUNDLE=D:\certs\corp-ca.pem`（公司根证书，PEM 格式）。报 `CERTIFICATE_VERIFY_FAILED` 基本就是这一项。
+- **限流**：公司 API 常有 QPS/TPM 限制。带摘要建库用 `--concurrency 2`（默认 8），`batch` 也用 `--concurrency 1~2`；遇到 429 先降并发。
+- **顺序**：先 `index --no-summary` + `search` 自检（不调 LLM），再 `ask` 跑通，最后才开摘要建库。
+- `.env` 已在 `.gitignore` 中，不要把 key 写进其他会提交的文件。
+
+连通自检（只打印模型回复，不打印 key；应输出 `OK` 之类）：
+
+```powershell
+python -c "from superindex.runtime import load_env, configure_litellm, LLMSettings; load_env(); configure_litellm(); import litellm; s = LLMSettings.resolve(); print(litellm.completion(model=s.require('chat'), messages=[{'role': 'user', 'content': 'Reply with OK'}], max_tokens=5, num_retries=0, **(s.index_backend() or {})).choices[0].message.content)"
+```
+
+通了之后再用样例走一遍工具调用：`python -m superindex index samples\aia_ar2021_excerpt.md --no-summary`，然后 `python -m superindex ask "2021 年末期股息是多少？" -v`。
 
 ## 4. 建库（index）
 
@@ -106,6 +160,15 @@ python -m superindex batch D:\my_questions.csv --resume                 # 续跑
 
 “命中”是**粗评分**：期望答案里的数字全部出现在回答中才算命中（没有数字时按整句包含判断），需要人工复核。
 `--doc` 会覆盖题集里每题的 `doc`；题集的 `doc` 对不上库里的文档时，该题记为错误，其余照跑。
+
+纯检索评测（不调 LLM，只看每题 BM25 召回的页是否含期望答案，秒级完成）：
+
+```powershell
+python -m superindex batch D:\q.jsonl --retrieval-only --match page
+python -m superindex batch D:\q.jsonl --retrieval-only --match passage
+```
+
+`--match page`（默认）按整页打分；`passage` 按页内小段打分，长页多主题时更好。合成样例上两者总体接近，请在真实 DI 年报题集上各跑一次比较后再决定（`.env` 中 `SUPERINDEX_BM25_MATCH` 可设默认值）。
 
 一键脚本（建库→跑题集→打印 summary 路径）：
 
