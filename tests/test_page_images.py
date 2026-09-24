@@ -58,7 +58,7 @@ def store(tmp_path: Path, corpus: tuple[Path, Path]) -> Path:
 
 
 def meta_of(store: Path) -> dict[str, Any]:
-    from pageindex.local_store import DocStore
+    from superindex.engine.local_store import DocStore
     (meta,) = DocStore(str(store)).list_metas()
     return meta
 
@@ -419,7 +419,7 @@ def test_batch_records_images(tmp_path: Path, store: Path,
 
 
 def test_web_prefetch_event_lists_images(store: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from webapp import server
+    from superindex.webapp import server
 
     monkeypatch.setattr(server, "get_client", lambda: object())
     monkeypatch.setattr(server, "STORE", store)

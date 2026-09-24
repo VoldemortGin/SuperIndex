@@ -1,9 +1,9 @@
-"""Index Azure DI Markdown into a PageIndexClient-compatible local store.
+"""Index Azure DI Markdown into a SuperIndexClient-compatible local store.
 
 Input is Markdown from Azure Document Intelligence — either as written by
 `extractors.azure_di` (a ``<!-- page: N -->`` line where each PDF page begins)
 or DI's native output (``<!-- PageBreak -->`` between pages). Output is the
-exact on-disk shape `PageIndexClient` (local mode) reads, so its chat agent and
+exact on-disk shape `SuperIndexClient` (local mode) reads, so its chat agent and
 its tools (`get_document_structure`, `get_page_content`) work unchanged:
 
     <store>/docs/<doc_id>/pages.json   [{"page_index": 1, "markdown": ...}, ...]
@@ -33,9 +33,9 @@ header-less on the next gets the header repeated. Text inside ``<table>`` and
 ``<figure>`` is never taken for a heading.
 
 Only light modules are imported here: headings come from `nav.build`, storage
-from `pageindex.local_store`. The PDF stack (PyPDF2 / pypdfium2 / flash) is not
+from `superindex.engine.local_store`. The PDF stack (PyPDF2 / pypdfium2 / flash) is not
 touched, except `superindex.page_render` to count a linked PDF's pages;
-`pageindex.utils` (which imports PyPDF2 at module level) is imported only when
+`superindex.engine.utils` (which imports PyPDF2 at module level) is imported only when
 LLM summaries are requested.
 """
 from __future__ import annotations
@@ -50,12 +50,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from pageindex.local_store import DocStore
-from pageindex.naming import sanitize_filename
-
-from nav.build import markdown_chapters
-from nav.store import Chapter
 from superindex import bm25, page_images
+from superindex.engine.local_store import DocStore
+from superindex.engine.naming import sanitize_filename
+from superindex.nav.build import markdown_chapters
+from superindex.nav.store import Chapter
 
 # Same marker `extractors.azure_di.PAGE_MARKER` writes ("<!-- page: {n} -->"),
 # matched leniently on whitespace.
@@ -416,7 +415,7 @@ def _chapter_node(ch: Chapter, parsed: ParsedMarkdown) -> dict[str, Any]:
 def build_tree(parsed: ParsedMarkdown, doc_title: str) -> list[dict[str, Any]]:
     """Heading tree with page ranges. Each node's range covers its whole
     subtree — the heading's page through the last page before the next heading
-    of the same or a higher level — as in PageIndex's PDF trees. Text before
+    of the same or a higher level — as in the engine's PDF trees. Text before
     the first heading becomes a "Preface" node. A document with no headings
     gets one root node with a child per page."""
     chapters = markdown_chapters(_heading_lines(parsed.lines))
@@ -446,7 +445,7 @@ def _preorder(tree: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _write_node_ids(tree: list[dict[str, Any]]) -> None:
-    """Same ids as `pageindex.utils.write_node_id`: preorder, zero-padded."""
+    """Same ids as `superindex.engine.utils.write_node_id`: preorder, zero-padded."""
     for i, node in enumerate(_preorder(tree)):
         node["node_id"] = str(i).zfill(4)
 
@@ -484,16 +483,16 @@ def _own_texts(tree: list[dict[str, Any]], parsed: ParsedMarkdown) -> list[str]:
 def summarize(tree: list[dict[str, Any]], parsed: ParsedMarkdown, model: str,
               backend: dict[str, str] | None = None, concurrency: int = 8,
               describe: bool = True) -> str | None:
-    """Fill `summary` on every node with PageIndex's own `summarize_tree`, and
+    """Fill `summary` on every node with the engine's own `summarize_tree`, and
     return a one-line document description (`generate_doc_description`).
 
     `summarize_tree` reads text by page range. Headings share pages, so page
     text would give sibling sections identical summaries; instead it runs on a
     shadow tree whose "pages" are the nodes' own section texts, in preorder.
     Leaves are then summarized from exactly their section, and a parent from
-    its opening text plus its children's summaries — PageIndex's semantics,
+    its opening text plus its children's summaries — the engine's semantics,
     at section rather than page granularity."""
-    from pageindex import utils
+    from superindex.engine import utils
 
     nodes = _preorder(tree)
     virtual_pages = [(text + "\n", 0) for text in _own_texts(tree, parsed)]
@@ -541,7 +540,7 @@ class IndexResult:
 
 
 def _now_iso() -> str:
-    """Same timestamp shape as `pageindex.local_api._now_iso`."""
+    """Same timestamp shape as `superindex.engine.local_api._now_iso`."""
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     return now.replace(microsecond=now.microsecond // 1000 * 1000).isoformat()
 

@@ -14,7 +14,10 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from extractors.azure_di import PAGE_MARKER, AzureDocIntelligence  # noqa: E402
+from superindex.extractors.azure_di import (  # noqa: E402
+    PAGE_MARKER,
+    AzureDocIntelligence,
+)
 from superindex.md_ingest import build_tree, index_markdown, parse_pages  # noqa: E402
 
 SAMPLE = ROOT / "samples" / "di_native_excerpt.md"

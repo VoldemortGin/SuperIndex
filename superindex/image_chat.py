@@ -1,7 +1,7 @@
 """Put PDF page screenshots (`superindex.page_images`) in front of the agent.
 
-PageIndex's own chat lane takes text messages only, so with images on the run
-is assembled here from the same parts `pageindex.local_chat.run_chat_stream`
+The engine's own chat lane takes text messages only, so with images on the run
+is assembled here from the same parts `superindex.engine.local_chat.run_chat_stream`
 uses (agent, input items, event stream) with three additions:
 
 - prefetch images: the question's user message becomes a content list —
@@ -103,7 +103,7 @@ def request_page(client: Any, session: Session, doc_ids: Any, doc_name: str, pag
         number = int(page)
     except (TypeError, ValueError):
         return _reply({"error": "page must be a page number", "errorCode": "INVALID_INPUT"})
-    from pageindex.agent_tools import _resolve_document
+    from superindex.engine.agent_tools import _resolve_document
 
     scope = None if doc_ids is None else frozenset(
         [doc_ids] if isinstance(doc_ids, str) else [str(d) for d in doc_ids])
@@ -180,8 +180,8 @@ def chat(client: Any, message: str, *, doc_id: Any, reasoning_effort: str | None
     if session is None:
         return client.chat(message, doc_id=doc_id, stream=True,
                            reasoning_effort=reasoning_effort)
-    from pageindex import local_chat
-    from pageindex.chat_stream import ChatStream
+    from superindex.engine import local_chat
+    from superindex.engine.chat_stream import ChatStream
 
     local_chat._require_openai_agents("chat")
     agent, items, _ = local_chat._chat_agent(client, [{"role": "user", "content": message}],

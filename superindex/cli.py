@@ -99,19 +99,18 @@ def _store(args: argparse.Namespace) -> Path:
 
 
 def make_client(settings: LLMSettings, store: Path, instructions: str | None = None) -> Any:
-    """A PageIndexClient over the store, on the configured chat model, whose
+    """A SuperIndexClient over the store, on the configured chat model, whose
     agent also has the `search_pages` keyword tool and `calculate`."""
     chat_model = settings.require("chat")
     configure_litellm()
-    from pageindex import PageIndexClient
-
     from superindex import agent_search, calc
+    from superindex.engine import SuperIndexClient
 
     agent_search.install()
     instructions = "\n\n".join(t for t in (instructions, agent_search.GUIDANCE, calc.GUIDANCE)
                                  if t)
 
-    return PageIndexClient(
+    return SuperIndexClient(
         index_model=settings.index_model or chat_model,
         chat_model=chat_model,
         storage_path=str(store),
@@ -227,9 +226,8 @@ def _print_images(session: Any, when: str) -> None:
 
 # ───────────────────────────────────────────────────────────── search
 def cmd_search(args: argparse.Namespace) -> int:
-    from pageindex.local_store import DocStore
-
     from superindex import bm25
+    from superindex.engine.local_store import DocStore
 
     store = _store(args)
     docs = [m for m in DocStore(str(store)).list_metas() if m.get("status") == "completed"]
@@ -259,7 +257,7 @@ def cmd_search(args: argparse.Namespace) -> int:
 def cmd_serve(args: argparse.Namespace) -> int:
     settings = _settings(args)
     store = _store(args)
-    from webapp import server
+    from superindex.webapp import server
 
     client = make_client(settings, store, instructions=args.instructions or server.INSTRUCTIONS)
 
@@ -379,9 +377,8 @@ def main(argv: list[str] | None = None) -> int:
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
     args = build_parser().parse_args(argv)
-    from pageindex.errors import PageIndexAPIError
-
     from superindex import bm25
+    from superindex.engine.errors import SuperIndexAPIError
 
     if getattr(args, "match", None):
         os.environ[bm25.MATCH_ENV] = args.match    # read by `search_pages` too
@@ -395,7 +392,7 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
-    except (PageIndexAPIError, FileNotFoundError) as exc:
+    except (SuperIndexAPIError, FileNotFoundError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:

@@ -47,7 +47,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from pageindex.local_store import DocStore
+from superindex.engine.local_store import DocStore
 
 INDEX_FILE = "bm25.json"
 VERSION = 2            # 2: adds "passages"

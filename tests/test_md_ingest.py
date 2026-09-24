@@ -15,8 +15,11 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from extractors.azure_di import PAGE_MARKER, AzureDocIntelligence  # noqa: E402
 from superindex import md_ingest  # noqa: E402
+from superindex.extractors.azure_di import (  # noqa: E402
+    PAGE_MARKER,
+    AzureDocIntelligence,
+)
 from superindex.md_ingest import build_tree, index_markdown, parse_pages  # noqa: E402
 
 
@@ -159,8 +162,8 @@ def report_md(tmp_path: Path) -> Path:
 
 
 def _client(store: Path) -> Any:
-    from pageindex import PageIndexClient
-    return PageIndexClient(chat_model="openai/offline-test", storage_path=str(store))
+    from superindex.engine import SuperIndexClient
+    return SuperIndexClient(chat_model="openai/offline-test", storage_path=str(store))
 
 
 def test_store_is_loadable_by_pageindex_client(tmp_path: Path, report_md: Path) -> None:
@@ -175,11 +178,11 @@ def test_store_is_loadable_by_pageindex_client(tmp_path: Path, report_md: Path) 
     docs = client.list_documents()["documents"]
     assert [(d["id"], d["name"], d["pageNum"], d["status"]) for d in docs] == \
         [(res.doc_id, "AIA_Report_2021.md", 4, "completed")]
-    # the text-bearing tree PageIndex rebuilds from pages.json
+    # the text-bearing tree the engine rebuilds from pages.json
     tree = client.get_tree(res.doc_id)["result"]
     assert "Final dividend 108.00" in tree[0]["nodes"][0]["nodes"][0]["text"]
 
-    from pageindex.agent_tools import call_tool
+    from superindex.engine.agent_tools import call_tool
     out, err = call_tool(client, "get_document_structure", {"doc_name": "AIA_Report_2021.md"})
     assert not err
     structure = json.loads(out)["structure"]
@@ -209,7 +212,7 @@ def test_reindex_skips_unchanged_and_replaces_changed(tmp_path: Path, report_md:
 
 def test_summaries_use_pageindex_summarizer(tmp_path: Path, report_md: Path,
                                             monkeypatch: pytest.MonkeyPatch) -> None:
-    from pageindex import utils
+    from superindex.engine import utils
 
     prompts: list[str] = []
 
@@ -240,7 +243,7 @@ def test_summaries_use_pageindex_summarizer(tmp_path: Path, report_md: Path,
 
 def test_md_flow_imports_no_pdf_stack() -> None:
     code = ("import sys, superindex.cli, superindex.md_ingest;"
-            "bad = [m for m in ('PyPDF2', 'pypdfium2', 'pageindex.flash', 'litellm')"
+            "bad = [m for m in ('PyPDF2', 'pypdfium2', 'superindex.engine.flash', 'litellm')"
             " if m in sys.modules]; print(bad)")
     out = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True,
                          text=True, check=True)

@@ -40,7 +40,7 @@ def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def ids_by_name(store: Path) -> dict[str, str]:
-    from pageindex.local_store import DocStore
+    from superindex.engine.local_store import DocStore
     return {m["name"]: m["id"] for m in DocStore(str(store)).list_metas()}
 
 
@@ -132,7 +132,7 @@ def test_ask_sends_the_block_and_prints_it(store: Path, monkeypatch: pytest.Monk
 
 
 def test_web_answer_emits_prefetch_event(store: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from webapp import server
+    from superindex.webapp import server
 
     fake = FakeClient()
     monkeypatch.setattr(server, "get_client", lambda: fake)

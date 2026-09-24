@@ -18,7 +18,8 @@ import time
 from pathlib import Path
 
 import pypdfium2 as pdfium
-from pageindex.flash import page_index_flash
+
+from superindex.engine.flash import page_index_flash
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data" / "aia_reports"

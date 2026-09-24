@@ -267,7 +267,7 @@ class Session:
 
     def __init__(self, store: str | os.PathLike[str], mode: str, limit: int,
                  max_side: int) -> None:
-        from pageindex.local_store import DocStore
+        from superindex.engine.local_store import DocStore
 
         self.store = Path(store).expanduser()
         self.mode = mode

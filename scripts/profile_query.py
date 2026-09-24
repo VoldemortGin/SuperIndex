@@ -31,8 +31,8 @@ DATA_DIR = ROOT / "data" / "aia_reports"
 
 
 def make_client():
-    from pageindex import PageIndexClient
-    return PageIndexClient(
+    from superindex.engine import SuperIndexClient
+    return SuperIndexClient(
         index_model="deepseek/deepseek-flash",
         chat_model="deepseek/deepseek-flash",
         storage_path=str(STORE),
@@ -49,7 +49,7 @@ def resolve(client, needle: str):
 
 def profile_payloads(client, doc):
     """The two tool payloads, measured as the model would receive them."""
-    from pageindex.agent_tools import call_tool
+    from superindex.engine.agent_tools import call_tool
 
     print("=" * 78)
     print("1. 工具返回体大小（每次 agent 回合都会进 prompt）")

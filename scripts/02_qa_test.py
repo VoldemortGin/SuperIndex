@@ -56,7 +56,7 @@ DOC_SETS = {
 
 
 def build_client(args):
-    from pageindex import PageIndexClient
+    from superindex.engine import SuperIndexClient
 
     index_backend = {}
     chat_backend = {}
@@ -67,7 +67,7 @@ def build_client(args):
         index_backend["api_key"] = args.api_key
         chat_backend["api_key"] = args.api_key
 
-    return PageIndexClient(
+    return SuperIndexClient(
         index_model=args.index_model,
         chat_model=args.chat_model,
         storage_path=str(STORE),
@@ -134,7 +134,7 @@ def apply_concurrency(n: int) -> None:
     utils.SUMMARY_CONCURRENCY defaults to 64 simultaneous model calls, which is
     a large enough burst to trip some providers' rate/balance guards.
     """
-    import pageindex.utils as utils
+    import superindex.engine.utils as utils
     if n and n > 0:
         utils.SUMMARY_CONCURRENCY = n
 
@@ -172,12 +172,12 @@ def main() -> int:
                     "AZURE_DOCUMENT_INTELLIGENCE_KEY"):
             os.environ.pop(var, None)
     elif args.extractor == "azure-di":
-        from extractors.backend import is_azure_configured
+        from superindex.extractors.backend import is_azure_configured
         if not is_azure_configured():
             print("--extractor azure-di 需要 AZURE_DI_ENDPOINT 与 AZURE_DI_KEY，"
                   "但 .env 里没有配置。", file=sys.stderr)
             return 1
-    from extractors.backend import install_into_pageindex
+    from superindex.extractors.backend import install_into_pageindex
     backend = install_into_pageindex()
     print()
 

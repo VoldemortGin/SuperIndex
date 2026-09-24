@@ -47,7 +47,7 @@ def main() -> int:
         print(f"not found: {md}", file=sys.stderr)
         return 1
 
-    from pageindex.page_index_md import md_to_tree
+    from superindex.engine.page_index_md import md_to_tree
 
     tree = asyncio.run(md_to_tree(
         md_path=str(md),

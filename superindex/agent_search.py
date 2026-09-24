@@ -1,12 +1,12 @@
-"""The `search_pages` and `calculate` tools for PageIndex's local chat agent.
+"""The `search_pages` and `calculate` tools for the engine's local chat agent.
 
-PageIndex builds the agent's tools from `pageindex.agent_tools._tool_specs`
+The engine builds the agent's tools from `superindex.engine.agent_tools._tool_specs`
 (the local tool set served as an in-process MCP server, see
-`pageindex.integrations.openai_agents.build_mcp_server`, which looks the
+`superindex.engine.integrations.openai_agents.build_mcp_server`, which looks the
 function up at call time). `install()` wraps that function so local clients
 also get `search_pages`, bound to the same document scope (`doc_ids`) as the
-built-in tools, and `calculate` (`superindex.calc`); PageIndex's own source
-stays untouched.
+built-in tools, and `calculate` (`superindex.calc`) without editing the engine's tool
+set.
 """
 from __future__ import annotations
 
@@ -83,7 +83,7 @@ def run_search(client: Any, arguments: dict[str, Any],
         [doc_ids] if isinstance(doc_ids, str) else [str(d) for d in doc_ids])
     doc_name = arguments.get("doc_name")
     if doc_name:
-        from pageindex.agent_tools import _resolve_document
+        from superindex.engine.agent_tools import _resolve_document
 
         allowed = frozenset(scope) if scope is not None else None
         entry, error = _resolve_document(client, str(doc_name), allowed_ids=allowed)
@@ -134,9 +134,9 @@ def extra_specs(client: Any, doc_ids: Any) -> list[tuple[str, str, dict[str, Any
 
 
 def install() -> None:
-    """Add `search_pages` and `calculate` to every local PageIndex client's
+    """Add `search_pages` and `calculate` to every local SuperIndexClient's
     agent tools. Idempotent."""
-    from pageindex import agent_tools
+    from superindex.engine import agent_tools
 
     original = agent_tools._tool_specs
     if getattr(original, "_superindex_search", False):

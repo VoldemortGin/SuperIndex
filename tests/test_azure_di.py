@@ -18,8 +18,11 @@ sys.path.insert(0, str(ROOT))
 
 import httpx  # noqa: E402
 
-from extractors.azure_di import (  # noqa: E402
-    AzureDIConfig, AzureDIError, AzureDocIntelligence, PAGE_MARKER,
+from superindex.extractors.azure_di import (  # noqa: E402
+    PAGE_MARKER,
+    AzureDIConfig,
+    AzureDIError,
+    AzureDocIntelligence,
 )
 
 PASS, FAIL = [], []

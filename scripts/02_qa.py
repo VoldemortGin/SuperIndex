@@ -36,7 +36,7 @@ def main() -> int:
     ap.add_argument("--out", default=str(OUT_DIR / "qa_results.json"))
     args = ap.parse_args()
 
-    from pageindex import PageIndexClient
+    from superindex.engine import SuperIndexClient
 
     questions = json.loads(Path(args.questions).read_text(encoding="utf-8"))
     if not isinstance(questions, list):
@@ -47,7 +47,7 @@ def main() -> int:
         kwargs["chat_model"] = args.chat_model
     if args.index_model:
         kwargs["index_model"] = args.index_model
-    client = PageIndexClient(**kwargs)
+    client = SuperIndexClient(**kwargs)
 
     doc_ids = args.doc_id
     if not doc_ids:

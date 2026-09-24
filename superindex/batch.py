@@ -252,7 +252,7 @@ def judge_hits(store: Path, q: Question, hits: list[bm25.Hit],
     """How `q` is judged ("pages", "expected" or None) and whether each hit is
     relevant: one of its `pages`, or else a page whose text holds the
     expected answer."""
-    from pageindex.local_store import DocStore
+    from superindex.engine.local_store import DocStore
 
     gold = gold_pages(q)
     judge = "pages" if gold is not None else ("expected" if q.expected else None)
@@ -498,9 +498,14 @@ def _scope(docs: list[dict[str, Any]], wanted: list[str]) -> list[str]:
 
 
 def cmd_batch(args: argparse.Namespace) -> int:
-    from pageindex.local_store import DocStore
-
-    from superindex.cli import _page_image_mode, _prefetch_k, _settings, _store, make_client
+    from superindex.cli import (
+        _page_image_mode,
+        _prefetch_k,
+        _settings,
+        _store,
+        make_client,
+    )
+    from superindex.engine.local_store import DocStore
 
     qfile = Path(args.questions).expanduser()
     questions = load_questions(qfile)

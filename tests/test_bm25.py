@@ -56,7 +56,7 @@ def store(tmp_path: Path) -> Path:
 
 
 def ids_by_name(store: Path) -> dict[str, str]:
-    from pageindex.local_store import DocStore
+    from superindex.engine.local_store import DocStore
     return {m["name"]: m["id"] for m in DocStore(str(store)).list_metas()}
 
 
@@ -193,15 +193,15 @@ def test_search_cli(store: Path) -> None:
 # ───────────────────────────────────────────────────────────── agent tool
 @pytest.fixture()
 def installed(monkeypatch: pytest.MonkeyPatch) -> None:
-    from pageindex import agent_tools
+    from superindex.engine import agent_tools
     monkeypatch.setattr(agent_tools, "_tool_specs", agent_tools._tool_specs)
     agent_search.install()
     agent_search.install()                                    # idempotent
 
 
 def _client(store: Path) -> Any:
-    from pageindex import PageIndexClient
-    return PageIndexClient(chat_model="openai/offline-test", storage_path=str(store))
+    from superindex.engine import SuperIndexClient
+    return SuperIndexClient(chat_model="openai/offline-test", storage_path=str(store))
 
 
 def _call(specs: list[Any], arguments: dict[str, Any]) -> tuple[dict[str, Any], bool]:
@@ -211,7 +211,7 @@ def _call(specs: list[Any], arguments: dict[str, Any]) -> tuple[dict[str, Any], 
 
 
 def test_tool_is_registered_and_scoped(store: Path, installed: None) -> None:
-    from pageindex import agent_tools
+    from superindex.engine import agent_tools
 
     client = _client(store)
     names = [s[0] for s in agent_tools._tool_specs(client)]
@@ -238,7 +238,7 @@ def test_tool_is_registered_and_scoped(store: Path, installed: None) -> None:
 
 
 def test_openai_agent_gets_the_tool(store: Path, installed: None) -> None:
-    from pageindex.local_chat import _openai_agent
+    from superindex.engine.local_chat import _openai_agent
 
     agent = _openai_agent(_client(store), "chat", "openai/offline-test", "x", None, None,
                           doc_ids=None)
@@ -247,9 +247,8 @@ def test_openai_agent_gets_the_tool(store: Path, installed: None) -> None:
 
 def test_make_client_installs_tool_and_guidance(store: Path,
                                                monkeypatch: pytest.MonkeyPatch) -> None:
-    from pageindex import agent_tools
-
     from superindex.cli import make_client
+    from superindex.engine import agent_tools
     from superindex.runtime import LLMSettings
 
     monkeypatch.setattr(agent_tools, "_tool_specs", agent_tools._tool_specs)
@@ -420,7 +419,7 @@ def test_search_cli_match_flag(diluted: Path) -> None:
 
 def test_tool_reports_match(diluted: Path, installed: None,
                             monkeypatch: pytest.MonkeyPatch) -> None:
-    from pageindex import agent_tools
+    from superindex.engine import agent_tools
 
     monkeypatch.setenv(bm25.MATCH_ENV, "passage")
     payload, err = _call(agent_tools._tool_specs(_client(diluted)),

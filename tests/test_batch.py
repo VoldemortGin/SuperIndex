@@ -276,7 +276,7 @@ def test_retrieval_metrics() -> None:
 
 
 def test_run_retrieval_judges_by_expected_or_pages(store: Path) -> None:
-    from pageindex.local_store import DocStore
+    from superindex.engine.local_store import DocStore
 
     docs = DocStore(str(store)).list_metas()
     scope = batch._scope(docs, ["di_native_excerpt"])

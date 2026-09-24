@@ -18,9 +18,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from extractors.backend import (  # noqa: E402
-    BACKEND_AZURE, BACKEND_TEXT_LAYER, Extractor, describe, fallback_enabled,
-    install_into_pageindex, is_azure_configured, reset_cache,
+from superindex.extractors.backend import (  # noqa: E402
+    BACKEND_AZURE,
+    BACKEND_TEXT_LAYER,
+    Extractor,
+    describe,
+    fallback_enabled,
+    install_into_pageindex,
+    is_azure_configured,
+    reset_cache,
 )
 
 PASS, FAIL = [], []
@@ -132,15 +138,15 @@ def test_text_layer_fallback() -> None:
     check("document_text 带页标记", "<!-- page: 1 -->" in doc and "<!-- page: 2 -->" in doc)
 
 
-# ---------------------------------------------------- PageIndex integration
+# ------------------------------------------------------- engine integration
 def test_pageindex_install() -> None:
-    print("\n[PageIndex 接管]")
+    print("\n[引擎接管]")
     info = install_into_pageindex({}, verbose=False)
     check("未配置时不接管（返回 text-layer）", info.name == BACKEND_TEXT_LAYER)
 
     info2 = install_into_pageindex(AZ, verbose=False)
     check("配置后接管并返回 azure-di", info2.name == BACKEND_AZURE)
-    from pageindex.local_api import LocalAPI
+    from superindex.engine.local_api import LocalAPI
     check("LocalAPI._extract_page_texts 已被替换",
           LocalAPI._extract_page_texts is not None)
     # 换成 stub，确认调用链真的走了我们的实现

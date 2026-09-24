@@ -13,7 +13,7 @@ Stage 0 — extract PDFs to Markdown with Azure AI Document Intelligence.
         --only FY2021 --pages 1-5 --force
 
     # then build the navigation index over the Markdown
-    python -m nav.build corpus_md --out corpus_index --summarize-files
+    python -m superindex.nav.build corpus_md --out corpus_index --summarize-files
 
 Why bother: the built-in PageIndex local path reads the PDF text layer with
 PyPDF2. On financial reports that mangles tables (a chart page comes out as
@@ -34,8 +34,11 @@ from dotenv import load_dotenv  # noqa: E402
 
 load_dotenv(ROOT / ".env")
 
-from extractors.azure_di import (  # noqa: E402
-    AzureDIConfig, AzureDIError, AzureDocIntelligence, extract_corpus,
+from superindex.extractors.azure_di import (  # noqa: E402
+    AzureDIConfig,
+    AzureDIError,
+    AzureDocIntelligence,
+    extract_corpus,
 )
 
 
@@ -134,7 +137,7 @@ def cmd_extract(cfg: AzureDIConfig, args) -> int:
     print()
     print(f"输出目录: {Path(args.out).resolve()}")
     print("下一步:")
-    print(f"  python -m nav.build {args.out} --out corpus_index --summarize-files")
+    print(f"  python -m superindex.nav.build {args.out} --out corpus_index --summarize-files")
     return 1 if summary["failed"] and not summary["converted"] else 0
 
 

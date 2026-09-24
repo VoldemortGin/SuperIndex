@@ -52,7 +52,7 @@ def page_count(pdf: Path) -> int:
 
 
 def build_one(pdf: Path, with_llm: bool) -> dict:
-    from pageindex.flash import page_index_flash
+    from superindex.engine.flash import page_index_flash
 
     t0 = time.time()
     tree = page_index_flash(
