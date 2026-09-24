@@ -16,7 +16,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from superindex import agent_search, bm25  # noqa: E402
+from superindex import agent_search, bm25, calc  # noqa: E402
 from superindex.md_ingest import index_markdown  # noqa: E402
 
 DI_SAMPLE = ROOT / "samples" / "di_native_excerpt.md"
@@ -216,6 +216,7 @@ def test_tool_is_registered_and_scoped(store: Path, installed: None) -> None:
     client = _client(store)
     names = [s[0] for s in agent_tools._tool_specs(client)]
     assert names.count("search_pages") == 1 and "get_page_content" in names
+    assert names.count("calculate") == 1
 
     payload, err = _call(agent_tools._tool_specs(client), {"query": "2022 2023", "top_k": "3"})
     assert not err and payload["success"] and len(payload["results"]) == 3
@@ -241,7 +242,7 @@ def test_openai_agent_gets_the_tool(store: Path, installed: None) -> None:
 
     agent = _openai_agent(_client(store), "chat", "openai/offline-test", "x", None, None,
                           doc_ids=None)
-    assert "search_pages" in [t.name for t in agent.tools]
+    assert {"search_pages", "calculate"} <= {t.name for t in agent.tools}
 
 
 def test_make_client_installs_tool_and_guidance(store: Path,
@@ -254,9 +255,10 @@ def test_make_client_installs_tool_and_guidance(store: Path,
     monkeypatch.setattr(agent_tools, "_tool_specs", agent_tools._tool_specs)
     settings = LLMSettings(None, "openai/offline-test", None, None, None)
     client = make_client(settings, store, instructions="Answer in Chinese.")
-    assert "search_pages" in [s[0] for s in agent_tools._tool_specs(client)]
+    assert {"search_pages", "calculate"} <= {s[0] for s in agent_tools._tool_specs(client)}
     base = agent_tools._base_instructions(client)
     assert "Answer in Chinese." in base and agent_search.GUIDANCE in base
+    assert calc.GUIDANCE in base
 
 
 # ───────────────────────────────────────────────────────────── passages

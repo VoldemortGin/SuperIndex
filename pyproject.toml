@@ -22,6 +22,7 @@ dependencies = [
     "urllib3==2.8.0",
     "colorama==0.4.6; sys_platform == 'win32'",
     "pywin32==311; sys_platform == 'win32'",
+    "simpleeval==1.0.8",
 ]
 
 [dependency-groups]

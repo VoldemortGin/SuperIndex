@@ -57,6 +57,7 @@ hiddenimports = [
     "superindex.md_ingest",
     "superindex.bm25",
     "superindex.agent_search",
+    "superindex.calc",
     "superindex.prefetch",
     "superindex.batch",
     "nav.build",

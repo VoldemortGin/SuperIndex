@@ -1,18 +1,19 @@
-"""The `search_pages` tool for PageIndex's local chat agent.
+"""The `search_pages` and `calculate` tools for PageIndex's local chat agent.
 
 PageIndex builds the agent's tools from `pageindex.agent_tools._tool_specs`
 (the local tool set served as an in-process MCP server, see
 `pageindex.integrations.openai_agents.build_mcp_server`, which looks the
 function up at call time). `install()` wraps that function so local clients
 also get `search_pages`, bound to the same document scope (`doc_ids`) as the
-built-in tools; PageIndex's own source stays untouched.
+built-in tools, and `calculate` (`superindex.calc`); PageIndex's own source
+stays untouched.
 """
 from __future__ import annotations
 
 import json
 from typing import Any
 
-from superindex import bm25
+from superindex import bm25, calc
 
 TOOL_NAME = "search_pages"
 MAX_TOP_K = 20
@@ -109,21 +110,32 @@ def run_search(client: Any, arguments: dict[str, Any],
     return json.dumps(payload, ensure_ascii=False), False
 
 
-def _spec(client: Any, doc_ids: Any) -> tuple[str, str, dict[str, Any], Any]:
+def _spec(name: str, description: str, schema: dict[str, Any], run: Any,
+          fallback: str) -> tuple[str, str, dict[str, Any], Any]:
     def invoke(arguments: dict[str, Any]) -> tuple[list[dict[str, Any]], bool]:
         try:
-            text, is_error = run_search(client, arguments or {}, doc_ids)
+            text, is_error = run(arguments or {})
         except Exception as exc:  # noqa: BLE001 - tool calls never raise into the agent
-            text, is_error = _failure(f"{TOOL_NAME} failed: {exc}", "INTERNAL_ERROR",
-                                      ["Use get_document_structure() instead"])
+            text, is_error = _failure(f"{name} failed: {exc}", "INTERNAL_ERROR", [fallback])
         return [{"type": "text", "text": text}], is_error
 
-    return TOOL_NAME, DESCRIPTION, json.loads(json.dumps(SCHEMA)), invoke
+    return name, description, json.loads(json.dumps(schema)), invoke
+
+
+def extra_specs(client: Any, doc_ids: Any) -> list[tuple[str, str, dict[str, Any], Any]]:
+    """The tool specs `install()` adds for a local client."""
+    return [
+        _spec(TOOL_NAME, DESCRIPTION, SCHEMA,
+              lambda arguments: run_search(client, arguments, doc_ids),
+              "Use get_document_structure() instead"),
+        _spec(calc.TOOL_NAME, calc.DESCRIPTION, calc.SCHEMA, calc.run_calculate,
+              "Fix the expression and call calculate again"),
+    ]
 
 
 def install() -> None:
-    """Add `search_pages` to every local PageIndex client's agent tools.
-    Idempotent."""
+    """Add `search_pages` and `calculate` to every local PageIndex client's
+    agent tools. Idempotent."""
     from pageindex import agent_tools
 
     original = agent_tools._tool_specs
@@ -135,7 +147,7 @@ def install() -> None:
         specs = original(client, include_management, doc_ids)
         if getattr(client, "api_key", None) or not getattr(client, "storage_path", None):
             return specs
-        return [*specs, _spec(client, doc_ids)]
+        return [*specs, *extra_specs(client, doc_ids)]
 
     tool_specs._superindex_search = True  # type: ignore[attr-defined]
     agent_tools._tool_specs = tool_specs

@@ -84,15 +84,16 @@ def _store(args: argparse.Namespace) -> Path:
 
 def make_client(settings: LLMSettings, store: Path, instructions: str | None = None) -> Any:
     """A PageIndexClient over the store, on the configured chat model, whose
-    agent also has the `search_pages` keyword tool."""
+    agent also has the `search_pages` keyword tool and `calculate`."""
     chat_model = settings.require("chat")
     configure_litellm()
     from pageindex import PageIndexClient
 
-    from superindex import agent_search
+    from superindex import agent_search, calc
 
     agent_search.install()
-    instructions = "\n\n".join(t for t in (instructions, agent_search.GUIDANCE) if t)
+    instructions = "\n\n".join(t for t in (instructions, agent_search.GUIDANCE, calc.GUIDANCE)
+                                 if t)
 
     return PageIndexClient(
         index_model=settings.index_model or chat_model,
