@@ -50,8 +50,7 @@ def _system_text(content: Any) -> str:
 def _split_chat_messages(messages) -> "tuple[list[str], list[dict]]":
     """Validate the chat_completions surface's messages: system/developer
     content joins the managed instructions; user/assistant history passes
-    through. Tool-history round-trips belong to chat(protocol="responses")
-    or chat(protocol="messages")."""
+    through. Tool-history round-trips belong to chat(protocol="responses")."""
     messages = list(messages)
     if not messages:
         raise SuperIndexAPIError("messages must be a non-empty list.")
@@ -69,15 +68,13 @@ def _split_chat_messages(messages) -> "tuple[list[str], list[dict]]":
             if not isinstance(content, str):
                 raise SuperIndexAPIError(
                     "content must be a string on this lane; for "
-                    "structured items use chat(protocol=\"responses\") "
-                    "or chat(protocol=\"messages\")."
+                    "structured items use chat(protocol=\"responses\")."
                 )
             history.append({"role": role, "content": content})
         else:
             raise SuperIndexAPIError(
                 f"Unsupported role {role!r} on this lane. Tool history "
-                "round-trips belong to chat(protocol=\"responses\") or "
-                "chat(protocol=\"messages\")."
+                "round-trips belong to chat(protocol=\"responses\")."
             )
     if not history:
         raise SuperIndexAPIError("messages must contain a user or assistant "
@@ -168,15 +165,13 @@ def _require_openai_agents(method: str) -> None:
         raise SuperIndexAPIError(
             f"{method} with your own chat model requires the OpenAI "
             "Agents SDK — "
-            "pip install openai-agents. "
-            "chat(protocol='messages') runs on the anthropic extra "
-            "instead."
+            "pip install openai-agents."
         ) from exc
 
 
 def _sdk_backend(backend) -> dict:
     """chat_backend for an SDK constructor: LiteLLM takes either endpoint
-    spelling, the openai and anthropic SDKs only ``base_url``."""
+    spelling, the openai SDK only ``base_url``."""
     return {("base_url" if key == "api_base" else key): value
             for key, value in (backend or {}).items()}
 
@@ -190,8 +185,7 @@ def _openai_model(protocol: str, model_name: str, backend=None):
                 f"protocol='responses' cannot drive '{model_name}': "
                 "provider-prefixed models route through LiteLLM, which speaks "
                 "chat.completions, not the Responses API. Use chat() without "
-                "protocol, or protocol='chat_completions' (or "
-                "protocol='messages' for Anthropic models), or point "
+                "protocol, or protocol='chat_completions', or point "
                 "OPENAI_BASE_URL at a "
                 "Responses-capable backend and use a bare or "
                 "'openai/'-prefixed model name."
@@ -1248,315 +1242,3 @@ def run_responses(client, input, model: Optional[str] = None,
 
     return _stream_sync(agen)
 
-
-# ── Anthropic engine (messages) ──
-
-def _require_anthropic() -> None:
-    try:
-        import anthropic  # noqa: F401
-    except ImportError as exc:
-        raise SuperIndexAPIError(
-            "chat(protocol='messages') drives your own chat model and "
-            "requires the Anthropic SDK — "
-            "pip install anthropic (or pip install 'superindex[anthropic]')."
-        ) from exc
-    try:
-        from anthropic import beta_tool  # noqa: F401
-        from anthropic.lib.tools import ToolError  # noqa: F401
-    except ImportError as exc:
-        raise SuperIndexAPIError(
-            "chat(protocol='messages') requires anthropic >= 0.108.0 (the "
-            "tool runner with ToolError) — pip install -U anthropic."
-        ) from exc
-
-
-_ANTHROPIC_CLIENTS: dict = {}  # backend key -> client, kept open for reuse
-
-
-def _anthropic_client(backend=None):
-    """The backend client — the seam tests replace with a fake transport.
-    One client per backend: each construction pays ~45 ms of SSL-context
-    build and a cold connection pool. A backend whose values defeat
-    hashing constructs per call, as before."""
-    import anthropic
-    kwargs = _sdk_backend(backend)
-    try:
-        key = tuple(sorted(
-            (k, tuple(sorted(v.items())) if isinstance(v, dict) else v)
-            for k, v in kwargs.items()))
-        hash(key)
-    except TypeError:
-        key = None
-    if key in _ANTHROPIC_CLIENTS:
-        return _ANTHROPIC_CLIENTS[key]
-    try:
-        client = anthropic.Anthropic(**kwargs)
-    except TypeError as exc:
-        raise SuperIndexAPIError(
-            f"The Anthropic backend is not configured: {exc}") from exc
-    if key is not None and len(_ANTHROPIC_CLIENTS) < 8:
-        # ponytail: cache capped at 8 backends; the tail constructs per call.
-        # setdefault: never evict a client another thread may already hold.
-        client = _ANTHROPIC_CLIENTS.setdefault(key, client)
-    return client
-
-
-def _anthropic_system(client, extra_system) -> list[dict]:
-    """System blocks: cache_control marks the stable managed prefix only
-    (the API allows 4 breakpoints total — caller blocks must not consume
-    the budget); caller system content follows as its own blocks."""
-    blocks = [{"type": "text",
-               "text": CHAT_HEADER + "\n\n" + _base_instructions(client),
-               "cache_control": {"type": "ephemeral"}}]
-    if extra_system is None:
-        return blocks
-    if isinstance(extra_system, str):
-        if extra_system.strip():
-            blocks.append({"type": "text", "text": extra_system})
-        return blocks
-    if isinstance(extra_system, list):
-        return blocks + list(extra_system)
-    raise SuperIndexAPIError("system must be a string or a list of blocks.")
-
-
-def _cache_marks(system_blocks, messages) -> int:
-    """Breakpoints already on the request. The API allows 4 total; the
-    top-level moving breakpoint is only added when it fits."""
-    blocks = list(system_blocks)
-    for message in messages:
-        content = message.get("content")
-        if isinstance(content, list):
-            blocks += [b for b in content if isinstance(b, dict)]
-    return sum(1 for b in blocks
-               if isinstance(b, dict) and b.get("cache_control"))
-
-
-def _dump_block(block) -> Any:
-    """A content block as a plain JSON dict, minus SDK-internal fields the
-    API rejects (ParsedBetaTextBlock.__api_exclude__, e.g. parsed_output)
-    and unset response-only defaults (exclude_unset, like the SDK's own
-    request serializer — an explicit null fails the request schema)."""
-    if hasattr(block, "model_dump"):
-        exclude = getattr(type(block), "__api_exclude__", None)
-        return block.model_dump(mode="json", exclude_unset=True,
-                                exclude=set(exclude) if exclude else None)
-    return block
-
-
-def _dump_message(message) -> dict:
-    message = dict(message)
-    content = message.get("content")
-    if isinstance(content, list):
-        message["content"] = [_dump_block(item) for item in content]
-    return message
-
-
-def _anthropic_usage(turns, final_usage: dict) -> dict:
-    """The final turn's native usage dict with the token counters replaced
-    by cross-turn sums (None-safe); all other native fields survive."""
-    totals = dict(final_usage)
-    for field in ("input_tokens", "output_tokens",
-                  "cache_creation_input_tokens", "cache_read_input_tokens"):
-        values = [getattr(turn.usage, field, None) for turn in turns]
-        counted = [value for value in values if isinstance(value, int)]
-        if counted:
-            totals[field] = sum(counted)
-    return totals
-
-
-_CLAUDE_4096_MODELS = ("claude-3-opus", "claude-3-sonnet", "claude-3-haiku",
-                       "claude-3-5-sonnet-20240620")
-
-
-def _default_max_tokens(model: str, thinking=None) -> int:
-    """The wire-required per-turn budget when the caller sets none: 8192,
-    except the claude-3 generation whose output ceiling is 4096. The wire
-    also requires max_tokens > thinking.budget_tokens, so an enabled
-    budget lifts the default above itself — clamped to the model's output
-    ceiling where LiteLLM's capability map knows it."""
-    budget = (thinking.get("budget_tokens")
-              if isinstance(thinking, dict) else None)
-    if isinstance(budget, int) and not isinstance(budget, bool):
-        want = budget + 8192
-        try:
-            from . import utils  # noqa: F401  — must precede litellm's import
-            import litellm
-            ceiling = (litellm.model_cost.get(model)
-                       or {}).get("max_output_tokens")
-        except Exception:
-            ceiling = None
-        return min(want, ceiling) if ceiling else want
-    return 4096 if model.startswith(_CLAUDE_4096_MODELS) else 8192
-
-
-def run_messages(client, messages, model: str,
-                 max_tokens: Optional[int] = None,
-                 stream: bool = False, doc_id=None, system=None,
-                 temperature: Optional[float] = None,
-                 top_p: Optional[float] = None,
-                 top_k: Optional[int] = None,
-                 stop_sequences: Optional[list[str]] = None,
-                 max_turns: Optional[int] = None,
-                 thinking: Optional[dict] = None,
-                 extra_body: Optional[dict] = None,
-                 extra_headers: Optional[dict] = None,
-                 backend: Optional[dict] = None,
-                 folder_id: Optional[str] = None,
-                 ) -> Union[dict, Iterator[Any]]:
-    from .integrations.anthropic_sdk import build_anthropic_tools
-
-    _require_anthropic()
-    import anthropic
-    _validate_max_turns(max_turns)
-    _refuse_skeleton(extra_body)
-    if isinstance(messages, str) and messages.strip():
-        messages = [{"role": "user", "content": messages}]
-    if (not isinstance(messages, list) or not messages
-            or not all(isinstance(message, dict) for message in messages)):
-        raise SuperIndexAPIError("messages must be a non-empty string or a "
-                                "list of message dicts.")
-    scope = client._local_doc_scope(doc_id)
-    block = targeting_block(client, doc_id, folder_id)
-    prepared = [dict(message) for message in messages]
-    if block:
-        prepared = [{"role": "user", "content": block}] + prepared
-    passthrough = {key: value for key, value in {
-        "temperature": temperature, "top_p": top_p, "top_k": top_k,
-        "stop_sequences": stop_sequences, "thinking": thinking,
-        "extra_body": extra_body, "extra_headers": extra_headers,
-    }.items() if value is not None}
-    system_blocks = _anthropic_system(client, system)
-    # Top-level cache_control: the server re-marks the newest block each
-    # turn, so the loop re-reads the growing conversation from cache.
-    # Counts toward the 4-breakpoint limit (live-verified 400 past it).
-    cached: dict[str, Any] = (
-        {"cache_control": {"type": "ephemeral"}}
-        if _cache_marks(system_blocks, prepared) < 4 else {})
-    # Tools before the transport: on a bridge client building them is
-    # network I/O, and a failure there must not strand the client below.
-    failures: list = []
-    tools = build_anthropic_tools(client, doc_ids=scope, failures=failures)
-    merged = _merged_backend(client, backend)
-    backend_client = _anthropic_client(merged)
-    # Close only a per-call construction: cached clients stay open for
-    # reuse; a caller-owned http_client survives regardless.
-    owns_transport = ("http_client" not in (merged or {})
-                      and backend_client not in _ANTHROPIC_CLIENTS.values())
-    if max_tokens is None:
-        max_tokens = _default_max_tokens(
-            model, (extra_body or {}).get("thinking", thinking))
-    runner = backend_client.beta.messages.tool_runner(
-        max_tokens=max_tokens,
-        messages=prepared,
-        model=model,
-        tools=tools,
-        system=system_blocks,
-        stream=stream,
-        # Bounded like the OpenAI surfaces (their framework default is 10).
-        max_iterations=max_turns if max_turns is not None else 10,
-        **passthrough,
-        **cached,
-    )
-    # Older Anthropic versions also execute tools on max_tokens turns, newer
-    # ones skip them: check right after the runner's own tool step.
-    generate_tool_response = runner.generate_tool_call_response
-
-    def checked_tool_response():
-        response = generate_tool_response()
-        if failures:
-            raise failures[0]
-        return response
-
-    runner.generate_tool_call_response = checked_tool_response
-
-    if stream:
-        def events() -> Iterator[Any]:
-            try:
-                for turn_stream in runner:
-                    for event in turn_stream:
-                        yield event
-            except anthropic.AnthropicError as exc:
-                raise _model_backend_error(exc, "messages", client) from exc
-            except TypeError as exc:
-                # the SDK's request-time credential-resolution failure
-                if "authentication" not in str(exc).lower():
-                    raise
-                raise SuperIndexAPIError(
-                    "The Anthropic backend is not configured: set the "
-                    "ANTHROPIC_API_KEY environment variable, or pass an "
-                    f"api_key in chat_backend / backend. ({exc})") from exc
-            finally:
-                # runs on exhaustion and abandonment (GeneratorExit) alike
-                if owns_transport:
-                    backend_client.close()
-        return events()
-
-    try:
-        turns = list(runner)
-    except anthropic.AnthropicError as exc:
-        raise _model_backend_error(exc, "messages", client) from exc
-    except TypeError as exc:
-        # the SDK's request-time credential-resolution failure
-        if "authentication" not in str(exc).lower():
-            raise
-        raise SuperIndexAPIError(
-            "The Anthropic backend is not configured: set the "
-            "ANTHROPIC_API_KEY environment variable, or pass an "
-            f"api_key in chat_backend / backend. ({exc})") from exc
-    finally:
-        # safe here: the params read-back below does no HTTP
-        if owns_transport:
-            backend_client.close()
-    if not turns:
-        raise SuperIndexAPIError("The model returned no response.")
-    captured: dict = {}
-
-    def capture(params):
-        captured.update(params)
-        return params
-
-    runner.set_messages_params(capture)
-    if not captured.get("messages"):
-        # The conversation is read back through a mutator; if a vendor
-        # change stops it delivering params, the envelope would silently
-        # lose the tool turns — fail loudly instead.
-        raise SuperIndexAPIError(
-            "Could not read the conversation back from the anthropic tool "
-            "runner — the installed anthropic version is incompatible with "
-            "this superindex release."
-        )
-    conversation = list(captured["messages"])
-    final = turns[-1]
-    envelope = final.model_dump(mode="json")
-    envelope["content"] = [_dump_block(item) for item in final.content]
-    envelope["usage"] = _anthropic_usage(turns, envelope.get("usage") or {})
-    # The full turn sequence (assistant tool_use + user tool_result + final),
-    # valid for verbatim append to the caller's history. The runner appends
-    # a turn to its params only when it executed tools from it, and which
-    # turns qualify is vendor policy that has changed across anthropic
-    # releases, so stop_reason alone cannot tell. Whether final's tool_use
-    # ids already sit in the history is the ground truth for "already
-    # appended".
-    new_messages = [_dump_message(message)
-                    for message in conversation[len(prepared):]]
-    final_blocks = [_dump_block(item) for item in final.content]
-    final_ids = {block.get("id") for block in final_blocks
-                 if block.get("type") == "tool_use"}
-    history_ids = {block.get("id")
-                   for message in new_messages
-                   if (message.get("role") == "assistant"
-                       and isinstance(message.get("content"), list))
-                   for block in message["content"]
-                   if (isinstance(block, dict)
-                       and block.get("type") == "tool_use")}
-    if not final_ids or not final_ids <= history_ids:
-        # Unexecuted tool_use blocks (refusal turns) have no tool_result,
-        # so they cannot enter an appendable history — strip them, as the
-        # SDK itself does when it rebuilds params around such a turn.
-        appendable = [block for block in final_blocks
-                      if block.get("type") != "tool_use"]
-        if appendable:
-            new_messages = new_messages + [
-                {"role": "assistant", "content": appendable}]
-    envelope["messages"] = new_messages
-    return envelope

@@ -414,9 +414,7 @@ class SuperIndexClient:
         if instructions is not None and not isinstance(instructions, str):
             raise SuperIndexAPIError(
                 f"instructions must be a str, got {type(instructions).__name__}. "
-                "Pass the guidance as text; Messages system blocks belong to "
-                "chat(protocol=\"messages\", model=..., instructions=[...]) on "
-                "a client with chat_model=... set.")
+                "Pass the guidance as text.")
         self.instructions = (instructions or "").strip() or None
         self.tools: tuple[AgentTool, ...] = tuple(tools or ())
         # Each side picks one spelling — its slot, or the flat arguments.
@@ -586,7 +584,7 @@ class SuperIndexClient:
         return model is not None
 
     def _require_own_chat(self, lane: str) -> None:
-        # The one refusal for the Responses / Messages lanes and the doors
+        # The one refusal for the Responses lane and the doors
         # behind them: shared, so the doors cannot drift from chat().
         if self._local_chat:
             return
@@ -608,7 +606,7 @@ class SuperIndexClient:
         # a __getattr__ the type checker can see would silence every
         # attribute typo on the client.
         def __getattr__(self, name):
-            if name in ("responses", "messages"):
+            if name == "responses":
                 raise AttributeError(
                     f"{name}() moved: call chat(protocol={name!r}, ...) "
                     "— the same protocol, engine, and envelope. Pass the "
@@ -921,7 +919,7 @@ class SuperIndexClient:
         show_process: Union[bool, Mapping[str, Any], None] = None,
         folder_id: Optional[str] = None,
         protocol: None = None,
-        instructions: Optional[Union[str, list[dict[str, Any]]]] = None,
+        instructions: Optional[str] = None,
         citations: bool = False,
         max_turns: Optional[int] = None,
         backend: Optional[dict[str, Any]] = None,
@@ -942,7 +940,7 @@ class SuperIndexClient:
         show_process: Union[bool, Mapping[str, Any], None] = None,
         folder_id: Optional[str] = None,
         protocol: None = None,
-        instructions: Optional[Union[str, list[dict[str, Any]]]] = None,
+        instructions: Optional[str] = None,
         citations: bool = False,
         max_turns: Optional[int] = None,
         backend: Optional[dict[str, Any]] = None,
@@ -962,8 +960,8 @@ class SuperIndexClient:
         reasoning_effort: Optional[str] = None,
         show_process: Union[bool, Mapping[str, Any], None] = None,
         folder_id: Optional[str] = None,
-        protocol: Literal["chat_completions", "responses", "messages"],
-        instructions: Optional[Union[str, list[dict[str, Any]]]] = None,
+        protocol: Literal["chat_completions", "responses"],
+        instructions: Optional[str] = None,
         citations: bool = False,
         max_turns: Optional[int] = None,
         backend: Optional[dict[str, Any]] = None,
@@ -984,7 +982,7 @@ class SuperIndexClient:
         show_process: Union[bool, Mapping[str, Any], None] = None,
         folder_id: Optional[str] = None,
         protocol: Literal["chat_completions", "responses"],
-        instructions: Optional[Union[str, list[dict[str, Any]]]] = None,
+        instructions: Optional[str] = None,
         citations: bool = False,
         max_turns: Optional[int] = None,
         backend: Optional[dict[str, Any]] = None,
@@ -999,34 +997,13 @@ class SuperIndexClient:
         messages: Union[str, list[dict[str, Any]]],
         *,
         doc_id: Optional[Union[str, list[str]]] = None,
-        stream: Literal[True],
-        model: Optional[str] = None,
-        reasoning_effort: Optional[str] = None,
-        show_process: Union[bool, Mapping[str, Any], None] = None,
-        folder_id: Optional[str] = None,
-        protocol: Literal["messages"],
-        instructions: Optional[Union[str, list[dict[str, Any]]]] = None,
-        citations: bool = False,
-        max_turns: Optional[int] = None,
-        backend: Optional[dict[str, Any]] = None,
-        extra_headers: Optional[dict[str, str]] = None,
-        extra_body: Optional[dict[str, Any]] = None,
-        extras: Optional[ChatExtras] = None,
-    ) -> Iterator[Any]: ...
-
-    @overload
-    def chat(
-        self,
-        messages: Union[str, list[dict[str, Any]]],
-        *,
-        doc_id: Optional[Union[str, list[str]]] = None,
         stream: bool = False,
         model: Optional[str] = None,
         reasoning_effort: Optional[str] = None,
         show_process: Union[bool, Mapping[str, Any], None] = None,
         folder_id: Optional[str] = None,
         protocol: None = None,
-        instructions: Optional[Union[str, list[dict[str, Any]]]] = None,
+        instructions: Optional[str] = None,
         citations: bool = False,
         max_turns: Optional[int] = None,
         backend: Optional[dict[str, Any]] = None,
@@ -1046,16 +1023,15 @@ class SuperIndexClient:
         reasoning_effort: Optional[str] = None,
         show_process: Union[bool, Mapping[str, Any], None] = None,
         folder_id: Optional[str] = None,
-        protocol: Optional[Literal["chat_completions", "responses",
-                                   "messages"]] = None,
-        instructions: Optional[Union[str, list[dict[str, Any]]]] = None,
+        protocol: Optional[Literal["chat_completions", "responses"]] = None,
+        instructions: Optional[str] = None,
         citations: bool = False,
         max_turns: Optional[int] = None,
         backend: Optional[dict[str, Any]] = None,
         extra_headers: Optional[dict[str, str]] = None,
         extra_body: Optional[dict[str, Any]] = None,
         extras: Optional[ChatExtras] = None,
-    ) -> Union[str, ChatStream, dict[str, Any], Iterator[Any]]: ...
+    ) -> Union[str, ChatStream, dict[str, Any], Iterator[dict[str, Any]]]: ...
 
     def chat(
         self,
@@ -1067,16 +1043,15 @@ class SuperIndexClient:
         reasoning_effort: Optional[str] = None,
         show_process: Union[bool, Mapping[str, Any], None] = None,
         folder_id: Optional[str] = None,
-        protocol: Optional[Literal["chat_completions", "responses",
-                                   "messages"]] = None,
-        instructions: Optional[Union[str, list[dict[str, Any]]]] = None,
+        protocol: Optional[Literal["chat_completions", "responses"]] = None,
+        instructions: Optional[str] = None,
         citations: bool = False,
         max_turns: Optional[int] = None,
         backend: Optional[dict[str, Any]] = None,
         extra_headers: Optional[dict[str, str]] = None,
         extra_body: Optional[dict[str, Any]] = None,
         extras: Optional[ChatExtras] = None,
-    ) -> Union[str, ChatStream, dict[str, Any], Iterator[Any]]:
+    ) -> Union[str, ChatStream, dict[str, Any], Iterator[dict[str, Any]]]:
         """
         Ask a question about your documents.
 
@@ -1092,13 +1067,11 @@ class SuperIndexClient:
         lane's own engine with its envelope kept — the Chat Completions
         response (``choices``/``usage``), or its chunk dicts when
         streaming; it is the one protocol the managed cloud chat serves
-        too. ``protocol="responses"`` / ``"messages"``: own-model chat
-        driven natively over the OpenAI Responses API or Anthropic's
-        Messages API. Input and output are that protocol's own shapes —
-        the history may carry its transcript (Responses items, or
-        Messages content blocks with prior tool_use/tool_result
-        round-trips), and the return is its response envelope, streaming
-        its native events. A round-tripped transcript continues the
+        too. ``protocol="responses"``: own-model chat driven natively over
+        the OpenAI Responses API. Input and output are that protocol's own
+        shapes — the history may carry its transcript (Responses items),
+        and the return is its response envelope, streaming its native
+        events. A round-tripped transcript continues the
         agent's memory and the provider's cached prefix: follow-ups re-read
         the run instead of redoing the tool work. The protocol is declared,
         never inferred from the model name. Keep ``doc_id`` and
@@ -1112,9 +1085,8 @@ class SuperIndexClient:
                 they sit (the managed endpoint forwards them verbatim);
                 the other protocol lanes pass rows to the wire as they
                 are (use ``instructions`` for persona there). Responses
-                and Messages also accept their native transcript items
-                or content blocks; own-model Chat Completions takes text
-                history only.
+                also accepts its native transcript items; own-model Chat
+                Completions takes text history only.
             doc_id: Document ID or list of IDs to scope the conversation.
                 Keep it identical across a conversation's calls. Local
                 documents: also enforced at the tool layer, not just
@@ -1136,13 +1108,12 @@ class SuperIndexClient:
                 clipped). One run serves one view. Protocol lanes: the
                 protocol's own event stream.
             model: Own-model chat only — backend model name (defaults
-                to ``chat_model``). ``protocol="messages"`` needs it named
-                — a Claude model; there is no cross-vendor default.
+                to ``chat_model``).
             reasoning_effort: Own-model chat only — how hard the model
                 thinks (``"low"`` / ``"medium"`` / ``"high"``; what a
                 backend accepts is its own). Each lane sends its native
                 spelling: LiteLLM's ``reasoning_effort``, Responses
-                ``reasoning.effort``, Messages ``output_config.effort``.
+                ``reasoning.effort``.
                 Unset sends nothing — the model's default applies.
             show_process: Answer lane, streamed chat — weave the run into
                 the text stream for display: thinking flows as
@@ -1167,20 +1138,18 @@ class SuperIndexClient:
                 not a parse format, and a process stream must not be
                 appended back as conversation history — for the
                 machine-readable process use ``.events``, or the
-                Responses / Messages lane's transcript. A protocol lane
+                Responses lane's transcript. A protocol lane
                 returns its own shape, so ``show_process`` is an error
                 there.
             protocol: ``None`` for the answer lane, or
-                ``"chat_completions"`` / ``"responses"`` / ``"messages"``
+                ``"chat_completions"`` / ``"responses"``
                 — the wire protocol, engine, and input/output shapes of
                 this call. Own-model chat only, except
                 ``"chat_completions"``, which the managed chat serves too.
             instructions: Persona or extra guidance for this call,
                 appended after the managed system prompt (which stays: it
                 carries the tool guidance) and the client's own
-                ``instructions``. A string on every lane; with
-                ``protocol="messages"`` also a list of
-                Messages system blocks. On the answer lane and
+                ``instructions``. A string on every lane. On the answer lane and
                 ``protocol="chat_completions"`` it precedes any ``system``
                 rows in the history; the managed cloud chat receives them
                 all as its one leading system message.
@@ -1199,27 +1168,23 @@ class SuperIndexClient:
                 ``protocol="chat_completions"``; the answer lane returns
                 the answer string alone.
             max_turns: Own-model chat only — cap on agent turns per call
-                (default 10). The OpenAI lanes raise at the cap;
-                ``protocol="messages"`` returns the truncated run
-                (``stop_reason: "tool_use"``, its ``messages`` valid for
-                continuation).
+                (default 10). The lanes raise at the cap.
             backend: Own-model chat only — connection overrides for this
                 call's backend, merged over the client's ``chat_backend``
                 (per-call keys win): LiteLLM's connection params on the
                 answer lane and ``protocol="chat_completions"``; the
-                openai / anthropic SDK's client params on Responses /
-                Messages. Passed through verbatim.
+                openai SDK's client params on Responses. Passed through
+                verbatim.
             extra_headers: Own-model chat only — extra HTTP headers
                 merged into each backend request; caller headers win.
                 LiteLLM's anthropic adapter owns ``anthropic-beta`` on the
-                answer lane and ``protocol="chat_completions"`` —
-                Anthropic beta flags ride ``protocol="messages"``.
+                answer lane and ``protocol="chat_completions"``.
             extra_body: The wire's own request fields beyond this
                 method's parameters, in the lane's wire names (Responses
-                ``max_output_tokens``, Messages ``thinking`` / ``top_k``;
+                ``max_output_tokens``;
                 the managed chat endpoint's ``temperature`` /
                 ``enable_citations``), merged last so they win.
-                The managed endpoint, Responses / Messages, and
+                The managed endpoint, Responses, and
                 OpenAI-compatible chat backends take these verbatim in
                 the request body. Other own-model chat backends take
                 LiteLLM's own params, mapped or refused per provider
@@ -1248,19 +1213,15 @@ class SuperIndexClient:
             - protocol lane, stream=False: the protocol's response
               envelope — Chat Completions: ``choices`` and ``usage``;
               Responses: ``output`` plus an ``items``
-              transcript and cross-turn ``usage``; Messages: the final
-              message with a ``messages`` turn sequence and aggregated
-              ``usage``
+              transcript and cross-turn ``usage``
             - protocol lane, stream=True: an iterator of the protocol's
               own stream events
         """
-        if protocol not in (None, "chat_completions", "responses",
-                            "messages"):
+        if protocol not in (None, "chat_completions", "responses"):
             raise SuperIndexAPIError(
                 "protocol selects the wire: \"chat_completions\" (OpenAI Chat "
-                "Completions), \"responses\" (OpenAI Responses) or "
-                "\"messages\" (Anthropic Messages), or leave it unset for "
-                f"the answer lane — got {protocol!r}.")
+                "Completions) or \"responses\" (OpenAI Responses), or leave "
+                f"it unset for the answer lane — got {protocol!r}.")
         if (protocol is not None and show_process is not False
                 and show_process is not None):
             raise SuperIndexAPIError(
@@ -1276,11 +1237,10 @@ class SuperIndexClient:
                     "show_process shows the run as it happens and requires "
                     "stream=True; only show_process=False (or None) means "
                     f"off — got {show_process!r}.")
-        if isinstance(instructions, list) and protocol != "messages":
+        if instructions is not None and not isinstance(instructions, str):
             raise SuperIndexAPIError(
-                "instructions blocks are the Messages protocol's shape — "
-                "with protocol=\"messages\" they append after the managed "
-                "system blocks; the other lanes take a string.")
+                "instructions must be a string, got "
+                f"{type(instructions).__name__}.")
         from .local_chat import _refuse_skeleton
         _refuse_skeleton(extra_body)
         if citations and citations is not True:
@@ -1292,12 +1252,8 @@ class SuperIndexClient:
         if citations:
             if self._local_chat:
                 text = self.citation_prompt()
-                if isinstance(instructions, list):
-                    instructions = [{"type": "text", "text": text},
-                                    *instructions]
-                else:
-                    instructions = (f"{text}\n\n{instructions}"
-                                    if instructions else text)
+                instructions = (f"{text}\n\n{instructions}"
+                                if instructions else text)
             else:
                 enable_citations = True
         if extras is not None and not (stream and protocol is None
@@ -1306,40 +1262,20 @@ class SuperIndexClient:
                 "extras extend the streamed answer lane of your own chat "
                 "model — pass stream=True, no protocol, on a client with "
                 "chat_model=... set.")
-        if protocol in ("responses", "messages"):
+        if protocol == "responses":
             self._require_own_chat(f"chat(protocol={protocol!r})")
-            if protocol == "responses":
-                body = extra_body
-                if reasoning_effort:
-                    # OpenAI's own effort field, beside the caller's other
-                    # reasoning keys — theirs still win.
-                    given = extra_body or {}
-                    body = {**given, "reasoning": {
-                        "effort": reasoning_effort,
-                        **given.get("reasoning", {})}}
-                return self._responses(
-                    messages, model=model, stream=stream, doc_id=doc_id,
-                    folder_id=folder_id,
-                    instructions=cast(Optional[str], instructions),
-                    max_turns=max_turns, extra_body=body,
-                    extra_headers=extra_headers, backend=backend)
-            if not model:
-                raise SuperIndexAPIError(
-                    "protocol=\"messages\" drives Anthropic's Messages API "
-                    "with the Anthropic SDK — name the Claude model with "
-                    "model=... (there is no cross-vendor default to guess).")
             body = extra_body
             if reasoning_effort:
-                # Anthropic's own effort field, beside the caller's other
-                # output_config keys — theirs still win.
+                # OpenAI's own effort field, beside the caller's other
+                # reasoning keys — theirs still win.
                 given = extra_body or {}
-                body = {**given, "output_config": {
+                body = {**given, "reasoning": {
                     "effort": reasoning_effort,
-                    **given.get("output_config", {})}}
-            return self._messages(
+                    **given.get("reasoning", {})}}
+            return self._responses(
                 messages, model=model, stream=stream, doc_id=doc_id,
-                folder_id=folder_id,
-                system=instructions, max_turns=max_turns, extra_body=body,
+                folder_id=folder_id, instructions=instructions,
+                max_turns=max_turns, extra_body=body,
                 extra_headers=extra_headers, backend=backend)
         if instructions:
             if isinstance(messages, str):
@@ -1446,7 +1382,7 @@ class SuperIndexClient:
         finish reason — "stop", or the backend's "length" /
         "content_filter" when the last turn was cut short. For
         the tool-use process and prompt-cache round-trip use
-        ``chat(protocol="responses")`` or ``chat(protocol="messages")``.
+        ``chat(protocol="responses")``.
 
         Args:
             messages: Conversation messages with 'role' and 'content' keys,
@@ -1506,8 +1442,7 @@ class SuperIndexClient:
             extra_headers: Own-model chat only — extra HTTP headers merged into
                 each backend request; caller headers win. One exception:
                 LiteLLM's anthropic adapter owns the ``anthropic-beta``
-                header (your value is dropped there) — Anthropic beta
-                flags ride ``chat(protocol="messages")``.
+                header (your value is dropped there).
             backend: Own-model chat only — connection overrides for this call's
                 backend, merged over the client's ``chat_backend``
                 (per-call keys win). Keys are LiteLLM's own connection
@@ -1615,8 +1550,7 @@ class SuperIndexClient:
         ``chat(protocol="chat_completions")``. Provider-prefixed models
         (``anthropic/…``) route through LiteLLM's chat.completions adapter
         and are therefore refused here — use
-        ``chat(protocol="chat_completions")`` or ``chat(protocol="messages")``
-        for those.
+        ``chat(protocol="chat_completions")`` for those.
 
         Args:
             input: A user message string, or a list of Responses input items
@@ -1671,99 +1605,6 @@ class SuperIndexClient:
             instructions=instructions, temperature=temperature, top_p=top_p,
             max_turns=max_turns, max_output_tokens=max_output_tokens,
             reasoning=reasoning, extra_body=extra_body,
-            extra_headers=extra_headers, backend=backend,
-        )
-
-    def _messages(
-        self,
-        messages: Union[str, list[dict[str, Any]]],
-        model: str,
-        max_tokens: Optional[int] = None,
-        stream: bool = False,
-        doc_id: Optional[Union[str, list[str]]] = None,
-        system: Optional[Union[str, list[dict[str, Any]]]] = None,
-        temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
-        top_k: Optional[int] = None,
-        stop_sequences: Optional[list[str]] = None,
-        max_turns: Optional[int] = None,
-        thinking: Optional[dict[str, Any]] = None,
-        extra_body: Optional[dict[str, Any]] = None,
-        extra_headers: Optional[dict[str, str]] = None,
-        backend: Optional[dict[str, Any]] = None,
-        *,
-        folder_id: Optional[str] = None,
-    ) -> Union[dict[str, Any], Iterator[Any]]:
-        """
-        The engine behind ``chat(protocol="messages")``: document QA over
-        the Anthropic Messages protocol, Claude-native.
-
-        Own-model chat only — local mode, or a cloud client constructed
-        with ``chat_model=``/``chat=``. Drives Anthropic's /v1/messages
-        via the Anthropic SDK's own tool runner (requires
-        ``superindex[anthropic]``; ANTHROPIC_API_KEY selects the
-        backend). ``tool_use``/``tool_result`` round-trip is the
-        format's native behavior: the response is the
-        final message envelope with cross-turn aggregated ``usage`` plus a
-        ``messages`` field — the full new turn sequence, valid for verbatim
-        append to your history. The managed system prompt carries a
-        ``cache_control`` breakpoint, and the request sets the top-level
-        ``cache_control`` so each turn re-reads the growing conversation
-        from cache — skipped when your own blocks already use the three
-        remaining breakpoints (the managed prompt holds the fourth).
-
-        Args:
-            messages: Native Messages-format history (including prior
-                tool_use/tool_result blocks on round-trip), or a bare query
-                string (it becomes a single user message).
-            model: Required — there is no cross-vendor default to guess.
-            max_tokens: Per-turn output budget the Messages API requires on
-                the wire; the default is resolved per model (8192, or 4096
-                for the claude-3 generation whose ceiling is lower) so the
-                simple call needs only a question, and rises to
-                budget_tokens + 8192 when ``thinking`` is enabled (the wire
-                requires max_tokens above the budget). Passed through.
-            stream: Yield the Anthropic SDK's event stream across turns
-                (its native event objects, including SDK-synthesized
-                convenience events), one message sequence per turn.
-            doc_id: Document ID or list of IDs to scope the conversation.
-                Keep it identical across a conversation's calls — the
-                targeting block it adds is re-set each call. Local
-                documents: also enforced at the tool layer; cloud
-                documents: prompt-level targeting only.
-            folder_id: Folder ID to steer discovery toward that folder's
-                documents (cloud-only), as the leading targeting text
-                ahead of the document block. ``"root"`` is the whole
-                library.
-            system: Appended after the managed system blocks.
-            temperature / top_p / top_k / stop_sequences: Passed through.
-            max_turns: Cap on agent turns per call (default 10, like the
-                OpenAI surfaces). A truncated run reports
-                ``stop_reason: "tool_use"`` and its ``messages`` remain
-                valid for continuation.
-            thinking: Anthropic thinking configuration, forwarded verbatim
-                (e.g. ``{"type": "adaptive"}``) — the values and their
-                constraints are the backend's. Unset sends nothing.
-            extra_body: Extra request fields beyond this method's
-                parameters, merged verbatim into each request body.
-                Credentials belong in ``backend``, never here.
-            extra_headers: Extra HTTP headers merged into each request
-                (e.g. ``anthropic-beta`` feature flags); caller headers
-                win over defaults.
-            backend: Connection overrides for this call's backend client,
-                merged over the client's ``chat_backend`` (per-call keys
-                win). Keys are the anthropic SDK's client params —
-                ``api_key``, ``base_url``, ``auth_token``, … — passed
-                verbatim; unknown keys raise.
-        """
-        self._require_own_chat("chat(protocol='messages')")
-        from .local_chat import run_messages
-        return run_messages(
-            self, messages, model=model, max_tokens=max_tokens,
-            stream=stream, doc_id=doc_id, folder_id=folder_id, system=system,
-            temperature=temperature, top_p=top_p, top_k=top_k,
-            stop_sequences=stop_sequences, max_turns=max_turns,
-            thinking=thinking, extra_body=extra_body,
             extra_headers=extra_headers, backend=backend,
         )
 
@@ -1848,8 +1689,7 @@ class SuperIndexClient:
     ) -> list[Callable[..., str]]:
         """
         Plain functions for any agent framework (LangChain, PydanticAI, ...).
-        For the OpenAI / Claude Agent SDKs, prefer ``as_openai_tools()`` /
-        ``as_claude_mcp()``.
+        For the OpenAI Agents SDK, prefer ``as_openai_tools()``.
 
         Cloud: the full live read tool set, discovered from the PageIndex
         MCP server when this method is called — one function per tool,
@@ -2006,187 +1846,6 @@ class SuperIndexClient:
             config["model_settings"] = (marks.resolve(model_settings)
                                         if marks else model_settings)
         return config
-
-    def as_anthropic_tools(self, include_management: bool = False,
-                           asynchronous: bool = False) -> list:
-        """
-        Runnable tools for the Anthropic SDK's tool runner — pass to
-        ``client.beta.messages.tool_runner(tools=...)`` (or
-        ``anthropic_runner_config()`` for the whole setup in one call).
-        The default flavor is for the sync ``Anthropic`` client; pass
-        ``asynchronous=True`` for ``AsyncAnthropic``. For a manual
-        ``messages.create`` loop, serialize with
-        ``[tool.to_dict() for tool in ...]``. A cloud 401/403, a 429/5xx
-        that outlived the bridge's retries, an unreachable server or a
-        RATE_LIMITED / USAGE_LIMIT_REACHED tool error raises
-        SuperIndexAPIError, which the tool runner flattens into an
-        is_error result.
-
-        Cloud: the full live read tool set (search, folders, images — as
-        enabled for your key), discovered from the PageIndex MCP server
-        and executed from your process; the server's input schemas pass
-        through verbatim (MCP and the Messages API share the schema
-        shape), and results are the Anthropic SDK's own MCP conversion:
-        content block lists, text as text and images (e.g.
-        ``get_document_image``) as image blocks. The
-        server-side alternative is the Messages API's beta
-        MCP connector — ``mcp_servers=[{"type": "url", "name":
-        "pageindex", "url": f"{BASE_URL}/mcp?tools=read",
-        "authorization_token": <your PageIndex API key>}]`` (drop
-        ``?tools=read`` for the full tool set) — with no client-side
-        tools involved. Local: the in-process tools — the same set
-        ``chat(protocol="messages")`` runs internally.
-
-        Requires ``anthropic>=0.108.0``
-        (``pip install 'superindex[anthropic]'``), imported only when this
-        method is called.
-
-        Args:
-            include_management (bool): Also expose tools that modify the
-                library. Local: adds ``remove_document``. Cloud: the URL
-                is the gate — the default serves what the read-only
-                endpoint (``?tools=read``) registers; True connects to
-                the full ``/mcp`` list (upload, delete, ...).
-            asynchronous (bool): Build ``beta_async_tool`` runnables for
-                ``AsyncAnthropic`` (each tool call runs in a worker
-                thread, keeping blocking I/O off your event loop). The
-                sync and async runners each accept only their own flavor.
-        """
-        from .integrations.anthropic_sdk import build_anthropic_tools
-        return build_anthropic_tools(self, include_management, asynchronous)
-
-    def anthropic_runner_config(
-        self,
-        model: str,
-        *,
-        include_management: bool = False,
-        asynchronous: bool = False,
-        max_tokens: Optional[int] = None,
-        max_turns: Optional[int] = None,
-        thinking: Optional[dict] = None,
-    ) -> dict[str, Any]:
-        """
-        Document QA ``tool_runner`` kwargs for the Anthropic SDK in one
-        call — only your ``messages`` remain::
-
-            runner = anthropic_client.beta.messages.tool_runner(
-                **client.anthropic_runner_config(model="claude-sonnet-4-5"),
-                messages=[{"role": "user", "content": "..."}],
-            )
-
-        Sugar over the explicit form — ``agent_instructions`` as the
-        system prompt and ``as_anthropic_tools`` as the tools — plus the
-        ``max_tokens`` default and 10-turn ``max_iterations`` bound
-        ``chat(protocol="messages")`` uses,
-        and a top-level ``cache_control`` so each loop turn re-reads the
-        growing prompt from cache (pop the key if you place your own
-        breakpoints — the API allows four). Unlike the chat lane,
-        ``system`` here is the bare instructions string, without the chat
-        header or its block-level breakpoint. To target a folder or
-        documents, prepend ``folder_context(folder_id)`` /
-        ``document_context(doc_id)`` to your first message; to
-        customize further, switch to those methods directly.
-
-        Args:
-            model: Backend model name (also resolves the ``max_tokens``
-                default).
-            include_management (bool): Also expose tools that modify the
-                library.
-            asynchronous (bool): Build async runnables for
-                ``AsyncAnthropic``.
-            max_tokens: Per-turn output budget; default resolved per
-                model.
-            max_turns: Agent-loop bound; default 10.
-            thinking: Anthropic ``thinking`` config, included in the
-                kwargs; an enabled budget also lifts the ``max_tokens``
-                default above it. Pass it here, not alongside the
-                unpacked config, so the default stays valid.
-        """
-        from .agent_tools import _base_instructions
-        from .local_chat import _default_max_tokens, _validate_max_turns
-        _validate_max_turns(max_turns)
-        return {
-            "model": model,
-            "max_tokens": (max_tokens if max_tokens is not None
-                           else _default_max_tokens(model, thinking)),
-            "system": _base_instructions(self, include_management),
-            "tools": self.as_anthropic_tools(include_management, asynchronous),
-            "max_iterations": max_turns if max_turns is not None else 10,
-            **({"thinking": thinking} if thinking is not None else {}),
-            "cache_control": {"type": "ephemeral"},
-        }
-
-    def as_claude_mcp(self, include_management: bool = False, *,
-                      server_name: str = "pageindex"):
-        """
-        ``mcp_servers`` entry for the Claude Agent SDK.
-
-        Cloud: returns the remote PageIndex MCP config.
-        ``include_management`` picks the endpoint, so the URL itself is
-        the gate — the default connects to the read-only endpoint
-        (``/mcp?tools=read``: the server registers only read-only tools),
-        ``True`` connects to the full tool set. Local: returns an
-        in-process SDK MCP server exposing the agent tools, gated the
-        same way at registration (requires ``claude-agent-sdk``;
-        ``pip install 'superindex[claude]'``). ``server_name`` names the
-        in-process server — match it to the key you register the entry
-        under (cloud entries carry no name).
-
-        Cloud hosts that surface MCP server instructions receive the tool
-        guidance natively — not the client's ``instructions``, which only
-        ``system_prompt`` carries; passing both duplicates the guidance
-        (harmless). ``system_prompt`` stays the recommended channel: it is
-        guaranteed delivery, and the only channel local mode has.
-
-        Usage (or ``claude_agent_config()`` for all three slots in one
-        call)::
-
-            options = ClaudeAgentOptions(
-                system_prompt=client.agent_instructions(),
-                mcp_servers={"pageindex": client.as_claude_mcp()},
-                # Pre-approval only — the server itself is already gated.
-                allowed_tools=["mcp__pageindex"],
-            )
-        """
-        from .integrations.claude_agent_sdk import build_claude_mcp
-        return build_claude_mcp(self, include_management,
-                                server_name=server_name)
-
-    def claude_agent_config(
-        self,
-        *,
-        include_management: bool = False,
-        server_name: str = "pageindex",
-    ) -> dict[str, Any]:
-        """
-        Document QA ``ClaudeAgentOptions`` kwargs in one call::
-
-            options = ClaudeAgentOptions(**client.claude_agent_config())
-
-        Sugar over the explicit form — the managed system prompt
-        (``agent_instructions``) and the server entry (``as_claude_mcp``,
-        itself the tool gate) with its ``allowed_tools`` pre-approval,
-        one ``include_management`` and ``server_name`` applied
-        everywhere. To target a folder or documents, prepend
-        ``folder_context(folder_id)`` / ``document_context(doc_id)`` to
-        your prompt; to customize (your own system prompt, extra
-        servers), switch to those methods directly.
-
-        Args:
-            include_management (bool): Also allow tools that modify the
-                library.
-            server_name (str): Key the server is registered under;
-                locally also the name the SDK server declares.
-        """
-        from .agent_tools import _base_instructions
-        return {
-            "system_prompt": _base_instructions(self, include_management),
-            "mcp_servers": {server_name: self.as_claude_mcp(
-                include_management, server_name=server_name)},
-            # Pre-approval only — the server itself is already gated (the
-            # read-only endpoint on cloud, the registered set locally).
-            "allowed_tools": [f"mcp__{server_name}"],
-        }
 
     def agent_instructions(self, *, include_management: bool = False) -> str:
         """
