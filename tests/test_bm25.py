@@ -257,3 +257,171 @@ def test_make_client_installs_tool_and_guidance(store: Path,
     assert "search_pages" in [s[0] for s in agent_tools._tool_specs(client)]
     base = agent_tools._base_instructions(client)
     assert "Answer in Chinese." in base and agent_search.GUIDANCE in base
+
+
+# ───────────────────────────────────────────────────────────── passages
+def _texts(passages: list[tuple[int, int, str]]) -> list[str]:
+    return [" ".join(t.split()) for _, _, t in passages]
+
+
+def test_split_passages_headings_paragraphs_and_tables() -> None:
+    body = "x" * 350
+    page = (f"# Title\n\n## One\n\n{body}\n\n## Two\n\nshort text\n\n"
+            "| a | b |\n|---|---|\n| 1 | 2 |\n\n## Three\n\nlast")
+    parts = bm25.split_passages(page)
+    texts = _texts(parts)
+    assert texts[0].startswith("# Title ## One") and texts[0].endswith(body)
+    # a heading starts a passage once the open one is long enough, and a small
+    # table stays whole with the text around it
+    assert texts[1] == "## Two short text | a | b | |---|---| | 1 | 2 | ## Three last"
+    for start, end, text in parts:
+        assert page[start:end] == text
+
+
+def test_split_passages_never_ends_on_a_heading() -> None:
+    page = "## A\n\n" + "y" * 500 + "\n\n### B\n\n" + "z" * 500
+    texts = _texts(bm25.split_passages(page))
+    assert texts == ["## A " + "y" * 500, "### B " + "z" * 500]
+
+
+def test_split_long_pipe_table_repeats_header() -> None:
+    rows = "\n".join(f"| row {i} | {i * 1000} |" for i in range(80))
+    page = "## Table\n\n| item | value |\n|---|---|\n" + rows + "\n\nafter"
+    parts = bm25.split_passages(page)
+    tables = [t for _, _, t in parts if "| item | value |" in t]
+    assert len(tables) >= 2
+    assert tables[0].startswith("## Table")                 # heading rides on the first piece
+    for t in tables:
+        assert "| item | value |\n|---|---|" in t
+        assert bm25._size(t) <= bm25.PASSAGE_MAX + len("## Table") + 1
+    body_rows = [line for t in tables for line in t.splitlines() if line.startswith("| row")]
+    assert len(body_rows) == 80                             # every row exactly once
+    assert _texts(parts)[-1] == "after"
+
+
+def test_split_long_html_table_repeats_header() -> None:
+    rows = "".join(f"<tr><td>row {i}</td><td>{i * 7}</td></tr>" for i in range(60))
+    page = f"<table><tr><th>Item</th><th>Value</th></tr>{rows}</table>"
+    tables = [t for _, _, t in bm25.split_passages(page)]
+    assert len(tables) >= 2
+    for t in tables:
+        assert t.startswith("<table><tr><th>Item</th><th>Value</th></tr><tr>")
+        assert t.endswith("</table>")
+        assert bm25._size(t) <= bm25.PASSAGE_MAX
+    assert sum(t.count("<td>row ") for t in tables) == 60
+
+
+def test_split_long_text_at_sentence_ends() -> None:
+    sentence = "The group grew its business in many markets this year. "
+    page = sentence * 40
+    parts = bm25.split_passages(page)
+    assert len(parts) >= 3
+    for start, end, text in parts:
+        assert bm25._size(text) <= bm25.PASSAGE_MAX
+        assert text.rstrip().endswith(".")
+    assert "".join(t for _, _, t in parts) == page
+
+
+def test_index_has_passage_counts() -> None:
+    index = bm25.build_index(["# A\n\nalpha", "", "beta\n\n" + "gamma " * 300])
+    assert index["version"] == bm25.VERSION == 2
+    passages = index["passages"]
+    assert passages["pages"][0] == 1 and set(passages["pages"]) == {1, 3}
+    assert len(passages["lengths"]) == len(passages["pages"])
+    assert passages["postings"]["alpha"] == [0, 1]
+    assert index["postings"]["alpha"] == [1, 1] and index["postings"]["gamma"][0] == 3
+
+
+# ───────────────────────────────────────────────────────────── match modes
+FILLER = ("Management continued to invest in training, digital tools and customer service "
+          "across the region, and cost discipline remained a priority for every team. ")
+
+
+@pytest.fixture()
+def diluted(tmp_path: Path) -> Path:
+    """Page 1: a short summary naming the terms; page 2: a long page whose one
+    paragraph holds the fact."""
+    md = tmp_path / "report.md"
+    md.write_text(
+        "<!-- page: 1 -->\n\n## Highlights\n\nValue of new business by market and "
+        "channel (Vietnam, agency) is shown on the market pages. " + FILLER * 3 + "\n\n"
+        "<!-- page: 2 -->\n\n## Markets\n\n" + (FILLER * 4 + "\n\n") * 6
+        + "### Vietnam\n\nIn Vietnam, the agency channel's value of new business was 187 "
+        "million; new business from agency grew as Vietnam agents gained value.\n\n"
+        + (FILLER * 4 + "\n\n") * 6,
+        encoding="utf-8")
+    store = tmp_path / "store"
+    index_markdown(md, store)
+    return store
+
+
+def test_passage_mode_beats_length_dilution(diluted: Path) -> None:
+    query = "Vietnam agency value of new business"
+    page = bm25.search(diluted, query, top_k=5, match="page")
+    assert page.match == "page" and [h.page for h in page.hits] == [1, 2]
+    passage = bm25.search(diluted, query, top_k=5, match="passage")
+    assert passage.match == "passage" and [h.page for h in passage.hits] == [2, 1]
+    top = passage.hits[0]
+    assert "187" in top.snippet and "**Vietnam**" in top.snippet     # the passage's snippet
+    assert top.section.endswith("Vietnam")
+    # the page score can be mixed back in
+    mixed = bm25.search(diluted, query, top_k=5, match="passage", page_weight=100.0)
+    assert [h.page for h in mixed.hits] == [1, 2]
+
+
+def test_passage_mode_returns_each_page_once(store: Path) -> None:
+    hits = bm25.search(store, "2023 2022 dividend", top_k=20, match="passage").hits
+    keys = [(h.doc_id, h.page) for h in hits]
+    assert keys and len(keys) == len(set(keys))
+    assert [h.score for h in hits] == sorted((h.score for h in hits), reverse=True)
+
+
+def test_match_from_environment(store: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(bm25.MATCH_ENV, "passage")
+    assert bm25.resolve_match() == "passage" and bm25.resolve_match("page") == "page"
+    assert bm25.search(store, "dividend").match == "passage"
+    monkeypatch.setenv(bm25.MATCH_ENV, "chunk")
+    with pytest.raises(ValueError, match="SUPERINDEX_BM25_MATCH"):
+        bm25.resolve_match()
+    monkeypatch.delenv(bm25.MATCH_ENV)
+    assert bm25.resolve_match() == "page"
+
+
+def test_v1_index_is_rebuilt_with_passages(tmp_path: Path) -> None:
+    md = tmp_path / "doc.md"
+    md.write_text("# A\n\nalpha beta\n", encoding="utf-8")
+    store = tmp_path / "store"
+    res = index_markdown(md, store)
+    index_file = store / "docs" / res.doc_id / "bm25.json"
+    old = json.loads(index_file.read_text(encoding="utf-8"))
+    del old["passages"]
+    old["version"] = 1                                        # an index from before passages
+    index_file.write_text(json.dumps(old), encoding="utf-8")
+
+    result = bm25.search(store, "alpha", match="passage")
+    assert result.built == ["doc.md"] and result.hits
+    rebuilt = json.loads(index_file.read_text(encoding="utf-8"))
+    assert rebuilt["version"] == 2 and rebuilt["passages"]["postings"]["alpha"] == [0, 1]
+    assert bm25.search(store, "alpha", match="passage").built == []
+
+
+def test_search_cli_match_flag(diluted: Path) -> None:
+    query = "Vietnam agency value of new business"
+    out = run_cli("search", query, "--store", str(diluted), "--match", "passage", "--json")
+    assert out.returncode == 0, out.stderr
+    assert [h["page"] for h in json.loads(out.stdout)] == [2, 1]
+    out = run_cli("search", query, "--store", str(diluted), "--json")
+    assert [h["page"] for h in json.loads(out.stdout)] == [1, 2]
+    out = run_cli("search", query, "--store", str(diluted), "--match", "chunk")
+    assert out.returncode == 2
+
+
+def test_tool_reports_match(diluted: Path, installed: None,
+                            monkeypatch: pytest.MonkeyPatch) -> None:
+    from pageindex import agent_tools
+
+    monkeypatch.setenv(bm25.MATCH_ENV, "passage")
+    payload, err = _call(agent_tools._tool_specs(_client(diluted)),
+                         {"query": "Vietnam agency value of new business"})
+    assert not err and payload["match"] == "passage"
+    assert payload["results"][0]["page"] == 2 and "187" in payload["results"][0]["snippet"]

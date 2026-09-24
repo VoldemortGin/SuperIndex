@@ -244,3 +244,77 @@ def test_cmd_batch_limit_and_empty_store(tmp_path: Path, store: Path,
     assert batch.cmd_batch(_args(qfile, store, tmp_path / "o", limit=2)) == 0
     assert [q for q, _ in fake.calls] == ["one?", "two?"]
     assert batch.cmd_batch(_args(qfile, tmp_path / "empty", tmp_path / "o2")) == 1
+
+
+# ───────────────────────────────────────────────────────────── retrieval only
+def test_gold_pages() -> None:
+    def q(**extra: Any) -> batch.Question:
+        return batch.Question("Q", "?", extra=extra)
+
+    assert batch.gold_pages(q()) is None
+    assert batch.gold_pages(q(page=3)) == {3}
+    assert batch.gold_pages(q(pages=[2, "5"])) == {2, 5}
+    assert batch.gold_pages(q(pages="1, 4-6")) == {1, 4, 5, 6}
+    with pytest.raises(ValueError, match="bad page"):
+        batch.gold_pages(q(pages="x"))
+
+
+def test_retrieval_metrics() -> None:
+    records = [{"judge": "expected", "rank": 1}, {"judge": "pages", "rank": 2},
+               {"judge": "expected", "rank": 4}, {"judge": "error", "rank": None},
+               {"judge": None, "rank": None}]                 # not judged: left out
+    m = batch.retrieval_metrics(records, top_k=5)
+    assert m["questions"] == 4
+    assert (m["recall@1"], m["recall@3"], m["recall@5"]) == (0.25, 0.5, 0.75)
+    assert m["mrr"] == pytest.approx((1 + 1 / 2 + 1 / 4) / 4)
+    assert set(batch.retrieval_metrics(records, top_k=3)) == {"questions", "recall@1",
+                                                              "recall@3", "mrr"}
+    assert batch.retrieval_metrics([], 5)["mrr"] == 0.0
+
+
+def test_run_retrieval_judges_by_expected_or_pages(store: Path) -> None:
+    from pageindex.local_store import DocStore
+
+    docs = DocStore(str(store)).list_metas()
+    scope = batch._scope(docs, ["di_native_excerpt"])
+    q = batch.Question("A", "末期股息", expected="113.75 港仙")
+    rec = batch.run_retrieval(store, q, scope, top_k=3)
+    assert rec["judge"] == "expected" and rec["rank"] == 1 and rec["hits"][0]["relevant"]
+    assert rec["match"] == "page" and rec["hits"][0]["page"] == 2
+
+    q = batch.Question("B", "末期股息", expected="113.75", extra={"pages": [4]})
+    rec = batch.run_retrieval(store, q, scope, top_k=3, match="passage")
+    assert rec["judge"] == "pages" and rec["match"] == "passage"
+    assert rec["rank"] == next((i for i, h in enumerate(rec["hits"], 1) if h["page"] == 4), None)
+
+    rec = batch.run_retrieval(store, batch.Question("C", "末期股息"), scope, top_k=3)
+    assert rec["judge"] is None and rec["rank"] is None
+
+
+def test_cmd_batch_retrieval_only(tmp_path: Path, store: Path,
+                                  monkeypatch: pytest.MonkeyPatch,
+                                  capsys: pytest.CaptureFixture[str]) -> None:
+    qfile = tmp_path / "q.jsonl"
+    qfile.write_text("\n".join(json.dumps(x, ensure_ascii=False) for x in [
+        {"id": "A", "question": "final dividend", "expected": "108.00",
+         "doc": "aia_ar2021_excerpt"},
+        {"id": "B", "question": "末期股息", "expected": "113.75", "doc": "di_native_excerpt"},
+        {"id": "C", "question": "zzzqqq", "expected": "1"},
+        {"id": "D", "question": "missing doc?", "expected": "1", "doc": "no_such_doc"},
+    ]) + "\n", encoding="utf-8")
+
+    def no_llm(*a: Any, **k: Any) -> None:
+        raise AssertionError("retrieval-only must not build an LLM client")
+
+    monkeypatch.setattr(cli, "make_client", no_llm)
+    out = tmp_path / "out"
+    args = _args(qfile, store, out, retrieval_only=True, top_k=3, match="passage")
+    assert batch.cmd_batch(args) == 0
+    recs = batch.read_results(out)
+    assert recs["A"]["rank"] == 1 and recs["B"]["rank"] == 1 and recs["C"]["rank"] is None
+    assert recs["A"]["match"] == "passage" and recs["A"]["top_k"] == 3
+    assert "no_such_doc" in recs["D"]["error"] and recs["D"]["judge"] == "error"
+    summary = (out / batch.SUMMARY_FILE).read_text(encoding="utf-8")
+    assert "纯检索评测" in summary and "`passage`" in summary
+    assert "| recall@1 | recall@3 | mrr |" in summary and "| 0.500 | 0.500 | 0.500 |" in summary
+    assert "recall@1 0.500" in capsys.readouterr().out

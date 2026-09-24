@@ -10,6 +10,12 @@ Every question is answered like `ask` (same client, `search_pages` included),
 non-streamed, with a per-question timeout; one failure never stops the run.
 Results go to `<out>/results.jsonl` (one record per question, appended as they
 finish, so `--resume` can skip what is done) and `<out>/summary.md`.
+
+`--retrieval-only` needs no LLM: each question text goes to the keyword search
+(`superindex.bm25`, `--match`), and a top-k page counts as relevant when it is
+one of the question's `pages` (e.g. ``[12, 13]`` or ``"12-13"``; `page` works
+too), or else when its text holds the expected answer (same rule as the rough
+score). The summary reports recall@1/3/5 and MRR.
 """
 from __future__ import annotations
 
@@ -26,11 +32,13 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
+from superindex import bm25
 from superindex.runtime import ConfigError, app_dir
 
 RESULTS_FILE = "results.jsonl"
 SUMMARY_FILE = "summary.md"
 ALL_DOCS = {"", "ALL", "*"}
+RECALL_AT = (1, 3, 5)
 
 
 @dataclass
@@ -201,6 +209,110 @@ def run_question(client: Any, q: Question, scope: str | list[str] | None, *,
     }
 
 
+# ───────────────────────────────────────────────────────────── retrieval only
+def gold_pages(q: Question) -> set[int] | None:
+    """The question's relevant pages (`pages` or `page`: a number, a list, or
+    text such as ``"12, 14-15"``), or None when it names none."""
+    raw = q.extra.get("pages", q.extra.get("page"))
+    if raw is None:
+        return None
+    items = raw if isinstance(raw, list) else re.split(r"[,;\s]+", str(raw))
+    pages: set[int] = set()
+    for item in items:
+        text = str(item).strip()
+        if not text:
+            continue
+        lo, _, hi = text.partition("-")
+        try:
+            pages.update(range(int(lo), int(hi or lo) + 1))
+        except ValueError:
+            raise ValueError(f"question {q.id}: bad page {item!r}") from None
+    return pages or None
+
+
+def run_retrieval(store: Path, q: Question, scope: list[str] | None, *, top_k: int,
+                  match: str | None = None, page_weight: float = bm25.PAGE_WEIGHT,
+                  texts: dict[str, list[str]] | None = None) -> dict[str, Any]:
+    """Search one question and rank its hits: `rank` is the position of the
+    first relevant page (None if none in the top k)."""
+    from pageindex.local_store import DocStore
+
+    t0 = time.time()
+    result = bm25.search(store, q.question, doc_ids=scope, top_k=top_k, match=match,
+                         page_weight=page_weight)
+    gold = gold_pages(q)
+    judge = "pages" if gold is not None else ("expected" if q.expected else None)
+    texts = {} if texts is None else texts
+    hits: list[dict[str, Any]] = []
+    rank = None
+    for i, h in enumerate(result.hits, start=1):
+        if gold is not None:
+            relevant = h.page in gold
+        elif q.expected:
+            if h.doc_id not in texts:
+                texts[h.doc_id] = bm25._page_texts(DocStore(str(store)).get_pages(h.doc_id) or [])
+            page = texts[h.doc_id][h.page - 1] if h.page <= len(texts[h.doc_id]) else ""
+            relevant = bool((score(q.expected, bm25.plain_text(page)) or {}).get("hit"))
+        else:
+            relevant = False
+        if relevant and rank is None:
+            rank = i
+        hits.append({"doc_name": h.doc_name, "page": h.page, "score": round(h.score, 3),
+                     "relevant": relevant, "snippet": h.snippet})
+    return {"id": q.id, "question": q.question, "doc": q.doc, "expected": q.expected,
+            **q.extra, "scope": scope, "match": result.match, "top_k": top_k,
+            "judge": judge, "rank": rank if judge else None, "hits": hits, "error": None,
+            "seconds": round(time.time() - t0, 3)}
+
+
+def retrieval_metrics(records: list[dict[str, Any]], top_k: int) -> dict[str, Any]:
+    """recall@k (k in 1/3/5 up to `top_k`, and `top_k`) and MRR over the
+    questions that can be judged; an errored question counts as a miss."""
+    judged = [r for r in records if r.get("judge")]
+    n = len(judged)
+    ranks = [r.get("rank") for r in judged]
+    out: dict[str, Any] = {"questions": n}
+    for k in sorted({k for k in RECALL_AT if k <= top_k} | {top_k}):
+        out[f"recall@{k}"] = sum(1 for x in ranks if x and x <= k) / n if n else 0.0
+    out["mrr"] = sum(1 / x for x in ranks if x) / n if n else 0.0
+    return out
+
+
+def write_retrieval_summary(records: list[dict[str, Any]], path: Path,
+                            meta: dict[str, Any]) -> dict[str, Any]:
+    top_k = int(meta.get("top_k") or 5)
+    metrics = retrieval_metrics(records, top_k)
+    names = [k for k in metrics if k != "questions"]
+    lines = [
+        f"# 纯检索评测 — {meta.get('started', '')}",
+        "",
+        f"- 题集：`{meta.get('questions', '')}`",
+        f"- store：`{meta.get('store', '')}`",
+        f"- 匹配模式（match）：`{meta.get('match', '')}`　top-k：{top_k}",
+        (f"- 题数：{len(records)}　可判定：{metrics['questions']}"
+         f"　错误：{sum(1 for r in records if r.get('error'))}"),
+        "",
+        "| " + " | ".join(names) + " |",
+        "|" + "---|" * len(names),
+        "| " + " | ".join(f"{metrics[k]:.3f}" for k in names) + " |",
+        "",
+        ("> 判定：题目给了 `pages`（或 `page`）时，命中页须是其中之一；否则页面文本须包含"
+         "期望答案（规则同粗评分：期望中的数字全部出现，或无数字时整句包含）。"
+         "名次 = 第一个相关页在结果中的位置，MRR 取其倒数（top-k 外记 0）。"),
+        "",
+        "| # | ID | 问题 | 判定 | 名次 | 结果页（✓ 相关） | 错误 |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for i, r in enumerate(records, start=1):
+        pages = ", ".join(f"{h['doc_name']}:{h['page']}{' ✓' if h.get('relevant') else ''}"
+                          for h in r.get("hits") or [])
+        lines.append(f"| {i} | {_cell(r.get('id'), 20)} | {_cell(r.get('question'), 60)} "
+                     f"| {r.get('judge') or '-'} | {r.get('rank') or '-'} "
+                     f"| {_cell(pages, 160)} | {_cell(r.get('error'), 60)} |")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return metrics
+
+
 # ───────────────────────────────────────────────────────────── output
 def read_results(out_dir: Path) -> dict[str, dict[str, Any]]:
     """The last record per question id in `results.jsonl`."""
@@ -335,7 +447,11 @@ def cmd_batch(args: argparse.Namespace) -> int:
     if not docs:
         print(f"no documents in {store} — run `index` first")
         return 1
-    client = make_client(settings, store, instructions=args.instructions)
+    retrieval = bool(getattr(args, "retrieval_only", False))
+    top_k = max(1, int(getattr(args, "top_k", 5) or 5))
+    match = bm25.resolve_match(getattr(args, "match", None))
+    client = None if retrieval else make_client(settings, store, instructions=args.instructions)
+    texts: dict[str, list[str]] = {}
 
     out_dir = _out_dir(args)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -349,7 +465,10 @@ def cmd_batch(args: argparse.Namespace) -> int:
     print(f"store     : {store}")
     print(f"questions : {qfile} ({len(questions)}; {len(done)} done, {len(todo)} to run)")
     print(f"out       : {out_dir}")
-    print(f"timeout   : {args.timeout:g}s  concurrency: {args.concurrency}", flush=True)
+    if retrieval:
+        print(f"retrieval : only (no LLM)  match: {match}  top-k: {top_k}", flush=True)
+    else:
+        print(f"timeout   : {args.timeout:g}s  concurrency: {args.concurrency}", flush=True)
 
     lock = threading.Lock()
     finished = [0]
@@ -359,18 +478,36 @@ def cmd_batch(args: argparse.Namespace) -> int:
         try:
             scope_ids = _scope(docs, args.doc or q.doc) if (args.doc or q.doc) else None
             scope = scope_ids[0] if scope_ids and len(scope_ids) == 1 else scope_ids
-            record = run_question(client, q, scope, timeout=args.timeout,
-                                  reasoning_effort=settings.reasoning_effort)
+            if retrieval:
+                record = run_retrieval(store, q, scope_ids, top_k=top_k, match=match,
+                                       texts=texts)
+            else:
+                record = run_question(client, q, scope, timeout=args.timeout,
+                                      reasoning_effort=settings.reasoning_effort)
         except Exception as exc:  # noqa: BLE001 - e.g. an unknown doc: record it
-            record = {"id": q.id, "question": q.question, "doc": q.doc,
-                      "expected": q.expected, **q.extra, "scope": None, "answer": "",
-                      "error": f"{type(exc).__name__}: {exc}", "seconds": 0.0,
-                      "llm_turns": 0, "tool_calls": [], "pages_read": [],
-                      "score": score(q.expected, "")}
+            error = f"{type(exc).__name__}: {exc}"
+            if retrieval:
+                record = {"id": q.id, "question": q.question, "doc": q.doc,
+                          "expected": q.expected, **q.extra, "scope": None, "match": match,
+                          "top_k": top_k, "judge": "error", "rank": None, "hits": [],
+                          "error": error, "seconds": 0.0}
+            else:
+                record = {"id": q.id, "question": q.question, "doc": q.doc,
+                          "expected": q.expected, **q.extra, "scope": None, "answer": "",
+                          "error": error, "seconds": 0.0,
+                          "llm_turns": 0, "tool_calls": [], "pages_read": [],
+                          "score": score(q.expected, "")}
         with lock:
             with (out_dir / RESULTS_FILE).open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(record, ensure_ascii=False) + "\n")
             finished[0] += 1
+            if retrieval:
+                status = "ERROR " + record["error"] if record["error"] else \
+                    f"rank {record['rank'] or '-'}"
+                pages = ", ".join(f"{h['doc_name']}:{h['page']}" for h in record["hits"])
+                print(f"[{finished[0]}/{len(todo)}] {q.id}  {status}  pages: {pages or '-'}",
+                      flush=True)
+                return
             status = "ERROR " + record["error"] if record["error"] else _hit_mark(record)
             print(f"[{finished[0]}/{len(todo)}] {q.id}  {record['seconds']:.1f}s  "
                   f"{status}  pages: {', '.join(record['pages_read']) or '-'}", flush=True)
@@ -384,6 +521,14 @@ def cmd_batch(args: argparse.Namespace) -> int:
 
     latest = read_results(out_dir)
     records = [latest[q.id] for q in questions if q.id in latest]
+    if retrieval:
+        metrics = write_retrieval_summary(records, out_dir / SUMMARY_FILE, {
+            "started": started, "questions": str(qfile), "store": str(store),
+            "match": match, "top_k": top_k})
+        print(f"\n{metrics['questions']} judged question(s): "
+              + "  ".join(f"{k} {v:.3f}" for k, v in metrics.items() if k != "questions"))
+        print(f"summary   : {out_dir / SUMMARY_FILE}")
+        return 0
     write_summary(records, out_dir / SUMMARY_FILE, {
         "started": started, "questions": str(qfile), "store": str(store),
         "chat_model": settings.chat_model, "wall_seconds": wall,

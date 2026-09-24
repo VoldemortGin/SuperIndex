@@ -96,6 +96,7 @@ def run_search(client: Any, arguments: dict[str, Any],
     payload = {
         "success": True,
         "query": query,
+        "match": result.match,
         "documents_searched": result.searched,
         "results": hits,
         "next_steps": {

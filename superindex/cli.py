@@ -5,6 +5,10 @@
     python -m superindex search "final dividend 2021" [--doc NAME_OR_ID ...] [--top-k 5]
     python -m superindex serve [--port 8787] [--store DIR]
     python -m superindex batch questions.jsonl [--out DIR] [--concurrency 1] [--resume]
+    python -m superindex batch questions.jsonl --retrieval-only [--top-k 5]
+
+`search`, `ask`, `serve` and `batch` take `--match page|passage` (keyword
+search scoring, SUPERINDEX_BM25_MATCH; see `superindex.bm25`).
 
 Models and endpoints come from `.env` (working directory, then the
 executable's folder) or the CLI flags; see `.env.example`.
@@ -13,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 import warnings
@@ -37,6 +42,12 @@ def _add_llm_flags(ap: argparse.ArgumentParser) -> None:
     g.add_argument("--api-key", help="key for --base-url (PAGEINDEX_API_KEY_OVERRIDE)")
     g.add_argument("--reasoning-effort",
                    help='chat reasoning effort (PAGEINDEX_REASONING_EFFORT); "" sends none')
+
+
+def _add_match_flag(ap: argparse.ArgumentParser) -> None:
+    ap.add_argument("--match", choices=("page", "passage"),
+                    help="keyword search scoring: whole pages or their best passage "
+                         "(SUPERINDEX_BM25_MATCH, default page)")
 
 
 def _settings(args: argparse.Namespace) -> LLMSettings:
@@ -235,6 +246,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--store", help="store directory (SUPERINDEX_STORE)")
     p.add_argument("--instructions", help="extra standing guidance for the answering agent")
     p.add_argument("-v", "--verbose", action="store_true", help="print tool calls to stderr")
+    _add_match_flag(p)
     _add_llm_flags(p)
     p.set_defaults(func=cmd_ask)
 
@@ -245,6 +257,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--top-k", type=int, default=5, help="pages to show (default 5)")
     p.add_argument("--store", help="store directory (SUPERINDEX_STORE)")
     p.add_argument("--json", action="store_true", help="print the hits as JSON")
+    _add_match_flag(p)
     p.set_defaults(func=cmd_search)
 
     p = sub.add_parser("serve", help="start the web chat UI over the store")
@@ -252,6 +265,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--store", help="store directory (SUPERINDEX_STORE)")
     p.add_argument("--instructions", help="replace the web UI's standing guidance")
+    _add_match_flag(p)
     _add_llm_flags(p)
     p.set_defaults(func=cmd_serve)
 
@@ -270,6 +284,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--resume", action="store_true",
                    help="skip questions already answered in --out (default: the latest run)")
     p.add_argument("--instructions", help="extra standing guidance for the answering agent")
+    p.add_argument("--retrieval-only", action="store_true",
+                   help="no LLM: only run the keyword search per question and score "
+                        "whether a top-k page holds the expected answer (recall@k, MRR)")
+    p.add_argument("--top-k", type=int, default=5,
+                   help="pages searched per question with --retrieval-only (default 5)")
+    _add_match_flag(p)
     _add_llm_flags(p)
     p.set_defaults(func=cmd_batch)
     return ap
@@ -285,6 +305,15 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     from pageindex.errors import PageIndexAPIError
 
+    from superindex import bm25
+
+    if getattr(args, "match", None):
+        os.environ[bm25.MATCH_ENV] = args.match    # read by `search_pages` too
+    try:
+        bm25.resolve_match()
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     try:
         return args.func(args)
     except ConfigError as exc:
