@@ -194,7 +194,6 @@ regex==2026.9.10
 requests==2.34.2
     # via
     #   openai-agents
-    #   superindex
     #   tiktoken
 rpds-py==2026.6.3
     # via
@@ -249,9 +248,7 @@ typing-inspection==0.4.4
     #   pydantic
     #   pydantic-settings
 urllib3==2.8.0
-    # via
-    #   requests
-    #   superindex
+    # via requests
 uvicorn==0.53.0 ; sys_platform != 'emscripten'
     # via mcp
 websockets==16.1.1

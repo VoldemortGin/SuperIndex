@@ -8,7 +8,5 @@ licensed under the MIT License (full text in LICENSE).
 superindex/engine/ is based on PageIndex v0.2.10, upstream commit 71714e8.
 It has been renamed (package `pageindex` -> `superindex.engine`, product name
 PageIndex -> SuperIndex in code and prompts, e.g. PageIndexClient ->
-SuperIndexClient) and modified. References to the hosted "PageIndex cloud"
-service, its API key (PAGEINDEX_API_KEY) and endpoints are kept as-is: they
-name VectifyAI's service. SuperIndex is not affiliated with or endorsed by
-Vectify AI.
+SuperIndexClient) and modified; the client for VectifyAI's hosted service
+was removed. SuperIndex is not affiliated with or endorsed by Vectify AI.

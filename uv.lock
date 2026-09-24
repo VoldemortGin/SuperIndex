@@ -2339,10 +2339,8 @@ dependencies = [
     { name = "pywin32", marker = "sys_platform == 'win32'" },
     { name = "pyyaml" },
     { name = "regex" },
-    { name = "requests" },
     { name = "sortedcontainers" },
     { name = "tiktoken" },
-    { name = "urllib3" },
 ]
 
 [package.dev-dependencies]
@@ -2371,10 +2369,8 @@ requires-dist = [
     { name = "pywin32", marker = "sys_platform == 'win32'", specifier = ">=311" },
     { name = "pyyaml", specifier = ">=6.0,<7" },
     { name = "regex", specifier = ">=2024.0.0" },
-    { name = "requests", specifier = ">=2.28,<3" },
     { name = "sortedcontainers", specifier = ">=2.4,<3" },
     { name = "tiktoken", specifier = ">=0.14.0,<0.15" },
-    { name = "urllib3", specifier = ">=1.26,<3" },
 ]
 
 [package.metadata.requires-dev]

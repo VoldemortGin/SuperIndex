@@ -678,7 +678,7 @@ pkill -f "webapp/server.py" && nohup $PY -u webapp/server.py > results/webapp.lo
 **import 改写**
 
 - `pageindex` → `superindex.engine`（内部导入一并改写）；产品名 PageIndex → SuperIndex：`PageIndexClient` → `SuperIndexClient`、`PageIndexLocalClient` → `SuperIndexLocalClient`、`PageIndexAPIError` → `SuperIndexAPIError`；`version("pageindex")` → `version("superindex")`。
-- 保留原名（指 VectifyAI 托管云服务）：`PageIndexCloudClient`、"PageIndex cloud" / MCP 相关措辞、`PAGEINDEX_API_KEY`、`api.pageindex.ai` 等。
+- VectifyAI 托管云客户端（`PageIndexCloudClient`、`PAGEINDEX_API_KEY`、`api.pageindex.ai` 等）已从引擎删除，见 `docs/engine/UPSTREAM.md`「Trimmed to the local mode」。
 - 保留原名（存储/输出兼容）：本地存储目录 `.pageindex`、`pi-` 文档 id、`pageindex-citation-NN` 锚点——旧文档库无需重建。
 
 **环境变量改名**（新名优先；只设旧名时仍生效，并在 stderr 提示一次"已更名"）
@@ -691,7 +691,7 @@ pkill -f "webapp/server.py" && nohup $PY -u webapp/server.py > results/webapp.lo
 | `PAGEINDEX_API_KEY_OVERRIDE` | `SUPERINDEX_API_KEY_OVERRIDE` |
 | `PAGEINDEX_REASONING_EFFORT` | `SUPERINDEX_REASONING_EFFORT` |
 
-`PAGEINDEX_API_KEY`（VectifyAI 云服务的 key，本 CLI 不用）不改名。映射在 `superindex/runtime.py`。
+映射在 `superindex/runtime.py`。
 
 **可配置指令与去品牌**
 
@@ -709,7 +709,6 @@ pkill -f "webapp/server.py" && nohup $PY -u webapp/server.py > results/webapp.lo
 
 - `[project].dependencies` 写版本区间（不钉死），便于与其他工具共存；快速迭代的 0.x 库上限卡到下一个 minor。
 - `uv.lock` 锁定实测版本组合；`packaging/requirements-bundle.txt` 由 `uv export --frozen --no-default-groups --group build --no-hashes --no-emit-project -o packaging/requirements-bundle.txt` 生成，不要手改。
-- `anthropic` / `claude` 为可选 extras，CLI 不用。
 
 **打包 / 发布流程**
 
