@@ -16,13 +16,13 @@ powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1
 powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1 -OneFile
 ```
 
-脚本会：检查 uv → `uv sync --locked --no-default-groups --group build` 到独立环境 `build\venv-bundle`（严格按 `uv.lock`，不含 dev/pdf 组）
+脚本会：检查 uv → `uv sync --locked --no-default-groups --group build` 到独立环境 `build\venv-bundle`（严格按 `uv.lock`，不含 dev/pageindex 组）
 → `uv run pyinstaller` → 冒烟测试（`--help`、`index --no-summary`，均在代理指向无效地址的"断网"环境下）
 → 生成 `dist\superindex-windows-x64.zip`。
 
 macOS 上同等流程：`bash packaging/build_macos.sh`（只能产出 macOS 版，不能交叉编译 Windows）。
 
-**依赖清单**：唯一来源是仓库根的 `pyproject.toml` + `uv.lock`（运行时依赖；`build` 组 = PyInstaller；`dev` 组 = pytest/ruff；`pdf` 组 = PageIndex 的 PDF 解析，仅实验脚本用）。
+**依赖清单**：唯一来源是仓库根的 `pyproject.toml` + `uv.lock`（运行时依赖；`build` 组 = PyInstaller；`dev` 组 = pytest/ruff；`pageindex` 组 = PageIndex 的 PDF 解析，仅实验脚本用）。
 `packaging\requirements-bundle.txt` 是给**没有 uv、只能用 pip** 时的兜底，由 uv 生成，不要手改；改了依赖后重新生成：
 ```
 uv lock
