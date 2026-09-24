@@ -188,7 +188,7 @@ MIT 许可。检索引擎（`superindex.engine`）衍生自 [VectifyAI/PageIndex
 git clone https://github.com/VoldemortGin/SuperIndex.git
 cd SuperIndex
 uv sync                                   # 建 .venv，superindex 以 editable 方式安装，并装 dev、build 依赖组
-uv run superindex --help                  # 或：uv run scripts/superindex.py --help
+uv run superindex --help                  # 或：uv run python scripts/si.py --help
 uv run pytest tests -q
 ```
 
@@ -207,7 +207,7 @@ uv run pytest tests -q
 │   ├── nav/                  # 两级导航：语料目录 → 文档 → 章节
 │   ├── webapp/               # serve 的网页服务与 static/
 │   └── bm25.py, prefetch.py, calc.py, page_images.py, batch.py, ...
-├── scripts/                  # 实验与辅助脚本（superindex.py、06_azure_extract.py 等）
+├── scripts/                  # 实验与辅助脚本（si.py 源码入口、06_azure_extract.py 等；一律 uv run python scripts/<name>.py 运行）
 ├── samples/                  # 样例 Markdown 与题集
 ├── tests/                    # 离线测试
 ├── packaging/                # PyInstaller 打包脚本
@@ -232,9 +232,9 @@ powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1  # Windows
 
 ```bash
 # 检查配置（并只分析一份 PDF 的第 1 页做冒烟测试；--only 按文件名片段筛选）
-uv run scripts/06_azure_extract.py ./pdfs --check --only AR2022
+uv run python scripts/06_azure_extract.py ./pdfs --check --only AR2022
 # 把 PDF 抽成 Markdown 落盘，再建库
-uv run scripts/06_azure_extract.py ./pdfs --out ./corpus_md
+uv run python scripts/06_azure_extract.py ./pdfs --out ./corpus_md
 uv run superindex index ./corpus_md --pdf-dir ./pdfs
 ```
 

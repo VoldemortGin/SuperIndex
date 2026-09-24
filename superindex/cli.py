@@ -7,7 +7,7 @@
     superindex batch questions.jsonl [--out DIR] [--concurrency 1] [--resume]
     superindex batch questions.jsonl --retrieval-only [--top-k 5]
 
-(From a source checkout: `uv run scripts/superindex.py ...`.)
+(From a source checkout: `uv run python scripts/si.py ...`.)
 
 `search`, `ask`, `serve` and `batch` take `--match page|passage` (keyword
 search scoring, SUPERINDEX_BM25_MATCH; see `superindex.bm25`). `ask`, `serve`

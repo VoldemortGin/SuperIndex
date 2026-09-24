@@ -7,7 +7,7 @@ layout statistics without any LLM. We run it with summary=False and
 optimize=False so no API key is required.
 
 Usage:
-    python scripts/01_build_index.py [--with-llm]
+    uv run python scripts/01_build_index.py [--with-llm]
 """
 from __future__ import annotations
 

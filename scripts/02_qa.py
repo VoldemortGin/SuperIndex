@@ -7,7 +7,7 @@ summaries and the chat/retrieval agent call a model.
 
 Usage:
     export OPENAI_API_KEY=sk-...
-    python scripts/02_qa.py --doc-id <id> --questions scripts/questions.json
+    uv run python scripts/02_qa.py --doc-id <id> --questions scripts/questions.json
 
 The client keeps its document store in ./.pageindex by default.
 """

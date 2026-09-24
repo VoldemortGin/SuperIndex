@@ -3,13 +3,13 @@
 Stage 0 — extract PDFs to Markdown with Azure AI Document Intelligence.
 
     # validate the .env config and analyse just page 1 of one PDF (cheap smoke test)
-    python scripts/06_azure_extract.py data/aia_reports --check
+    uv run python scripts/06_azure_extract.py data/aia_reports --check
 
     # convert everything
-    python scripts/06_azure_extract.py data/aia_reports --out corpus_md
+    uv run python scripts/06_azure_extract.py data/aia_reports --out corpus_md
 
     # convert one file, first 5 pages only
-    python scripts/06_azure_extract.py data/aia_reports --out corpus_md \
+    uv run python scripts/06_azure_extract.py data/aia_reports --out corpus_md \
         --only FY2021 --pages 1-5 --force
 
     # then build the navigation index over the Markdown

@@ -14,9 +14,9 @@ This script simulates that extraction exactly and reports, per file:
 and routes each file to a processing path.
 
 Usage:
-    python scripts/04_md_audit.py samples/
-    python scripts/04_md_audit.py samples/ --json
-    python scripts/04_md_audit.py a.md b.md
+    uv run python scripts/04_md_audit.py samples/
+    uv run python scripts/04_md_audit.py samples/ --json
+    uv run python scripts/04_md_audit.py a.md b.md
 """
 from __future__ import annotations
 

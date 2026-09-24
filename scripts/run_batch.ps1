@@ -25,7 +25,7 @@ Set-Location $Root
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     throw 'uv not found. Install it, then open a new PowerShell: powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"'
 }
-$Cli = @("run", "scripts/superindex.py")
+$Cli = @("run", "python", "scripts/si.py")
 
 function Invoke-Native {
     param([string]$Exe, [string[]]$Arguments)

@@ -27,12 +27,12 @@ if [[ "${SUMMARY:-0}" != "1" ]]; then INDEX_ARGS=(--no-summary); fi
 
 for md in "${MD[@]}"; do
     echo "== index $md"
-    uv run scripts/superindex.py index "$md" ${STORE_ARGS[@]+"${STORE_ARGS[@]}"} ${INDEX_ARGS[@]+"${INDEX_ARGS[@]}"}
+    uv run python scripts/si.py index "$md" ${STORE_ARGS[@]+"${STORE_ARGS[@]}"} ${INDEX_ARGS[@]+"${INDEX_ARGS[@]}"}
 done
 
 OUT="$ROOT/results/batch/$(date +%Y%m%d-%H%M%S)"
 echo "== batch $QUESTIONS"
-uv run scripts/superindex.py batch "$QUESTIONS" --out "$OUT" ${STORE_ARGS[@]+"${STORE_ARGS[@]}"} "$@"
+uv run python scripts/si.py batch "$QUESTIONS" --out "$OUT" ${STORE_ARGS[@]+"${STORE_ARGS[@]}"} "$@"
 
 echo
 echo "summary: $OUT/summary.md"

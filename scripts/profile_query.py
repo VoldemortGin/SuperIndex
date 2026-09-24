@@ -8,8 +8,8 @@ Measures three things that dominate response time:
   3. how many LLM round trips the agent makes
 
 Usage:
-    python scripts/profile_query.py
-    python scripts/profile_query.py --question "FY2021 的 VONB 是多少？" --docs FY2021
+    uv run python scripts/profile_query.py
+    uv run python scripts/profile_query.py --question "FY2021 的 VONB 是多少？" --docs FY2021
 """
 from __future__ import annotations
 

@@ -6,8 +6,8 @@ Used to establish ground truth for the retrieval test, independently of
 PageIndex itself (page text comes straight from pypdfium2).
 
 Usage:
-    python scripts/extract_text.py "value of new business"
-    python scripts/extract_text.py --doc FY2025 "dividend per share"
+    uv run python scripts/extract_text.py "value of new business"
+    uv run python scripts/extract_text.py --doc FY2025 "dividend per share"
 """
 from __future__ import annotations
 

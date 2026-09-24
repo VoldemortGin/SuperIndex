@@ -1,4 +1,4 @@
-"""Entry point for `python -m superindex`, `scripts/superindex.py` and a PyInstaller build.
+"""Entry point for `python -m superindex`, `scripts/si.py` and a PyInstaller build.
 
 Offline defaults are set before anything can import litellm, and
 `freeze_support()` runs first so a frozen Windows build does not re-enter the

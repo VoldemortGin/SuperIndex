@@ -24,7 +24,7 @@
    superindex batch D:\q.jsonl --concurrency 2    # 结果在当前目录的 results\batch\<时间戳>\
    ```
 
-下文 §4–§6 的命令写的是源码方式 `uv run scripts/superindex.py ...`；用 pip / uv tool 安装时，把它换成 `superindex ...` 即可，参数完全相同。
+下文 §4–§6 的命令写的是源码方式 `uv run python scripts/si.py ...`；用 pip / uv tool 安装时，把它换成 `superindex ...` 即可，参数完全相同。
 
 ## 最快上手：源码运行（公司电脑）
 
@@ -33,11 +33,11 @@
 3. `uv sync`（自动下载 Python 3.12 并按 `uv.lock` 装好依赖到 `.venv`）
 4. `Copy-Item .env.example .env`，按 [§3b](#3b-使用公司云端-llm-api非-ollama) 填公司 API（有企业代理/自签证书时一并配好）
 5. 连通自检：§3b 末尾的一行 litellm 调用输出 `OK`
-6. 建库（先不调 LLM）：`uv run scripts/superindex.py index D:\corpus_md --no-summary`（DI 产出的 Markdown 目录）
-7. 检索自检：`uv run scripts/superindex.py search "final dividend" --top-k 3`
-8. 对比两种匹配：`uv run scripts/superindex.py batch D:\q.jsonl --retrieval-only --match page`，再跑一次 `--match passage`，比较两份 `summary.md`
-9. 问答：`uv run scripts/superindex.py ask "..." -v`，或 `uv run scripts/superindex.py serve --port 8787`
-10. 端到端：`uv run scripts/superindex.py batch D:\q.jsonl --concurrency 2`；满意后再去掉 `--no-summary` 带摘要重建（`--force --concurrency 2`）
+6. 建库（先不调 LLM）：`uv run python scripts/si.py index D:\corpus_md --no-summary`（DI 产出的 Markdown 目录）
+7. 检索自检：`uv run python scripts/si.py search "final dividend" --top-k 3`
+8. 对比两种匹配：`uv run python scripts/si.py batch D:\q.jsonl --retrieval-only --match page`，再跑一次 `--match passage`，比较两份 `summary.md`
+9. 问答：`uv run python scripts/si.py ask "..." -v`，或 `uv run python scripts/si.py serve --port 8787`
+10. 端到端：`uv run python scripts/si.py batch D:\q.jsonl --concurrency 2`；满意后再去掉 `--no-summary` 带摘要重建（`--force --concurrency 2`）
 
 ## 1. 前置条件
 
@@ -60,13 +60,13 @@
 git clone https://github.com/VoldemortGin/SuperIndex.git
 cd SuperIndex
 uv sync
-uv run scripts/superindex.py --help
+uv run python scripts/si.py --help
 ```
 
 - `uv sync` 按 `pyproject.toml` + `uv.lock` 在仓库根建 `.venv`，把 `superindex` 本身以可编辑（editable）方式装进去，并默认装齐全部依赖组（`dev`：pytest、ruff；`build`：PyInstaller），无需再加 `--group`；跑测试：`uv run pytest tests -q`。只要运行时依赖：`uv sync --no-default-groups`。
 - 不需要激活 venv：`uv run ...` 自动使用 `.venv`（依赖有变会先自动同步）。
-- 检索引擎在 `superindex\engine\`，随包一起安装，**不需要**单独安装。`uv run scripts/superindex.py ...` 与 `uv run superindex ...` 等价。
-- 没有 uv、只能用 pip 时的兜底：`py -3.12 -m venv .venv` 后 `.\.venv\Scripts\python.exe -m pip install -r packaging\requirements-bundle.txt`，再用 `.\.venv\Scripts\python.exe scripts\superindex.py ...`。
+- 检索引擎在 `superindex\engine\`，随包一起安装，**不需要**单独安装。`uv run python scripts/si.py ...` 与 `uv run superindex ...` 等价。
+- 没有 uv、只能用 pip 时的兜底：`py -3.12 -m venv .venv` 后 `.\.venv\Scripts\python.exe -m pip install -r packaging\requirements-bundle.txt`，再 `.\.venv\Scripts\python.exe -m pip install --no-deps -e .` 把 superindex 本身装进去，然后用 `.\.venv\Scripts\python.exe scripts\si.py ...`。
 
 ## 3. 配置 `.env`
 
@@ -135,18 +135,18 @@ AZURE_API_VERSION=<门户里给的 api-version，如 2024-10-21>
 uv run python -c "from superindex.runtime import load_env, configure_litellm, LLMSettings; load_env(); configure_litellm(); import litellm; s = LLMSettings.resolve(); print(litellm.completion(model=s.require('chat'), messages=[{'role': 'user', 'content': 'Reply with OK'}], max_tokens=5, num_retries=0, **(s.index_backend() or {})).choices[0].message.content)"
 ```
 
-通了之后再用样例走一遍工具调用：`uv run scripts/superindex.py index samples\test_corpus_long\HarbourLife_AR2022.md --no-summary`，然后 `uv run scripts/superindex.py ask "港湾人寿董事会建议的末期股息是每股多少？" -v`（港湾人寿为虚构公司）。
+通了之后再用样例走一遍工具调用：`uv run python scripts/si.py index samples\test_corpus_long\HarbourLife_AR2022.md --no-summary`，然后 `uv run python scripts/si.py ask "港湾人寿董事会建议的末期股息是每股多少？" -v`（港湾人寿为虚构公司）。
 
 ## 4. 建库（index）
 
 Markdown（Azure DI 产出，或任意 `.md`）放哪都行，建议放仓库外的短路径，如 `D:\corpus_md\`。
 
 ```powershell
-uv run scripts/superindex.py index samples\di_native_excerpt.md --no-summary     # 单个文件
-uv run scripts/superindex.py index D:\corpus_md --no-summary                    # 整个目录（递归）
-uv run scripts/superindex.py index D:\corpus_md                                 # 带 LLM 摘要
-uv run scripts/superindex.py index D:\corpus_md --force                         # 强制重建
-uv run scripts/superindex.py index D:\corpus_md --store D:\si_store             # 指定文档库位置
+uv run python scripts/si.py index samples\di_native_excerpt.md --no-summary     # 单个文件
+uv run python scripts/si.py index D:\corpus_md --no-summary                    # 整个目录（递归）
+uv run python scripts/si.py index D:\corpus_md                                 # 带 LLM 摘要
+uv run python scripts/si.py index D:\corpus_md --force                         # 强制重建
+uv run python scripts/si.py index D:\corpus_md --store D:\si_store             # 指定文档库位置
 ```
 
 - `--no-summary`：不调 LLM，几秒建完，问答时模型靠目录树 + 关键词检索定位页面。先用它跑通。
@@ -157,11 +157,11 @@ uv run scripts/superindex.py index D:\corpus_md --store D:\si_store             
 ## 5. 自检与问答
 
 ```powershell
-uv run scripts/superindex.py search "final dividend" --top-k 3        # 关键词检索，不调 LLM
-uv run scripts/superindex.py ask "港湾人寿 2022 年新加坡的新业务价值是多少？" -v   # -v 打印工具调用
-uv run scripts/superindex.py ask "..." --doc HarbourLife              # 限定文档（名称片段即可）
-uv run scripts/superindex.py ask "..." --instructions-file D:\superindex\instructions.txt   # 自定义回答指令
-uv run scripts/superindex.py serve --port 8787                        # 浏览器打开 http://127.0.0.1:8787
+uv run python scripts/si.py search "final dividend" --top-k 3        # 关键词检索，不调 LLM
+uv run python scripts/si.py ask "港湾人寿 2022 年新加坡的新业务价值是多少？" -v   # -v 打印工具调用
+uv run python scripts/si.py ask "..." --doc HarbourLife              # 限定文档（名称片段即可）
+uv run python scripts/si.py ask "..." --instructions-file D:\superindex\instructions.txt   # 自定义回答指令
+uv run python scripts/si.py serve --port 8787                        # 浏览器打开 http://127.0.0.1:8787
 ```
 
 `search` 能搜到页面，说明建库正常；`ask` 若答非所问，先看 `-v` 输出的工具调用是否读到了正确页码。
@@ -171,10 +171,10 @@ uv run scripts/superindex.py serve --port 8787                        # 浏览�
 ## 6. 批量问答（batch）
 
 ```powershell
-uv run scripts/superindex.py batch samples\questions_sample.jsonl
-uv run scripts/superindex.py batch D:\my_questions.csv --concurrency 2 --timeout 300
-uv run scripts/superindex.py batch D:\q.jsonl --doc HarbourLife --limit 5   # 题集 doc 与库内文档名不一致时用 --doc 统一指定
-uv run scripts/superindex.py batch D:\my_questions.csv --resume   # 续跑最近一次，跳过已完成的题
+uv run python scripts/si.py batch samples\questions_sample.jsonl
+uv run python scripts/si.py batch D:\my_questions.csv --concurrency 2 --timeout 300
+uv run python scripts/si.py batch D:\q.jsonl --doc HarbourLife --limit 5   # 题集 doc 与库内文档名不一致时用 --doc 统一指定
+uv run python scripts/si.py batch D:\my_questions.csv --resume   # 续跑最近一次，跳过已完成的题
 ```
 
 题集格式：
@@ -195,8 +195,8 @@ uv run scripts/superindex.py batch D:\my_questions.csv --resume   # 续跑最近
 纯检索评测（不调 LLM，只看每题 BM25 召回的页是否含期望答案，秒级完成）：
 
 ```powershell
-uv run scripts/superindex.py batch D:\q.jsonl --retrieval-only --match page
-uv run scripts/superindex.py batch D:\q.jsonl --retrieval-only --match passage
+uv run python scripts/si.py batch D:\q.jsonl --retrieval-only --match page
+uv run python scripts/si.py batch D:\q.jsonl --retrieval-only --match passage
 ```
 
 `--match page`（默认）按整页打分；`passage` 按页内小段打分，长页多主题时更好。合成样例上两者总体接近，请在真实 DI 年报题集上各跑一次比较后再决定（`.env` 中 `SUPERINDEX_BM25_MATCH` 可设默认值）。
@@ -225,7 +225,7 @@ powershell -ExecutionPolicy Bypass -File scripts\run_batch.ps1 -Markdown D:\corp
 - **`uv` 不是可识别的命令**：装完 uv 后要重开 PowerShell（安装程序会把 `%USERPROFILE%\.local\bin` 加入 PATH）；装 uv 被执行策略拦住时用上面带 `-ExecutionPolicy ByPass` 的命令。
 - **中文乱码**：`superindex` 已把输出设为 UTF-8；控制台仍乱码时先执行 `chcp 65001`，或 `$env:PYTHONUTF8 = "1"`。题集/`.env` 用 UTF-8 保存（记事本“另存为”选 UTF-8）。
 - **长路径报错**：仓库和语料放短路径（如 `D:\SuperIndex`、`D:\corpus_md`）；或以管理员执行 `git config --system core.longpaths true` 并在组策略中启用 Win32 长路径。
-- **`ModuleNotFoundError`**：先 `uv sync` 装齐依赖；统一用 `uv run scripts/superindex.py ...` 或 `uv run superindex ...` 启动（在其他目录运行时加 `--project <仓库路径>`）；pip / uv tool 安装的直接用 `superindex ...`。
+- **`ModuleNotFoundError`**：先 `uv sync` 装齐依赖；统一用 `uv run python scripts/si.py ...` 或 `uv run superindex ...` 启动（在其他目录运行时加 `--project <仓库路径>`，且脚本写绝对路径：`uv run --project <仓库路径> python <仓库路径>\scripts\si.py ...`）；pip / uv tool 安装的直接用 `superindex ...`。
 - **Ollama 连不上**（`Connection refused`）：托盘里确认 Ollama 在运行；`curl.exe http://localhost:11434/api/tags` 应返回模型列表；`SUPERINDEX_BASE_URL` 与之一致；模型名要和 `ollama list` 完全一致（如 `ollama_chat/qwen2.5:7b`）。
 - **"does not support tools" / 不调用工具**：换支持 tool calling 的模型（qwen2.5 / qwen3 / llama3.1）；0.5b/1.5b 小模型能跑通流程，但工具参数常填错，答案质量差。
 - **"does not support thinking"**：`.env` 里 `SUPERINDEX_REASONING_EFFORT=` 留空。

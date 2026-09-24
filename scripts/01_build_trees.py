@@ -8,7 +8,7 @@ is required. It gives us the document skeleton (and a quick sanity check that
 PageIndex can parse these PDFs) before any paid LLM work happens.
 
 Usage:
-    python scripts/01_build_trees.py
+    uv run python scripts/01_build_trees.py
 """
 from __future__ import annotations
 

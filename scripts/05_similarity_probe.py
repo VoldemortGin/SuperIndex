@@ -13,8 +13,10 @@ This script measures three things:
   3. how many top-k slots get wasted on duplicate text
 
 Usage:
-    python scripts/05_similarity_probe.py data/aia_reports --pages 5
-    python scripts/05_similarity_probe.py data/aia_reports --queries queries.txt
+    uv run python scripts/05_similarity_probe.py data/aia_reports --pages 5
+    uv run python scripts/05_similarity_probe.py data/aia_reports --queries queries.txt
+
+Needs fastembed, which is not a project dependency: add `--with fastembed` after `uv run`.
 """
 from __future__ import annotations
 

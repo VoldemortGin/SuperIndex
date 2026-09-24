@@ -13,11 +13,11 @@ Credentials come from the environment (or a .env file):
     <PROVIDER>_API_BASE       optional OpenAI-compatible gateway override
 
 Usage:
-    python scripts/02_qa_test.py
-    python scripts/02_qa_test.py --index-model gpt-5-mini --chat-model gpt-5
-    python scripts/02_qa_test.py --chat-model deepseek/deepseek-chat --base-url https://api.deepseek.com
-    python scripts/02_qa_test.py --skip-index          # reuse an existing store
-    python scripts/02_qa_test.py --only Q05 Q12        # run a subset
+    uv run python scripts/02_qa_test.py
+    uv run python scripts/02_qa_test.py --index-model gpt-5-mini --chat-model gpt-5
+    uv run python scripts/02_qa_test.py --chat-model deepseek/deepseek-chat --base-url https://api.deepseek.com
+    uv run python scripts/02_qa_test.py --skip-index          # reuse an existing store
+    uv run python scripts/02_qa_test.py --only Q05 Q12        # run a subset
 """
 from __future__ import annotations
 

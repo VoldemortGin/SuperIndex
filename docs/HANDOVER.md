@@ -723,3 +723,9 @@ uvx twine upload dist/*      # 需要 PyPI token（TWINE_USERNAME=__token__ / TW
 - 发布前改 `pyproject.toml` 的 `version`；sdist 只含 `superindex/`、`pyproject.toml`、`README.md`、`LICENSE`、`NOTICE`（tests/samples/scripts 仅在仓库）。
 - README 即 PyPI 页面：指向仓库文件的链接必须用绝对 GitHub URL（https://github.com/VoldemortGin/SuperIndex/blob/main/...）。
 - PyInstaller 单机包流程不变：`bash packaging/build_macos.sh` / `packaging\build_windows.ps1`（见 `packaging/README.md`）。
+
+---
+
+## 0.1.2 更新（未发布）
+
+- 源码入口薄壳 `scripts/superindex.py` 改名为 `scripts/si.py`：原名与包同名，运行 `scripts/` 下其他脚本时会遮蔽 `superindex` 包（报 `'superindex' is not a package`）。上文各段里的 `uv run scripts/superindex.py ...` 现在一律写作 `uv run python scripts/si.py ...`（依赖 `uv sync` 以 editable 方式安装的包）；其余脚本同样用 `uv run python scripts/<name>.py` 运行。

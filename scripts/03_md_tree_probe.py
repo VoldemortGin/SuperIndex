@@ -7,8 +7,8 @@ node addressing unit looks like. Use it to judge whether a corpus of
 company-authored Markdown will index well before committing to it.
 
 Usage:
-    python scripts/03_md_tree_probe.py samples/aia_ar2021_excerpt.md
-    python scripts/03_md_tree_probe.py path/to/report.md --no-summary
+    uv run python scripts/03_md_tree_probe.py samples/aia_ar2021_excerpt.md
+    uv run python scripts/03_md_tree_probe.py path/to/report.md --no-summary
 """
 from __future__ import annotations
 
