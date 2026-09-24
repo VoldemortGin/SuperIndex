@@ -10,6 +10,8 @@ The corpus is the five most recent **annual reports** plus the five matching
 **interim reports**, taken from AIA's
 [results & presentations archive](https://www.aia.com/en/investor-relations/overview/results-presentations).
 
+> Windows 上直接用 Python 源码运行 `superindex`（建库 / 问答 / 网页 / 批量问答）：见 [`docs/windows-quickstart.md`](docs/windows-quickstart.md)。
+
 ---
 
 ## Corpus — 2,640 pages across 10 documents

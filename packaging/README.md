@@ -2,6 +2,7 @@
 
 `superindex` 把 Azure DI 产出的 Markdown 建成 PageIndex 文档库，并提供问答（`ask`）和网页界面（`serve`）。
 这里的脚本把它打成**不需要 Python** 的可执行程序，面向离线 Windows 服务器 + 本机 Ollama。
+不打包、直接用 Python 源码运行：见 [`docs/windows-quickstart.md`](../docs/windows-quickstart.md)。
 
 ## 1. 在联网的 Windows 电脑上打包
 
