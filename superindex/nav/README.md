@@ -16,21 +16,21 @@
 ## 快速开始
 
 ```bash
-PY=~/.workbuddy/binaries/python/envs/pageindex/bin/python
+PY="uv run python"   # 仓库内；pip 安装后直接用 python
 
 # 1. 建结构索引 —— 免费、无 LLM，上千文件也是秒级
-$PY -m nav.build /path/to/reports --out index/
+$PY -m superindex.nav.build /path/to/reports --out index/
 
 # 2. 生成路由用摘要（文件 + 目录级）      [LLM]
-$PY -m nav.build /path/to/reports --out index/ --summarize-files
+$PY -m superindex.nav.build /path/to/reports --out index/ --summarize-files
 
 # 3. 生成章节级摘要                        [LLM]
-$PY -m nav.build /path/to/reports --out index/ --summarize-chapters
+$PY -m superindex.nav.build /path/to/reports --out index/ --summarize-chapters
 
 # 查询
-$PY -m nav.route index/ "友邦保险 2024 年全年的每股股息是多少？"
-$PY -m nav.route index/ "..." --show-content      # 附章节原文
-$PY -m nav.route index/ "..." --json              # 机器可读
+$PY -m superindex.nav.route index/ "港湾人寿 2024 年全年的每股股息是多少？"
+$PY -m superindex.nav.route index/ "..." --show-content      # 附章节原文
+$PY -m superindex.nav.route index/ "..." --json              # 机器可读
 ```
 
 步骤 2/3 是**增量**的：文件大小与 mtime 未变且已有对应摘要时直接跳过。
@@ -61,15 +61,15 @@ index/
 
 ```json
 // 目录节点
-{ "rel_path": "友邦保险/2024/annual", "name": "annual", "parent": "友邦保险/2024",
-  "child_dirs": [], "files": ["友邦保险/2024/annual/AIA_AR2024.md"],
-  "summary": "友邦保险 2024 年年报，含新业务价值、税后营运溢利、股息...",
+{ "rel_path": "港湾人寿/2024/annual", "name": "annual", "parent": "港湾人寿/2024",
+  "child_dirs": [], "files": ["港湾人寿/2024/annual/HarbourLife_AR2024.md"],
+  "summary": "港湾人寿 2024 年年报，含新业务价值、税后营运溢利、股息...",
   "n_files": 1, "n_dirs": 0 }
 
 // 文件节点
-{ "rel_path": "友邦保险/2024/annual/AIA_AR2024.md", "name": "AIA_AR2024.md",
-  "parent": "友邦保险/2024/annual", "ext": ".md", "size": 4096, "mtime": 1.7e9,
-  "summary": "2024 年友邦保险全年股息为每股 150.72 港仙...",
+{ "rel_path": "港湾人寿/2024/annual/HarbourLife_AR2024.md", "name": "HarbourLife_AR2024.md",
+  "parent": "港湾人寿/2024/annual", "ext": ".md", "size": 4096, "mtime": 1.7e9,
+  "summary": "2024 年港湾人寿全年股息为每股 150.72 港仙...",
   "n_chapters": 15, "max_depth": 3, "tree_key": "a1b2c3d4e5f6a7b8" }
 
 // 章节节点
@@ -121,11 +121,11 @@ index/
 
 | 问题 | 命中目录 | 命中章节 | 结果 |
 |---|---|---|---|
-| 友邦保险 2024 年全年每股股息？ | 友邦保险/2024/annual/ | 股息 | ✅ 150.72 港仙 |
+| 港湾人寿 2024 年全年每股股息？ | 港湾人寿/2024/annual/ | 股息 | ✅ 150.72 港仙 |
 | 中国平安 2023 上半年中期股息？ | 中国平安/2023/interim/ | 股息 | ✅ 36.95 港仙 |
 | 三家上市险企 2024 VONB 对比？ | 行业汇总/ | 概览 | ✅ 找到对比表 |
 | 中国太保 2025 全年股息？ | 中国太保/2025/annual/ | 股息 | ✅ 142.98 港仙 |
-| 友邦 2023 泰国市场 VONB？ | 友邦保险/2023/annual/ | 泰国 | ✅ |
+| 港湾人寿 2023 泰国市场 VONB？ | 港湾人寿/2023/annual/ | 泰国 | ✅ |
 
 4/4 正确，年份全部匹配正确。
 
@@ -140,7 +140,7 @@ index/
 - **章节级摘要需要 LLM**，上千文件的语料是一次性成本。没有摘要时章节定位
   明显变弱（回退到词元匹配）。
 - **PDF 只走书签**。没有内嵌书签的 PDF 拿不到章节树，退化成整份文件一个节点。
-  需要的话接 `pageindex` 的 flash 模式补上。
+  需要的话接 `superindex.engine.flash` 模式补上。
 - **目录结构本身的质量决定上限**。如果语料是一坨平铺的几千个文件（没有子目录），
   第 1 级的目录树退化成一次列几千个文件名 —— 这时应先做一层目录治理，
   或改用 `_descend_dirs` 的批处理策略。

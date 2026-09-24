@@ -1,4 +1,4 @@
-"""`uv run scripts/superindex.py batch` — run a question set through the `ask` chain.
+"""`superindex batch` — run a question set through the `ask` chain.
 
 Question files:
     .json   the scripts/questions.json layout ({"questions": [...]}) or a list
@@ -499,6 +499,7 @@ def _scope(docs: list[dict[str, Any]], wanted: list[str]) -> list[str]:
 
 def cmd_batch(args: argparse.Namespace) -> int:
     from superindex.cli import (
+        _instructions,
         _page_image_mode,
         _prefetch_k,
         _settings,
@@ -526,7 +527,7 @@ def cmd_batch(args: argparse.Namespace) -> int:
     match = bm25.resolve_match(getattr(args, "match", None))
     prefetch_k = 0 if retrieval else _prefetch_k(args)
     image_mode = "off" if retrieval else _page_image_mode(args)
-    client = None if retrieval else make_client(settings, store, instructions=args.instructions)
+    client = None if retrieval else make_client(settings, store, instructions=_instructions(args))
     texts: dict[str, list[str]] = {}
 
     out_dir = _out_dir(args)

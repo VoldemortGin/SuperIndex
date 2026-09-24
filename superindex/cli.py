@@ -1,11 +1,13 @@
 """superindex — index Azure DI Markdown, ask questions, serve the web UI.
 
-    uv run scripts/superindex.py index corpus_md/ [--store DIR] [--no-summary]
-    uv run scripts/superindex.py ask "What was the 2021 final dividend?" [--doc NAME_OR_ID ...]
-    uv run scripts/superindex.py search "final dividend 2021" [--doc NAME_OR_ID ...] [--top-k 5]
-    uv run scripts/superindex.py serve [--port 8787] [--store DIR]
-    uv run scripts/superindex.py batch questions.jsonl [--out DIR] [--concurrency 1] [--resume]
-    uv run scripts/superindex.py batch questions.jsonl --retrieval-only [--top-k 5]
+    superindex index corpus_md/ [--store DIR] [--no-summary]
+    superindex ask "What was the 2021 final dividend?" [--doc NAME_OR_ID ...]
+    superindex search "final dividend 2021" [--doc NAME_OR_ID ...] [--top-k 5]
+    superindex serve [--port 8787] [--store DIR]
+    superindex batch questions.jsonl [--out DIR] [--concurrency 1] [--resume]
+    superindex batch questions.jsonl --retrieval-only [--top-k 5]
+
+(From a source checkout: `uv run scripts/superindex.py ...`.)
 
 `search`, `ask`, `serve` and `batch` take `--match page|passage` (keyword
 search scoring, SUPERINDEX_BM25_MATCH; see `superindex.bm25`). `ask`, `serve`
@@ -17,7 +19,9 @@ model screenshots of the PDF pages (SUPERINDEX_PAGE_IMAGE, default off; see
 `superindex.page_images`).
 
 Models and endpoints come from `.env` (working directory, then the
-executable's folder) or the CLI flags; see `.env.example`.
+executable's folder) or the CLI flags; see `.env.example`. The answering
+agent's standing guidance: `--instructions` / `--instructions-file`,
+SUPERINDEX_INSTRUCTIONS[_FILE], else `runtime.DEFAULT_INSTRUCTIONS`.
 """
 from __future__ import annotations
 
@@ -36,18 +40,19 @@ from superindex.runtime import (
     configure_litellm,
     default_store,
     load_env,
+    resolve_instructions,
     set_offline_defaults,
 )
 
 
 def _add_llm_flags(ap: argparse.ArgumentParser) -> None:
     g = ap.add_argument_group("LLM (default: .env)")
-    g.add_argument("--index-model", help="LiteLLM model for summaries (PAGEINDEX_INDEX_MODEL)")
-    g.add_argument("--chat-model", help="LiteLLM model for answering (PAGEINDEX_CHAT_MODEL)")
-    g.add_argument("--base-url", help="OpenAI-compatible / Ollama endpoint (PAGEINDEX_BASE_URL)")
-    g.add_argument("--api-key", help="key for --base-url (PAGEINDEX_API_KEY_OVERRIDE)")
+    g.add_argument("--index-model", help="LiteLLM model for summaries (SUPERINDEX_INDEX_MODEL)")
+    g.add_argument("--chat-model", help="LiteLLM model for answering (SUPERINDEX_CHAT_MODEL)")
+    g.add_argument("--base-url", help="OpenAI-compatible / Ollama endpoint (SUPERINDEX_BASE_URL)")
+    g.add_argument("--api-key", help="key for --base-url (SUPERINDEX_API_KEY_OVERRIDE)")
     g.add_argument("--reasoning-effort",
-                   help='chat reasoning effort (PAGEINDEX_REASONING_EFFORT); "" sends none')
+                   help='chat reasoning effort (SUPERINDEX_REASONING_EFFORT); "" sends none')
 
 
 def _add_match_flag(ap: argparse.ArgumentParser) -> None:
@@ -92,6 +97,19 @@ def _settings(args: argparse.Namespace) -> LLMSettings:
         api_key=getattr(args, "api_key", None),
         reasoning_effort=getattr(args, "reasoning_effort", None),
     )
+
+
+def _instructions(args: argparse.Namespace) -> str:
+    return resolve_instructions(getattr(args, "instructions", None),
+                                getattr(args, "instructions_file", None))
+
+
+def _add_instructions_flags(ap: argparse.ArgumentParser) -> None:
+    ap.add_argument("--instructions",
+                    help="standing guidance for the answering agent, replacing the default "
+                         "(SUPERINDEX_INSTRUCTIONS)")
+    ap.add_argument("--instructions-file",
+                    help="UTF-8 text file with that guidance (SUPERINDEX_INSTRUCTIONS_FILE)")
 
 
 def _store(args: argparse.Namespace) -> Path:
@@ -183,7 +201,7 @@ def _resolve_docs(docs: list[dict[str, Any]], wanted: list[str]) -> list[str]:
 
 def cmd_ask(args: argparse.Namespace) -> int:
     settings = _settings(args)
-    client = make_client(settings, _store(args), instructions=args.instructions)
+    client = make_client(settings, _store(args), instructions=_instructions(args))
     if not client.list_documents(limit=1).get("documents"):
         print(f"no documents in {_store(args)} — run `index` first", file=sys.stderr)
         return 1
@@ -259,19 +277,12 @@ def cmd_serve(args: argparse.Namespace) -> int:
     store = _store(args)
     from superindex.webapp import server
 
-    client = make_client(settings, store, instructions=args.instructions or server.INSTRUCTIONS)
-
-    def corpus_status() -> dict[str, Any]:
-        # The stock status lists PDFs under data/ as "pending"; a Markdown
-        # store has no such folder, so everything stored is the corpus.
-        indexed = server.list_documents()
-        return {"indexed": indexed, "pending": [], "total_pdfs": len(indexed),
-                "index_model": settings.index_model or settings.chat_model,
-                "chat_model": settings.chat_model}
+    client = make_client(settings, store, instructions=_instructions(args))
 
     server.STORE = store
     server._client = client
-    server.corpus_status = corpus_status
+    server.INDEX_MODEL = settings.index_model or settings.chat_model
+    server.CHAT_MODEL = settings.chat_model
     server.REASONING_EFFORT = settings.reasoning_effort
     server.PREFETCH_K = _prefetch_k(args)
     server.PAGE_IMAGE = _page_image_mode(args)
@@ -311,7 +322,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--doc", action="append",
                    help="document name, id or name fragment (repeatable; default: all)")
     p.add_argument("--store", help="store directory (SUPERINDEX_STORE)")
-    p.add_argument("--instructions", help="extra standing guidance for the answering agent")
+    _add_instructions_flags(p)
     p.add_argument("-v", "--verbose", action="store_true",
                    help="print prefetched pages and tool calls to stderr")
     _add_match_flag(p)
@@ -334,7 +345,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--port", type=int, default=8787)
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--store", help="store directory (SUPERINDEX_STORE)")
-    p.add_argument("--instructions", help="replace the web UI's standing guidance")
+    _add_instructions_flags(p)
     _add_match_flag(p)
     _add_prefetch_flags(p)
     _add_page_image_flag(p)
@@ -355,7 +366,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="seconds per question (default 300)")
     p.add_argument("--resume", action="store_true",
                    help="skip questions already answered in --out (default: the latest run)")
-    p.add_argument("--instructions", help="extra standing guidance for the answering agent")
+    _add_instructions_flags(p)
     p.add_argument("--retrieval-only", action="store_true",
                    help="no LLM: only run the keyword search per question and score "
                         "whether a top-k page holds the expected answer (recall@k, MRR)")

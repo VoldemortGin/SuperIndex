@@ -33,8 +33,10 @@ from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))       # so `extractors` and `nav` are importable
+    sys.path.insert(0, str(ROOT))       # so `superindex` is importable
 load_dotenv(ROOT / ".env")
+
+from superindex.runtime import getenv  # noqa: E402
 
 DATA_DIR = ROOT / "data" / "aia_reports"
 RESULTS = ROOT / "results"
@@ -141,10 +143,10 @@ def apply_concurrency(n: int) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--index-model", default=os.getenv("PAGEINDEX_INDEX_MODEL", DEFAULT_INDEX_MODEL))
-    ap.add_argument("--chat-model", default=os.getenv("PAGEINDEX_CHAT_MODEL", DEFAULT_CHAT_MODEL))
-    ap.add_argument("--base-url", default=os.getenv("PAGEINDEX_BASE_URL"))
-    ap.add_argument("--api-key", default=os.getenv("PAGEINDEX_API_KEY_OVERRIDE"))
+    ap.add_argument("--index-model", default=getenv("SUPERINDEX_INDEX_MODEL", DEFAULT_INDEX_MODEL))
+    ap.add_argument("--chat-model", default=getenv("SUPERINDEX_CHAT_MODEL", DEFAULT_CHAT_MODEL))
+    ap.add_argument("--base-url", default=getenv("SUPERINDEX_BASE_URL"))
+    ap.add_argument("--api-key", default=getenv("SUPERINDEX_API_KEY_OVERRIDE"))
     ap.add_argument("--skip-index", action="store_true", help="reuse the existing local store")
     ap.add_argument("--force-index", action="store_true", help="re-index even if stored")
     ap.add_argument("--only", nargs="*", default=None, help="question ids to run, e.g. Q05 Q12")

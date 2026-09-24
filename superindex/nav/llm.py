@@ -4,23 +4,15 @@ from __future__ import annotations
 import json
 import os
 import re
-import sys
 import time
-from pathlib import Path
 from typing import Any, Optional
 
-ROOT = Path(__file__).resolve().parent.parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+from superindex.runtime import getenv, load_env
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv(ROOT / ".env")
-except ImportError:  # pragma: no cover
-    pass
+load_env()
 
-DEFAULT_MODEL = os.getenv("NAV_MODEL", os.getenv("PAGEINDEX_CHAT_MODEL",
-                                                 "deepseek/deepseek-flash"))
+DEFAULT_MODEL = os.getenv("NAV_MODEL", getenv("SUPERINDEX_CHAT_MODEL",
+                                              "deepseek/deepseek-flash"))
 # Reasoning is the single biggest latency lever: on routing prompts the model
 # can spiral on open-ended tasks and burn the whole output budget without
 # emitting content. "none" disables it outright; "low" is the safe middle.

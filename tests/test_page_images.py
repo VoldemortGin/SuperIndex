@@ -315,8 +315,8 @@ def test_ask_sends_images_to_the_endpoint(provider: str, store: Path,
             return {"tool": "get_page_image", "arguments": {"doc_name": DOC, "page": 1}}
         return {"text": "Revenue was 1,234 (page 2 image)."}
 
-    for name in ("PAGEINDEX_BASE_URL", "PAGEINDEX_API_KEY_OVERRIDE",
-                 "PAGEINDEX_REASONING_EFFORT", "PAGEINDEX_CHAT_MODEL"):
+    for name in ("SUPERINDEX_BASE_URL", "SUPERINDEX_API_KEY_OVERRIDE",
+                 "SUPERINDEX_REASONING_EFFORT", "SUPERINDEX_CHAT_MODEL"):
         monkeypatch.setenv(name, "")
     with FakeChatServer(script) as srv:
         if provider == "openai":
@@ -366,7 +366,7 @@ def test_ask_sends_images_to_the_endpoint(provider: str, store: Path,
 
 def test_ask_off_sends_no_images(store: Path, monkeypatch: pytest.MonkeyPatch,
                                  capsys: pytest.CaptureFixture[str]) -> None:
-    for name in ("PAGEINDEX_REASONING_EFFORT", "PAGEINDEX_CHAT_MODEL"):
+    for name in ("SUPERINDEX_REASONING_EFFORT", "SUPERINDEX_CHAT_MODEL"):
         monkeypatch.setenv(name, "")
     with FakeChatServer(lambda n, body: {"text": "1,234"}) as srv:
         args = cli.build_parser().parse_args([

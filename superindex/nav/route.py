@@ -2,7 +2,7 @@
 """
 Two-level navigation over the index built by nav.build.
 
-    python -m superindex.nav.route index/ "2024 年友邦保险的 VONB 和 OPAT 分别是多少？"
+    python -m superindex.nav.route index/ "2024 年港湾人寿的 VONB 和 OPAT 分别是多少？"
     python -m superindex.nav.route index/ "..." --show-content
     python -m superindex.nav.route index/ "..." --json
 

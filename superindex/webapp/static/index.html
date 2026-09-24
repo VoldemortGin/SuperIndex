@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AIA 财报智能问答 · PageIndex</title>
+<title>SuperIndex 财报问答</title>
 <style>
   :root{
     --bg:#f6f7f9; --panel:#ffffff; --border:#e3e6ea; --border-strong:#d0d5dc;
@@ -136,7 +136,7 @@
 <body>
 <div class="app">
   <header>
-    <div class="brand"><span class="dot"></span>AIA 财报智能问答</div>
+    <div class="brand"><span class="dot"></span>SuperIndex 财报问答</div>
     <div class="meta">
       <span class="pill" id="modelPill">—</span>
       <span class="pill ok" id="docPill">—</span>
@@ -164,17 +164,17 @@
       <div class="stream" id="stream">
         <div class="wrap" id="emptyState">
           <div class="empty">
-            <h1>AIA 报告动态问答</h1>
+            <h1>SuperIndex 财报问答</h1>
             <p>已索引的财报会被拆成层级树索引，模型沿着树推理定位到具体页面再作答。</p>
             <p>在左侧勾选文档范围，然后在下面提问。</p>
-            <p style="margin-top:14px"><code>PageIndex</code> · 无向量库 · 可追溯到页码</p>
+            <p style="margin-top:14px"><code>SuperIndex</code> · 无向量库 · 可追溯到页码</p>
           </div>
         </div>
       </div>
       <div class="composer">
         <div class="wrap">
           <div class="box">
-            <textarea id="q" rows="1" placeholder="问点什么…例如：2025 年 AIA 香港的 VONB 增长了多少？"></textarea>
+            <textarea id="q" rows="1" placeholder="问点什么…例如：港湾人寿 2022 年新加坡的新业务价值是多少？"></textarea>
             <button class="send" id="send">发送</button>
           </div>
           <div class="hint">
@@ -192,14 +192,14 @@ const $ = s => document.querySelector(s);
 const stream = $('#stream');
 
 const SUGGESTIONS = [
-  "FY2021 的 VONB、OPAT 和 UFSG 分别是多少？",
-  "FY2021 全年股息 146.00 港仙是怎么构成的？",
-  "对比 FY2021 和 FY2022 的 VONB 与每股股息走势",
-  "FY2022 的 VONB 是多少？下半年表现如何？",
-  "1H2021 的 VONB 和 OPAT 分别增长了多少？",
-  "AIA 在 2022 年宣布的股份回购计划规模多大？",
-  "1H2021 的中期股息是多少？同比涨了多少？",
-  "2021 年 AIA 的 EV Equity 和 LCSM 偿付能力充足率是多少？",
+  "港湾人寿 2022 年新加坡的新业务价值是多少，增长了多少？",
+  "港湾人寿董事会建议的末期股息和特别股息分别是每股多少？",
+  "港湾人寿越南代理渠道的新业务价值是多少？",
+  "港湾人寿集团偿付能力充足率是多少？",
+  "利率下降 50 个基点会让港湾人寿的 EV Equity 减少多少？",
+  "港湾人寿 2022 年支付的理赔总额和医疗理赔金额分别是多少？",
+  "What were Harbour Life's total invested assets?",
+  "What was Harbour Life's average claims processing time in days?",
 ];
 
 let DOCS = [];
@@ -252,7 +252,7 @@ function renderDocs(d){
     <label class="doc ${x.ready?'':'pending'}">
       <input type="checkbox" ${x.ready?'checked':'disabled'} data-id="${x.id||''}">
       <span class="body">
-        <span class="nm">${esc(x.name.replace(/^AIA_/,'').replace(/\.pdf$/,''))}</span>
+        <span class="nm">${esc(x.name.replace(/\.(pdf|md)$/,''))}</span>
         <span class="sub">${x.ready? (x.pages||'?')+' 页' : '<span class="badge">索引中</span>'}</span>
       </span>
     </label>`).join('');
@@ -276,9 +276,9 @@ function setSel(fn){
 $('#selAll').onclick    = () => setSel(()=>true);
 $('#selNone').onclick   = () => setSel(()=>false);
 $('#selAnnual').onclick = () => setSel(cb => {
-  const n = cb.closest('.doc').querySelector('.nm').textContent; return n.startsWith('Annual'); });
+  const n = cb.closest('.doc').querySelector('.nm').textContent; return /annual|_AR\d|年报/i.test(n); });
 $('#selInterim').onclick= () => setSel(cb => {
-  const n = cb.closest('.doc').querySelector('.nm').textContent; return n.startsWith('Interim'); });
+  const n = cb.closest('.doc').querySelector('.nm').textContent; return /interim|_IR\d|中期/i.test(n); });
 
 $('#sugs').innerHTML = SUGGESTIONS.map((s,i)=>`<button data-i="${i}">${esc(s)}</button>`).join('');
 $('#sugs').onclick = e => {
@@ -294,7 +294,7 @@ function addMsg(role, text){
   const empty = $('#emptyState'); if (empty) empty.remove();
   const el = document.createElement('div');
   el.className = 'msg ' + role;
-  el.innerHTML = `<div class="who">${role==='user'?'你':'PageIndex'}
+  el.innerHTML = `<div class="who">${role==='user'?'你':'SuperIndex'}
       ${role==='user'?`<span class="tag">${selectedIds().length} 份文档</span>`:''}</div>
     <div class="bubble">${role==='user'? md(text) : ''}</div>`;
   stream.appendChild(el);

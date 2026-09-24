@@ -1,9 +1,8 @@
-#!/usr/bin/env python3
 """
-PageIndex × AIA reports — local chat server.
+SuperIndex — local chat server.
 
 A small dependency-free HTTP server (Python stdlib only) that exposes the
-PageIndex local client as a streaming chat API, plus a single-page UI.
+SuperIndex local client as a streaming chat API, plus a single-page UI.
 
     GET  /                 the chat UI
     GET  /api/status       indexed documents + corpus info
@@ -12,42 +11,40 @@ PageIndex local client as a streaming chat API, plus a single-page UI.
 The SSE stream carries the agent's run as typed events, so the UI can show
 which document nodes the model actually opened before it answered.
 
-Usage:
-    python webapp/server.py                 # http://127.0.0.1:8787
-    python webapp/server.py --port 9000
+Usage (`superindex serve` is the same, with all its options):
+    python -m superindex.webapp.server                 # http://127.0.0.1:8787
+    python -m superindex.webapp.server --port 9000
 """
 from __future__ import annotations
 
-import argparse
 import json
-import os
 import sys
 import threading
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from importlib import resources
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
+from superindex.runtime import DEFAULT_INSTRUCTIONS, default_store
 
-from dotenv import load_dotenv  # noqa: E402
 
-load_dotenv(ROOT / ".env")
+def _static_dir() -> Path:
+    # A PyInstaller build unpacks bundled data under sys._MEIPASS (the spec
+    # bundles the folder as "superindex/webapp/static"); an installed package
+    # carries it next to this module.
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS) / "superindex" / "webapp" / "static"
+    return Path(str(resources.files("superindex.webapp") / "static"))
 
-DATA_DIR = ROOT / "data" / "aia_reports"
-STORE = ROOT / "results" / "pageindex_store"
-# A PyInstaller build unpacks bundled data under sys._MEIPASS; bundle the
-# folder as "webapp/static" there.
-STATIC = (Path(sys._MEIPASS) / "webapp" / "static" if getattr(sys, "frozen", False)
-          else Path(__file__).resolve().parent / "static")
 
-INDEX_MODEL = os.getenv("PAGEINDEX_INDEX_MODEL", "deepseek/deepseek-flash")
-CHAT_MODEL = os.getenv("PAGEINDEX_CHAT_MODEL", "deepseek/deepseek-flash")
-# Reasoning effort is the single biggest latency lever we measured: on a deep
-# question it cut wall clock 10.3s -> 5.8s and output tokens by 62%, with the
-# answer unchanged. "low" is the default; set it to "" to send nothing and get
-# the model's own default back.
-REASONING_EFFORT = os.getenv("PAGEINDEX_REASONING_EFFORT", "low").strip() or None
+STORE = default_store()
+STATIC = _static_dir()
+
+# `superindex serve` sets the models, the store and the reasoning effort from
+# its settings before `run()`; these are only what `get_client` falls back to.
+INDEX_MODEL: str | None = None
+CHAT_MODEL: str | None = None
+REASONING_EFFORT: str | None = None
 # Pages keyword-searched before each question and handed to the agent as
 # hints (superindex.prefetch); `superindex serve` sets it, 0 is off.
 PREFETCH_K = 0
@@ -59,17 +56,11 @@ _client = None
 _client_lock = threading.Lock()
 _chat_lock = threading.Lock()
 
-INSTRUCTIONS = (
-    "You are a financial analyst answering questions about AIA Group's annual "
-    "and interim reports. Answer with the exact figures, units and periods "
-    "stated in the documents, and name the reporting period each figure "
-    "belongs to. If the documents do not contain the answer, say so plainly "
-    "instead of guessing."
-)
+INSTRUCTIONS = DEFAULT_INSTRUCTIONS
 
 
 def get_client():
-    """One shared client; PageIndex keeps the doc store in it."""
+    """One shared client; the engine keeps the doc store in it."""
     global _client
     with _client_lock:
         if _client is None:
@@ -100,19 +91,18 @@ def list_documents() -> list[dict]:
 
 
 def corpus_status() -> dict:
-    indexed = {d["name"] for d in list_documents()}
-    on_disk = sorted(p.name for p in DATA_DIR.glob("*.pdf"))
+    indexed = list_documents()
     return {
-        "indexed": list_documents(),
-        "pending": [n for n in on_disk if n not in indexed],
-        "total_pdfs": len(on_disk),
+        "indexed": indexed,
+        "pending": [],
+        "total_pdfs": len(indexed),
         "index_model": INDEX_MODEL,
         "chat_model": CHAT_MODEL,
     }
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "PageIndexChat/1.0"
+    server_version = "SuperIndexChat/1.0"
 
     def log_message(self, fmt, *args):  # quieter console
         if "/api/ask" not in (self.path or ""):
@@ -248,16 +238,14 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--port", type=int, default=8787)
-    ap.add_argument("--host", default="127.0.0.1")
-    args = ap.parse_args()
-    return run(args.host, args.port)
+    from superindex.cli import main as cli_main
+
+    return cli_main(["serve", *sys.argv[1:]])
 
 
 def run(host: str, port: int) -> int:
     status = corpus_status()
-    print(f"PageIndex chat server")
+    print("SuperIndex chat server")
     print(f"  index model : {status['index_model']}")
     print(f"  chat model  : {status['chat_model']}")
     print(f"  indexed     : {len(status['indexed'])} / {status['total_pdfs']} documents")
