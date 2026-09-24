@@ -11,6 +11,7 @@ its tools (`get_document_structure`, `get_page_content`) work unchanged:
                                          "end_index", "summary"?, "nodes"?}]
     <store>/docs/<doc_id>/doc.json     document metadata
     <store>/docs/<doc_id>/bm25.json    keyword index (`superindex.bm25`)
+    <store>/docs/<doc_id>/page_tags.json  per-page tags (`superindex.page_images`)
     <store>/manifest.json
 
 Page numbers: ``page_index`` is always the physical PDF page, so citations and
@@ -33,8 +34,9 @@ header-less on the next gets the header repeated. Text inside ``<table>`` and
 
 Only light modules are imported here: headings come from `nav.build`, storage
 from `pageindex.local_store`. The PDF stack (PyPDF2 / pypdfium2 / flash) is not
-touched; `pageindex.utils` (which imports PyPDF2 at module level) is imported
-only when LLM summaries are requested.
+touched, except `superindex.page_render` to count a linked PDF's pages;
+`pageindex.utils` (which imports PyPDF2 at module level) is imported only when
+LLM summaries are requested.
 """
 from __future__ import annotations
 
@@ -53,7 +55,7 @@ from pageindex.naming import sanitize_filename
 
 from nav.build import markdown_chapters
 from nav.store import Chapter
-from superindex import bm25
+from superindex import bm25, page_images
 
 # Same marker `extractors.azure_di.PAGE_MARKER` writes ("<!-- page: {n} -->"),
 # matched leniently on whitespace.
@@ -534,6 +536,8 @@ class IndexResult:
     nodes: int
     has_markers: bool
     skipped: bool = False
+    pdf: str | None = None
+    warnings: list[str] = field(default_factory=list)
 
 
 def _now_iso() -> str:
@@ -542,16 +546,39 @@ def _now_iso() -> str:
     return now.replace(microsecond=now.microsecond // 1000 * 1000).isoformat()
 
 
+def _link_pdf(pdf: Path | None, md_pages: int, page_mode: str,
+              warnings: list[str]) -> dict[str, Any]:
+    """Metadata fields for the source PDF (`superindex.page_images`), or {}
+    when there is none or it cannot be used."""
+    if pdf is None:
+        return {}
+    if page_mode == "pseudo":
+        warnings.append(f"PDF {pdf.name} not linked: the Markdown has no page "
+                        "markers, so its pages are not PDF pages")
+        return {}
+    try:
+        info = page_images.pdf_metadata(pdf)
+    except Exception as exc:  # noqa: BLE001 - no images, the text still indexes
+        warnings.append(f"PDF {pdf} not linked: {type(exc).__name__}: {exc}")
+        return {}
+    if info["pdf_pages"] != md_pages:
+        warnings.append(f"page count differs: PDF {info['pdf_pages']}, "
+                        f"Markdown {md_pages}")
+    return info
+
+
 def index_markdown(md_path: Path, store_path: Path, *, summary_model: str | None = None,
                    backend: dict[str, str] | None = None, concurrency: int = 8,
                    page_chars: int = DEFAULT_PAGE_CHARS,
-                   force: bool = False) -> IndexResult:
+                   force: bool = False, pdf: Path | None = None) -> IndexResult:
     """Index one Markdown file into the store. `summary_model=None` builds the
-    tree without any LLM call (no summaries, no description).
+    tree without any LLM call (no summaries, no description). `pdf` is the
+    PDF the Markdown was extracted from (see `superindex.page_images`).
 
     A document is identified by its file name: re-indexing replaces the stored
     copy, and is skipped when the content is unchanged and the stored copy
-    already has what was asked for (summaries), unless `force`."""
+    already has what was asked for (summaries), unless `force`. A skipped
+    document still gets a new or changed `pdf` linked (metadata only)."""
     raw = md_path.read_bytes()
     markdown = raw.decode("utf-8", errors="replace")
     digest = hashlib.sha256(raw).hexdigest()
@@ -566,9 +593,17 @@ def index_markdown(md_path: Path, store_path: Path, *, summary_model: str | None
             if (meta.get("status") == "completed" and info.get("sha256") == digest
                     and (info.get("summary") or not want_summary)):
                 bm25.ensure_index(store, meta["id"])   # stores from before bm25.json
+                page_images.load_tags(store_path, meta["id"])
+                warnings: list[str] = []
+                linked = _link_pdf(pdf, meta.get("pageNum", 0),
+                                   info.get("page_mode") or "marker", warnings)
+                if linked and any(info.get(k) != v for k, v in linked.items()):
+                    _relink(store, meta, linked)
                 return IndexResult(meta["id"], name, meta.get("pageNum", 0),
                                    int(info.get("node_count", 0)),
-                                   bool(info.get("page_markers")), skipped=True)
+                                   bool(info.get("page_markers")), skipped=True,
+                                   pdf=linked.get("pdf_path") or info.get("pdf_path"),
+                                   warnings=warnings)
 
     parsed = parse_pages(markdown, page_chars=page_chars)
     if not any(p.strip() for p in parsed.pages):
@@ -584,6 +619,8 @@ def index_markdown(md_path: Path, store_path: Path, *, summary_model: str | None
     pages = [{"page_index": i + 1, "markdown": text}
              for i, text in enumerate(parsed.pages)]
 
+    warnings = []
+    linked = _link_pdf(pdf, len(pages), parsed.page_mode, warnings)
     doc_id = "pi-" + uuid.uuid4().hex
     meta = {
         "id": doc_id,
@@ -602,17 +639,33 @@ def index_markdown(md_path: Path, store_path: Path, *, summary_model: str | None
             "page_labels": {str(k): v for k, v in parsed.page_labels.items()},
             "summary": want_summary,
             "node_count": node_count,
+            **linked,
         },
         "mode": "markdown",
     }
-    # The keyword index goes in first: doc.json, written last by save_document,
-    # is what makes the document visible.
-    bm25.write_index(Path(store_path).expanduser() / "docs" / doc_id, parsed.pages)
+    # The keyword index and page tags go in first: doc.json, written last by
+    # save_document, is what makes the document visible.
+    doc_dir = Path(store_path).expanduser() / "docs" / doc_id
+    bm25.write_index(doc_dir, parsed.pages)
+    page_images.write_tags(doc_dir, parsed.pages)
     with store.lock():
         store.save_document(doc_id, meta, public, pages)
         for old in previous:
             store.delete_document(old["id"])
-    return IndexResult(doc_id, name, len(pages), node_count, parsed.has_markers)
+    return IndexResult(doc_id, name, len(pages), node_count, parsed.has_markers,
+                       pdf=linked.get("pdf_path"), warnings=warnings)
+
+
+def _relink(store: DocStore, meta: dict[str, Any], linked: dict[str, Any]) -> None:
+    """Record a new or changed PDF on an indexed document, text untouched."""
+    doc_id = meta["id"]
+    with store.lock():
+        tree, pages = store.get_tree(doc_id), store.get_pages(doc_id)
+        if tree is None or pages is None:
+            return
+        updated = {**meta, "metadata": {**(meta.get("metadata") or {}), **linked}}
+        page_images.clear_images(store._root, doc_id)
+        store.save_document(doc_id, updated, tree, pages)
 
 
 def find_markdown(target: Path) -> list[Path]:
