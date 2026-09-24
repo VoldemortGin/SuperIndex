@@ -1,424 +1,264 @@
-# PageIndex × AIA Reports — Local Test Bench
+# SuperIndex
 
-A local test harness for [PageIndex](https://github.com/VectifyAI/PageIndex)
-(VectifyAI's vectorless, reasoning-based RAG engine) using **AIA Group's
-financial reports as the corpus**. PageIndex is designed exactly for documents
-like these: long, table-heavy financial reports where vector similarity search
-tends to retrieve the wrong page.
+Vectorless, page-cited question answering over long financial reports:
+Azure Document Intelligence Markdown → tree index + BM25 → LLM agent.
 
-The corpus is the five most recent **annual reports** plus the five matching
-**interim reports**, taken from AIA's
-[results & presentations archive](https://www.aia.com/en/investor-relations/overview/results-presentations).
+`superindex` 面向上市公司年报、中期报告这类**长篇、表格密集**的财报问答：
 
-> Windows 上直接用 Python 源码运行 `superindex`（建库 / 问答 / 网页 / 批量问答）：见 [`docs/windows-quickstart.md`](docs/windows-quickstart.md)。环境用 [uv](https://docs.astral.sh/uv/) 管理：`uv sync` 装依赖，`uv run scripts/superindex.py <子命令>` 运行，`uv run pytest` 跑测试。
->
-> 常用：`uv run scripts/superindex.py search "final dividend" --top-k 3`（BM25 检索自检，不调 LLM）；`uv run scripts/superindex.py batch q.jsonl`（批量问答，出 `summary.md`）；`batch q.jsonl --retrieval-only --match page|passage`（纯检索评测）。
-> `--match` 默认 `page`；`passage` 在长页多主题时更好，建议在真实 DI 年报题集上用 `--retrieval-only` 两种各跑一次复核。公司/云端 LLM API（OpenAI 兼容网关、Azure OpenAI）配置见 quickstart §3b。
-> 检索前置（默认开）：`ask` / `serve` / `batch` 在问题进入 Agent 前先跑 BM25，把 top-k 候选页作为「检索线索」拼在问题前；`--no-prefetch` 关闭、`--prefetch-k N` 调整（`SUPERINDEX_PREFETCH` / `SUPERINDEX_PREFETCH_K`）。Agent 另有 `calculate` 工具（基于 [avada-eval](https://pypi.org/project/avada-eval/)（[GitHub](https://github.com/VoldemortGin/avada-eval)） 的 Decimal 精确计算，含 `pct_change` / `cagr` / `ratio`；千分位须无空格如 `1,234`，函数参数逗号后加空格），提示要求所有算术都经由它。
-> PDF 原页截图（多模态模型用，默认关）：`index --pdf-dir D:\pdfs` 按同名关联源 PDF；`ask` / `serve` / `batch --page-image auto|always`（`SUPERINDEX_PAGE_IMAGE`）把候选页截图附给模型，并提供 `get_page_image` 工具按需取图，每题最多 `SUPERINDEX_PAGE_IMAGE_MAX`（默认 3）张；见 quickstart §4–§6。
+- **建库**：把 Azure Document Intelligence（DI）产出的 Markdown（或任意带 `#` 标题的 Markdown）按标题建成层级**目录树**，可选用 LLM 为节点写摘要；同时建 **BM25** 关键词索引。
+- **问答**：LLM agent 先拿到 BM25 预取的候选页，再沿目录树决定打开哪些节点、读哪几页，最后作答。
+- **无向量库**：不做 embedding，不需要向量数据库；每个答案都能**追溯到页码**（DI 注入的 `<!-- page: N -->` 页标记）。
+- 模型通过 [LiteLLM](https://docs.litellm.ai/) 接入：OpenAI 兼容网关、Azure OpenAI、Ollama、OpenAI / Anthropic / DeepSeek 等均可，**模型需支持 tool calling**。
+
+## 安装
+
+需要 Python 3.11–3.13。
+
+```bash
+pip install superindex
+# 或者作为独立命令行工具安装（推荐，自动隔离环境）
+uv tool install superindex
+```
+
+装好后直接使用 `superindex` 命令：
+
+```bash
+superindex --help
+superindex index|search|ask|serve|batch --help
+```
+
+## 最小配置（`.env`）
+
+在**当前工作目录**放一个 `.env`（已存在的环境变量优先）。完整模板见
+[`.env.example`](https://github.com/VoldemortGin/SuperIndex/blob/main/.env.example)。
+
+公司内网 OpenAI 兼容网关（vLLM、各类代理等，注意 `/v1` 后缀）：
+
+```ini
+SUPERINDEX_BASE_URL=https://your-gateway.example.com/v1
+SUPERINDEX_API_KEY_OVERRIDE=your-gateway-key
+SUPERINDEX_INDEX_MODEL=openai/your-model-name
+SUPERINDEX_CHAT_MODEL=openai/your-model-name
+SUPERINDEX_REASONING_EFFORT=
+```
+
+本机 Ollama（先 `ollama pull qwen2.5:7b`，并调大上下文 `OLLAMA_CONTEXT_LENGTH=32768`）：
+
+```ini
+SUPERINDEX_INDEX_MODEL=ollama_chat/qwen2.5:7b
+SUPERINDEX_CHAT_MODEL=ollama_chat/qwen2.5:7b
+SUPERINDEX_BASE_URL=http://localhost:11434
+SUPERINDEX_API_KEY_OVERRIDE=ollama
+# 非推理模型必须留空，否则报 "does not support thinking"
+SUPERINDEX_REASONING_EFFORT=
+```
+
+没有配置模型时不会回落到任何云端模型，命令会直接报错并提示该设置哪个变量。
+
+## 用法
+
+### 建库：`index`
+
+```bash
+superindex index report.md --no-summary        # 单个文件，不调 LLM，几秒建完
+superindex index ./corpus_md --no-summary      # 整个目录（递归查找 .md）
+superindex index ./corpus_md                   # 带 LLM 节点摘要（--concurrency 默认 8）
+superindex index ./corpus_md --force           # 内容未变也强制重建
+superindex index ./corpus_md --store ./my_store
+```
+
+- 文档库默认在**当前工作目录下的 `superindex_store/`**；用 `--store` 或 `SUPERINDEX_STORE` 覆盖。之后的 `search` / `ask` / `serve` / `batch` 要用同一个 store。
+- 建议先 `--no-summary` + `search` 自检（不花钱），跑通问答后再带摘要重建。
+- Windows 路径同理，如 `superindex index D:\corpus_md --store D:\si_store`。
+
+### 检索自检：`search`（BM25，不调 LLM）
+
+```bash
+superindex search "final dividend" --top-k 3
+superindex search "末期股息 2022" --doc HarbourLife --match passage --json
+```
+
+`--match page`（默认）按整页打分；`passage` 按页内小段（约 300–800 字符，表格按行切分并重复表头）打分，仍返回整页，长页多主题时可能更好。
+
+### 问答：`ask`
+
+```bash
+superindex ask "港湾人寿 2022 年新加坡的新业务价值是多少？" -v
+superindex ask "..." --doc HarbourLife          # 限定文档（名称、id 或名称片段，可重复）
+superindex ask "..." --instructions "只用中文回答，数字保留原单位。"
+superindex ask "..." --instructions-file ./instructions.txt
+```
+
+- `-v` 把预取的候选页和每次工具调用打印到 stderr，便于排查"答非所问"。
+- **检索预取**（默认开）：问题进入 agent 前先跑 BM25，把 top-k 候选页（文档、页码、章节、片段）作为线索附在问题前，模型即使不主动调用 `search_pages` 也能从可能的页开始。`--no-prefetch` 关闭，`--prefetch-k N` 调整条数（默认 5）。
+
+### 网页：`serve`
+
+```bash
+superindex serve --port 8787                   # 浏览器打开 http://127.0.0.1:8787
+superindex serve --host 0.0.0.0 --port 8787    # 局域网访问（注意防火墙）
+```
+
+「SuperIndex 财报问答」网页：勾选可用文档范围、流式输出答案，每条答案可展开查看模型的思考过程与全部工具调用（读了哪棵树、哪几页）。`serve` 与 `ask` 接受相同的 `--instructions` / `--match` / `--prefetch` / `--page-image` / 模型参数。
+
+### 批量问答：`batch`
+
+```bash
+superindex batch questions.jsonl
+superindex batch questions.csv --concurrency 2 --timeout 300
+superindex batch questions.jsonl --doc HarbourLife --limit 5
+superindex batch questions.csv --resume                       # 续跑最近一次，跳过已完成的题
+superindex batch questions.jsonl --retrieval-only --match page    # 纯检索评测，不调 LLM
+superindex batch questions.jsonl --retrieval-only --match passage
+```
+
+题集格式：
+
+| 扩展名 | 格式 |
+|---|---|
+| `.txt` | 每行一题，`#` 开头为注释 |
+| `.jsonl` | 每行 `{"id": "Q1", "question": "...", "expected": "...", "doc": "文档名片段"}`，只有 `question` 必填 |
+| `.csv` | UTF-8，表头至少有 `question`，可选 `expected`、`doc`、`id` |
+| `.json` | 题目列表（仓库 `scripts/questions.json` 的格式） |
+
+结果默认写到 `<当前目录>/results/batch/<时间戳>/`（`--out` 可改）：`summary.md`（总览表 + 逐题问答与工具调用）和 `results.jsonl`（逐题完整记录）。"命中"是**粗评分**（期望答案里的数字全部出现在回答中），需要人工复核。
+`--retrieval-only` 只跑每题的 BM25 检索，按 top-k（默认 5）页是否含期望答案计算 recall@k、MRR，秒级完成，适合比较 `--match page|passage`。
+
+### 回答指令（ask / serve / batch 通用）
+
+三个命令使用同一套"常驻指令"，**替换**内置默认。优先级从高到低：
+
+1. `--instructions "文本"`
+2. `--instructions-file 路径`（UTF-8 文本文件）
+3. 环境变量 `SUPERINDEX_INSTRUCTIONS`（直接文本）
+4. 环境变量 `SUPERINDEX_INSTRUCTIONS_FILE`（文件路径）
+5. 内置中性默认：财务分析助手，按文档给出准确的数字、单位与报告期，文档没有答案时明确说明而不是猜测。
+
+## 页码与附图
+
+- **页码引用**：DI Markdown 中的 `<!-- page: N -->` 页标记在建库时保留，答案引用具体页码；没有页标记的 Markdown 按 `--page-chars`（默认 4000 字符）切伪页。
+- **关联源 PDF**：`superindex index ./corpus_md --pdf-dir ./corpus_pdf`（或 `SUPERINDEX_PDF_DIR`）按同名文件（`年报.md` ↔ `年报.pdf`，子目录递归）关联 PDF；已有的库再跑一次只补关联，不重建文本。
+- **多模态附图**（默认关，仅适用于能看图的模型）：`--page-image off|auto|always`（`SUPERINDEX_PAGE_IMAGE`）。
+  - `auto`：预取候选页中含表格、图或文字很少（扫描页、图表页）的页附截图；`always`：候选页都附。
+  - 两种模式下 agent 还能调用 `get_page_image(doc_name, page)` 按需取图。
+  - 每题最多 `SUPERINDEX_PAGE_IMAGE_MAX` 张（默认 3），长边 `SUPERINDEX_PAGE_IMAGE_MAX_SIDE` 像素（默认 1600）。每张约 1–2.5K 输入 token，建议先在题集上对比 `off` 的命中率和成本。
+
+## 数值计算：`calculate`
+
+agent 带一个 `calculate` 工具，基于 [avada-eval](https://pypi.org/project/avada-eval/) 0.1.1+（安全的算式求值，不执行任意代码；Decimal 精确计算，含 `pct_change` / `cagr` / `ratio` 等财务函数与具名变量）。系统提示要求增长率、占比、差额、单位换算等一律经由它计算。千分位写作 `1,234`（逗号两侧无空格），函数参数的逗号后加空格。
+
+## 配置变量
+
+| 变量 | 说明 |
+|---|---|
+| `SUPERINDEX_CHAT_MODEL` | 问答模型（LiteLLM 模型名），`ask` / `serve` / `batch` 必填 |
+| `SUPERINDEX_INDEX_MODEL` | 节点摘要模型；`index --no-summary` 时不用 |
+| `SUPERINDEX_BASE_URL` | OpenAI 兼容网关或 Ollama 地址 |
+| `SUPERINDEX_API_KEY_OVERRIDE` | 上面地址对应的 key |
+| `SUPERINDEX_REASONING_EFFORT` | 推理强度（如 `low`）；不设或留空则不发送，非推理模型必须留空 |
+| `SUPERINDEX_STORE` | 文档库目录，默认 `./superindex_store` |
+| `SUPERINDEX_INSTRUCTIONS` / `SUPERINDEX_INSTRUCTIONS_FILE` | 回答指令（见上文） |
+| `SUPERINDEX_BM25_MATCH` | `page`（默认）/ `passage` |
+| `SUPERINDEX_PREFETCH` / `SUPERINDEX_PREFETCH_K` | 检索预取开关（默认 1）/ 条数（默认 5） |
+| `SUPERINDEX_PDF_DIR` | 源 PDF 目录 |
+| `SUPERINDEX_PAGE_IMAGE` / `_MAX` / `_MAX_SIDE` | 附图模式 / 每题张数 / 长边像素 |
+
+命令行参数（`--chat-model`、`--index-model`、`--base-url`、`--api-key`、`--reasoning-effort` 等）优先于环境变量。Azure OpenAI、代理与自签证书等写法见 `.env.example`。
+
+**旧名兼容**：早期版本的 `PAGEINDEX_INDEX_MODEL` / `PAGEINDEX_CHAT_MODEL` / `PAGEINDEX_BASE_URL` / `PAGEINDEX_API_KEY_OVERRIDE` / `PAGEINDEX_REASONING_EFFORT` 仍然有效（新名优先），使用旧名时会在 stderr 提示一次已更名，请改为对应的 `SUPERINDEX_*`。
+
+## 许可与来源
+
+MIT 许可。检索引擎（`superindex.engine`）衍生自 [VectifyAI/PageIndex](https://github.com/VectifyAI/PageIndex)（MIT，v0.2.10，commit `71714e8`），并在此基础上改名、裁剪与扩展。版权与来源说明见
+[LICENSE](https://github.com/VoldemortGin/SuperIndex/blob/main/LICENSE)、
+[NOTICE](https://github.com/VoldemortGin/SuperIndex/blob/main/NOTICE) 与
+[docs/engine/UPSTREAM.md](https://github.com/VoldemortGin/SuperIndex/blob/main/docs/engine/UPSTREAM.md)。
 
 ---
 
-## Corpus — 2,640 pages across 10 documents
+## 开发者 / 仓库用法
 
-### Annual reports
+源码：<https://github.com/VoldemortGin/SuperIndex>
 
-| Report | Period | Pages | Tree nodes | Depth | TOC source |
-|---|---|---:|---:|---:|---|
-| `AIA_Annual_Report_FY2021.pdf` | FY2021 | 304 | 488 | 6 | bookmarks |
-| `AIA_Annual_Report_FY2022.pdf` | FY2022 | 312 | 469 | 5 | bookmarks |
-| `AIA_Annual_Report_FY2023.pdf` | FY2023 | 376 | 639 | 6 | bookmarks |
-| `AIA_Annual_Report_FY2024.pdf` | FY2024 | 371 | 597 | 6 | bookmarks |
-| `AIA_Annual_Report_FY2025.pdf` | FY2025 | 363 | 549 | 5 | bookmarks |
-| **subtotal** | | **1,726** | **2,742** | | |
+### 环境
 
-### Interim reports
+用 [uv](https://docs.astral.sh/uv/) 管理 Python 与依赖：
 
-| Report | Period | Pages | Tree nodes | Depth | TOC source |
-|---|---|---:|---:|---:|---|
-| `AIA_Interim_Report_1H2021.pdf` | 1H2021 | 150 | 254 | 5 | bookmarks |
-| `AIA_Interim_Report_1H2022.pdf` | 1H2022 | 154 | 245 | 6 | bookmarks |
-| `AIA_Interim_Report_1H2023.pdf` | 1H2023 | 230 | 333 | 5 | bookmarks |
-| `AIA_Interim_Report_1H2024.pdf` | 1H2024 | 190 | 309 | 5 | bookmarks |
-| `AIA_Interim_Report_1H2025.pdf` | 1H2025 | 190 | 299 | 5 | bookmarks |
-| **subtotal** | | **914** | **1,440** | | |
+```bash
+git clone https://github.com/VoldemortGin/SuperIndex.git
+cd SuperIndex
+uv sync                                   # 建 .venv，superindex 以 editable 方式安装，并装 dev、build 依赖组
+uv run superindex --help                  # 或：uv run scripts/superindex.py --help
+uv run pytest tests -q
+```
 
-**Total: 2,640 pages, 4,182 tree nodes.**
+- 依赖组只有 `dev`（pytest、ruff）和 `build`（PyInstaller）；只要运行时依赖：`uv sync --no-default-groups`。
+- Windows 上的完整上手步骤（含公司 LLM 网关、代理/证书、Ollama）：[docs/windows-quickstart.md](https://github.com/VoldemortGin/SuperIndex/blob/main/docs/windows-quickstart.md)。
+- 仓库自带样例：`uv run superindex index samples/test_corpus_long/HarbourLife_AR2022.md --no-summary`，然后 `uv run superindex ask "港湾人寿董事会建议的末期股息是每股多少？" -v`（港湾人寿 Harbour Life 为虚构公司）。
 
-Every document carries a text layer and a proper embedded outline, so PageIndex
-resolves the hierarchy from the bookmarks (`toc_source: "bookmarks"`) rather
-than inferring it from layout statistics. That is the best case for this
-engine, and it means no OCR is required. The 1H2023 report is sourced from
-HKEX rather than AIA's own site, as AIA's archive links it there.
-
----
-
-## Layout
+### 目录结构
 
 ```
 .
-├── PageIndex/                  # the cloned upstream repo (editable install)
-├── data/aia_reports/           # the 10 source PDFs
-├── scripts/
-│   ├── 01_build_trees.py       # stage 1 — offline tree build (no LLM)
-│   ├── 02_qa_test.py           # stage 2 — index + retrieval QA (needs LLM key)
-│   ├── extract_text.py         # ground-truth helper (pypdfium2)
-│   ├── monitor.sh              # progress logger for long runs
-│   ├── questions.json          # 20 questions — full 10-report corpus
-│   └── questions_3docs.json    # 18 questions — scoped to the 3 indexed reports
-├── webapp/
-│   ├── server.py               # chat server (stdlib only, streaming SSE)
-│   └── static/index.html       # the chat UI
-├── results/
-│   ├── trees/                  # stage-1 output: one <doc>_structure.json each
-│   └── pageindex_store/        # stage-2 output: the client's local doc store
-└── .env.example                # provider configuration template
+├── superindex/
+│   ├── cli.py, __main__.py   # superindex 命令入口
+│   ├── engine/               # 树索引 + agent 检索引擎（衍生自 PageIndex）
+│   ├── extractors/           # PDF 抽取后端：Azure DI（REST）/ 文本层
+│   ├── nav/                  # 两级导航：语料目录 → 文档 → 章节
+│   ├── webapp/               # serve 的网页服务与 static/
+│   └── bm25.py, prefetch.py, calc.py, page_images.py, batch.py, ...
+├── scripts/                  # 实验与辅助脚本（superindex.py、06_azure_extract.py 等）
+├── samples/                  # 样例 Markdown 与题集
+├── tests/                    # 离线测试
+├── packaging/                # PyInstaller 打包脚本
+└── docs/                     # quickstart、交接文档、engine 来源说明
 ```
 
----
-
-## Web chat UI
-
-A live query interface over whatever is currently indexed.
+### 打包为免 Python 可执行程序（PyInstaller）
 
 ```bash
-~/.workbuddy/binaries/python/envs/pageindex/bin/python webapp/server.py
-# -> http://127.0.0.1:8787
+bash packaging/build_macos.sh                                        # macOS
 ```
 
-No extra dependencies — it is Python's stdlib `http.server` plus a single
-static HTML file.
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1  # Windows
+```
 
-What it does:
+冻结版的文档库默认在 exe 同目录的 `superindex_store/`，`.env` 先找当前工作目录再找 exe 目录。离线部署、onedir/onefile 取舍等见 [packaging/README.md](https://github.com/VoldemortGin/SuperIndex/blob/main/packaging/README.md)。
 
-- **Document scope picker** — tick which reports a question may draw on; the
-  list refreshes every 20 s, so reports still being indexed appear as
-  "索引中" and become selectable as soon as they finish.
-- **Streaming answers** — the answer is streamed token by token over SSE, so
-  you watch it being written rather than waiting on a spinner.
-- **Retrieval trace** — each answer carries a collapsible panel showing the
-  model's *thinking* and every tool call it made. This is the interesting
-  part: you can see it call `get_document_structure` to read the tree, then
-  `get_page_content` on a specific page range, before it answers. That is the
-  traceability PageIndex claims over vector RAG, made visible.
-- **Suggested questions** — a few of the verified test questions, one click away.
+### PDF → Markdown：Azure Document Intelligence
 
-### API
+`superindex index` 只读 Markdown。PDF 先用 Azure DI（`prebuilt-layout`）转成 Markdown：表格保留为真正的 Markdown 表格、扫描页做 OCR，并在页边界注入 `<!-- page: N -->` 页标记。在 `.env` 设置 `AZURE_DI_ENDPOINT` 与 `AZURE_DI_KEY` 后：
 
-| Method | Path | Body / notes |
+```bash
+# 检查配置（并只分析一份 PDF 的第 1 页做冒烟测试；--only 按文件名片段筛选）
+uv run scripts/06_azure_extract.py ./pdfs --check --only AR2022
+# 把 PDF 抽成 Markdown 落盘，再建库
+uv run scripts/06_azure_extract.py ./pdfs --out ./corpus_md
+uv run superindex index ./corpus_md --pdf-dir ./pdfs
+```
+
+与 PDF 自带文本层（PyPDF2）相比：
+
+| | 文本层 | Azure Document Intelligence |
 |---|---|---|
-| `GET` | `/` | the chat UI |
-| `GET` | `/api/status` | indexed docs, pending docs, model names |
-| `POST` | `/api/ask` | `{"question": str, "doc_ids": [...]}` → `text/event-stream` |
+| 成本 | 免费 | 按页计费 |
+| 表格 | **糊掉**——图表页抽成 `175230`，两个数粘在一起，标签与数值的对应丢失 | 真正的 Markdown 表格 |
+| 扫描件 / 纯图片 PDF | **直接拒绝**（无文本层、无 OCR） | OCR |
+| 正文段落 | 好 | 好 |
+| 页码锚点 | 原生（页范围） | 注入 `<!-- page: N -->` |
 
-SSE event names: `answer` (delta), `thinking` (delta), `tool_call`
-(`name`, `arguments`), `tool_result` (`name`, `output`), `error`, `done`.
+- 配置了 Azure 但调用失败时**直接报错停下**，不会静默退回文本层（否则写错 key 会悄悄改变索引质量）；设 `AZURE_DI_FALLBACK=1` 才退回。
+- `AZURE_DI_STRING_INDEX_TYPE` 必须保持 `unicodeCodePoint`，页标记注入依赖字符偏移与 Python 字符串下标对齐。
+- `superindex/extractors/azure_di.py` 是基于 httpx 的纯 REST 调用，不依赖 Azure SDK；`superindex/extractors/backend.py` 决定当前使用哪个抽取器。其余 `AZURE_DI_*` 选项见 `.env.example`。
 
-Chat runs are serialized server-side, so two tabs cannot interleave runs on
-the same PageIndex client.
+### 两级导航（nav）
 
----
-
-## How PageIndex works here
-
-Two independent halves, and only the second one costs money:
-
-1. **Index** — build a hierarchical *tree* instead of a vector index.
-   `page_index_flash()` derives the skeleton from the PDF layout/bookmarks
-   with **no LLM at all**; an LLM is then used only to write a short summary
-   for each node and to refine the tree for search cost.
-2. **Retrieve** — the chat model *reasons* over that tree, deciding which
-   nodes to open, rather than matching embeddings. That is what makes the
-   result traceable to a page instead of "vibe retrieval".
-
-Because step 1's skeleton is LLM-free, the whole corpus can be parsed and its
-structure inspected offline before spending anything.
-
----
-
-## Two ways to get text out of a PDF
-
-**Azure Document Intelligence becomes the default extractor as soon as
-`AZURE_DI_ENDPOINT` and `AZURE_DI_KEY` are set in `.env`.** Every entry point
-takes it up automatically — `scripts/02_qa_test.py` (PageIndex indexing) and
-`nav/build.py` (the two-level navigator) both print which extractor they used
-at startup. With nothing configured you get the built-in text layer, exactly as
-before.
-
-The fallback reads the PDF's own **text layer** with PyPDF2. That is free and
-works well on running prose, but it has two hard limits on financial reports:
-
-| | text layer | Azure Document Intelligence (default when configured) |
-|---|---|---|
-| Cost | free | per page |
-| Tables | **mangled** — a bar-chart page comes out as `175230`, two numbers fused, label-to-value association gone | real Markdown tables |
-| Scanned / image-only PDFs | **refused outright** (no text layer, no OCR) | OCR'd |
-| Running prose | good | good |
-| Page anchors | native (page ranges) | injected as `<!-- page: N -->` |
-
-Both land in the same place — Markdown with `#` headings — so `nav.build` and
-PageIndex's Markdown path consume either without changes.
-
-**Normally you don't invoke the extractor at all** — configure `.env` and run
-the pipeline as usual:
+面向"多级目录 + 上千文件"语料的检索层，把树的粒度扩展为「语料目录 → 文档 → 章节」：先在目录树里定位文件，再在文件的章节树里定位章节。
 
 ```bash
-# 1. check the config (and analyse page 1 of one PDF as a cheap smoke test)
-python scripts/06_azure_extract.py data/aia_reports --check --only FY2021
-
-# 2. build the two-level index straight over the PDFs — Azure DI is picked up
-#    automatically, no extra flag needed
-python -m nav.build data/aia_reports --out corpus_index --summarize-files
-
-# 3. or run the PageIndex QA pipeline, which takes it up the same way
-python scripts/02_qa_test.py --docs FY2021
+uv run python -m superindex.nav.build ./corpus_md --out ./corpus_index --summarize-files
+uv run python -m superindex.nav.route ./corpus_index "港湾人寿 2022 年的每股股息是多少？" --show-content
 ```
 
-`06_azure_extract.py` exists for the case where you want the Markdown **on disk
-as an artefact** (to inspect it, diff it, or feed it to something else):
-
-```bash
-python scripts/06_azure_extract.py data/aia_reports --out corpus_md
-python -m nav.build corpus_md --out corpus_index --summarize-files
-```
-
-Both entry points accept `--extractor {auto,azure-di,text-layer}` to force a
-backend — useful for measuring what Azure DI actually buys you on your corpus.
-
-If a configured Azure call fails, the run **aborts** rather than silently
-degrading to the text layer (a broken key would otherwise quietly change index
-quality). Set `AZURE_DI_FALLBACK=1` to opt into the soft behaviour.
-
-Configuration lives in `.env` (see the Azure section in `.env.example`) —
-endpoint, key, model, output format, features. The page anchors are injected by
-reading `analyzeResult.pages[].spans[].offset` and splicing a marker at each
-page boundary, which is why `AZURE_DI_STRING_INDEX_TYPE` must stay
-`unicodeCodePoint` (it keeps offsets aligned with Python string indices).
-
-`extractors/azure_di.py` is plain REST over httpx — no Azure SDK dependency.
-`extractors/backend.py` decides which extractor is active and takes over
-PageIndex's `LocalAPI._extract_page_texts` when Azure is configured, so nothing
-inside `PageIndex/` is ever edited. Offline tests:
-`tests/test_azure_di.py` (28 assertions) and `tests/test_backend.py` (27).
-
----
-
-## Running it
-
-### 0. Get the source PDFs
-
-The engine is **vendored** — `PageIndex/` ships with this repo, pinned to
-upstream commit `71714e8`, so a plain `git clone` gives you a runnable tree.
-(Provenance, what was stripped, and how to update: `PageIndex/UPSTREAM.md`.)
-
-The only thing not committed is the source PDFs (~27 MB, publicly downloadable):
-
-```bash
-bash data/aia_reports/download.sh
-```
-
-> `PageIndex/` is vendored rather than added as a submodule so that one clone
-> is enough — no `--recursive`, no missing-directory surprises. All of this
-> project's own code lives in `scripts/`, `webapp/` and `nav/`; nothing in
-> `PageIndex/` is ever modified, which keeps the upstream diff clean.
-
-### 1. Environment
-
-```bash
-python3 -m venv ~/.workbuddy/binaries/python/envs/pageindex
-~/.workbuddy/binaries/python/envs/pageindex/bin/pip install -r PageIndex/requirements.txt
-~/.workbuddy/binaries/python/envs/pageindex/bin/pip install -e PageIndex --no-deps
-```
-
-> Note: installing straight from `pyproject.toml` makes pip backtrack badly on
-> the unpinned `litellm`/`openai-agents` ranges. The repo's pinned
-> `requirements.txt` resolves in seconds, so it is installed first and the
-> package itself added with `--no-deps`.
-
-Optional — only needed by `scripts/05_similarity_probe.py`, which downloads a
-small ONNX embedding model:
-
-```bash
-~/.workbuddy/binaries/python/envs/pageindex/bin/pip install fastembed
-export HF_ENDPOINT=https://hf-mirror.com      # huggingface.co is unreachable from CN
-```
-
-### 2. Stage 1 — offline tree build (no API key, ~45 s total)
-
-```bash
-~/.workbuddy/binaries/python/envs/pageindex/bin/python scripts/01_build_trees.py
-```
-
-Writes `results/trees/<doc>_structure.json` plus a `manifest.json`.
-
-### 3. Stage 2 — retrieval QA (needs an LLM key)
-
-```bash
-cp .env.example .env      # then put your key in it
-~/.workbuddy/binaries/python/envs/pageindex/bin/python scripts/02_qa_test.py
-```
-
-Useful flags:
-
-```bash
---index-model gpt-5-mini          # model for summaries (cheap is fine)
---chat-model  gpt-5               # model that answers (use a strong one)
---base-url    https://...         # OpenAI-compatible gateway
---skip-index                      # reuse the existing local store
---force-index                     # re-index from scratch
---only Q05 Q20                    # run a subset of questions
-```
-
-Results land in `results/qa_results.json`.
-
----
-
-## Current corpus state
-
-Indexing was stopped deliberately part-way, so only **3 of the 10** reports carry a
-full retrieval index. The offline structural trees exist for all 10, but only these
-three can answer questions:
-
-| Indexed report | Pages |
-|---|---:|
-| `AIA_Interim_Report_1H2021.pdf` | 150 |
-| `AIA_Annual_Report_FY2021.pdf` | 304 |
-| `AIA_Annual_Report_FY2022.pdf` | 312 |
-
-Indexing is keyed on document name and reuses what is already stored, so resuming
-picks up from where it stopped:
-
-```bash
-nohup ~/.workbuddy/binaries/python/envs/pageindex/bin/python -u \
-  scripts/02_qa_test.py --concurrency 8 > results/qa_run.log 2>&1 &
-```
-
----
-
-## Test question sets
-
-Two sets, both with **independently verified** expected answers (ground truth read
-straight from the PDF text layer, never from PageIndex itself):
-
-| File | Scope | Questions |
-|---|---|---:|
-| `scripts/questions_3docs.json` | the 3 currently indexed reports | 18 |
-| `scripts/questions.json` | the full 10-report corpus | 20 |
-
-Run either set with `--questions`:
-
-```bash
-# the set that matches what is actually indexed right now
-~/.workbuddy/binaries/python/envs/pageindex/bin/python scripts/02_qa_test.py \
-    --skip-index --questions questions_3docs.json --out qa_results_3docs.json
-
-# a quick subset
-... --questions questions_3docs.json --only A01 A05 A17
-```
-
-### `questions_3docs.json` — the 18-question set
-
-**Interim 1H2021**
-
-| ID | Fact | Expected |
-|---|---|---|
-| A01 | Interim dividend per share | 38.00 HK cents, +8.6% |
-| A02 | VONB for 1H2021 | US$1,814m, +22% |
-| A03 | ANP / VONB margin / OPAT | US$3,060m (+13%) / 59.0% (+4.2pps) / US$3,182m (+5%) |
-| A04 | Free surplus and EV Equity | US$17.9bn (+US$4.4bn) / US$70.1bn (+5%) |
-
-**Annual FY2021**
-
-| ID | Fact | Expected |
-|---|---|---|
-| A05 | Total dividend per share | 146.00 HK cents = final 108.00 (+8%) + interim 38.00 |
-| A06 | VONB / OPAT / UFSG | US$3,366m (+18%) / US$6,409m (+6%) / US$6,451m (+8%) |
-| A07 | EV Equity and LCSM ratio | US$75.0bn new high; LCSM 399% |
-| A08 | Group CFO | Mr. Garth Jones |
-| A09 | Partnership distribution VONB | US$695m; VONB margin 39.1% |
-| A10 | MDRT ranking | No.1 globally, 7 consecutive years |
-
-**Annual FY2022**
-
-| ID | Fact | Expected |
-|---|---|---|
-| A11 | Total and final dividend per share | 153.68 HK cents (+5.3%); final 113.40 (+5%) |
-| A12 | VONB and 2H trend | US$3,092m, −5% for the year but +6% in 2H |
-| A13 | EV and EV Equity | EV US$74,694m (+5%); EV Equity US$77,031m (+6%) |
-| A14 | Share buy-back programme | three-year, US$10.0bn |
-| A15 | LCSM cover ratio | 283%, on the PCR basis |
-| A16 | MDRT ranking | 8 consecutive years |
-
-**Cross-document**
-
-| ID | Fact | Expected |
-|---|---|---|
-| A17 | FY2021 vs FY2022 VONB and dividend | VONB down (3,366 → 3,092, −5% CER) while dividend rose (146.00 → 153.68, +5.3%) |
-| A18 | 2021 interim + final = total | 38.00 + 108.00 = 146.00 HK cents |
-
----
-
-## The full-corpus set (`questions.json`)
-
-20 questions spanning all five annual reports and all five interim reports,
-covering dividend series across five years, segment VONB, officers, and a
-five-year CAGR calculation. See the file itself for the full table; it becomes
-usable once all 10 reports are indexed.
-
----
-
-Both sets follow the same rules: expected answers were read from the PDF text
-layer with `scripts/extract_text.py` (pypdfium2), **never** from PageIndex
-itself, so the tests are not circular. They mix four question shapes:
-
-- **needle lookups** — a single labelled figure on a specific page
-- **reasoning lookups** — a figure plus its driver (growth *and* the resulting margin)
-- **entity lookups** — officers named in the governance section
-- **cross-document work** — aggregation across reports (Q12/Q19 ask for the
-  five-year dividend series and CAGR; Q20 and A18 split a year's total dividend
-  into interim and final, which needs two documents)
-
-### Full-corpus ground truth
-
-**Annual reports**
-
-| ID | Fact | Expected |
-|---|---|---|
-| Q01 | FY2025 total dividend per share | 193.08 HK cents, +10% |
-| Q02 | FY2025 final dividend per share | 144.08 HK cents |
-| Q03 | FY2025 share buy-back programme | US$1.7bn (US$0.7bn payout ratio + US$1.0bn regular return) |
-| Q04 | Group CEO & CFO | Lee Yuan Siong; Garth Jones |
-| Q05 | AIA Hong Kong VONB 2025 | +28%; VONB margin 68.5% (+3.0pps) |
-| Q06 | Other Markets VONB 2025 | US$485m, +7% |
-| Q07 | FY2024 total dividend per share | 175.48 HK cents, +9% |
-| Q08 | FY2024 final dividend per share | 130.98 HK cents, +10% |
-| Q09 | FY2023 total dividend per share | 161.36 HK cents |
-| Q10 | FY2022 total dividend per share | 153.68 HK cents, +5.3% |
-| Q11 | FY2021 total dividend per share | 146.00 HK cents |
-| Q12 | 5-year annual dividend series + CAGR | 146.00 → 153.68 → 161.36 → 175.48 → 193.08; ≈7.2% CAGR |
-
-**Interim reports**
-
-| ID | Fact | Expected |
-|---|---|---|
-| Q13 | 1H2025 interim dividend per share | 49.00 HK cents, +10% |
-| Q14 | 1H2025 headline growth rates | VONB +14%, OPAT/share +12%, UFSG/share +10%, interim DPS +10% |
-| Q15 | 1H2024 interim dividend & buy-back | 44.50 HK cents, +5.2%; +US$2.0bn to the programme, total US$12.0bn |
-| Q16 | 1H2023 interim dividend per share | 42.29 HK cents, +5% |
-| Q17 | 1H2022 interim dividend per share | 40.28 HK cents, +6% |
-| Q18 | 1H2021 interim dividend per share | 38.00 HK cents, +8.6% |
-| Q19 | 5-year interim dividend series + CAGR | 38.00 → 40.28 → 42.29 → 44.50 → 49.00; ≈6.6% CAGR |
-| Q20 | FY2025 interim + final = total | 49.00 + 144.08 = 193.08 HK cents |
-
----
-
-## Notes
-
-- Local mode handles **text-based PDFs only** — no OCR, no image understanding,
-  no folders. Those are PageIndex Cloud features.
-- The local client stores documents under `storage_path` (`results/pageindex_store/`
-  by default), one directory per document holding `tree.json`, `pages.json`
-  and `doc.json`.
-- Indexing is synchronous in local mode, so `submit_document()` blocks.
-- A 1H2026 interim report is also published and can be dropped into
-  `data/aia_reports/` — both scripts pick up new PDFs automatically.
+配置 Azure DI 后 `superindex.nav.build` 也可直接吃 PDF（启动时打印所用抽取器，`--extractor {auto,azure-di,text-layer}` 可强制指定）。详见 [superindex/nav/README.md](https://github.com/VoldemortGin/SuperIndex/blob/main/superindex/nav/README.md)。

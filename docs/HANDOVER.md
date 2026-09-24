@@ -654,3 +654,73 @@ pkill -f "webapp/server.py" && nohup $PY -u webapp/server.py > results/webapp.lo
    - 渲染接口 `superindex/page_render.py`（pypdfium2 + Pillow，JPEG q80，长边 1600），缓存 `docs/<id>/images/<长边>/p<N>.jpg`；pypdfium2 / Pillow 已移入主依赖并打进 PyInstaller 包（onedir 91 MB → 106 MB）。
    - 送图方式（`superindex/image_chat.py`）：PageIndex 的 chat 只收文本，故在外层复用 `local_chat._chat_agent` / `_chat_events_agen` 自建流：检索前置附图放进问题那条 user 消息（`input_image` → Chat Completions `image_url` data URL）；`get_page_image` 工具只回文本，图片由 `RunConfig.call_model_input_filter` 作为紧跟 tool 结果之后的 user 消息插入（OpenAI Chat Completions 的 tool 消息不能带图）。用本地假 OpenAI 服务器验证了 `openai/<model>`+base_url 与 `azure/<deployment>` 两种请求体（`tests/test_page_images.py`）。
    - 依赖更多 PageIndex 私有接口（`local_chat._chat_agent` / `_run_kwargs` / `_stream_sync` / `_chat_events_agen`），升级 PageIndex 需回归；尚未在真实多模态模型上评测效果与成本。
+
+---
+
+## 2026-09-24 重构：发布为 PyPI 包 superindex 0.1.0
+
+**目标**：以 `superindex` 发布到 PyPI（发行名、命令名、import 名一致），`pip install superindex` / `uv tool install superindex` 后直接 `superindex index|ask|search|serve|batch`。Python >=3.11（3.11–3.13）。
+
+**目录变化**
+
+| 原位置 | 新位置 |
+|---|---|
+| `PageIndex/pageindex/` | `superindex/engine/`（仓库不再有 `PageIndex/` 目录） |
+| `nav/` | `superindex/nav/`（`python -m superindex.nav.build` / `python -m superindex.nav.route`） |
+| `webapp/`（含 `static/`） | `superindex/webapp/`（单独运行 `python -m superindex.webapp.server`，等价于 `superindex serve`） |
+| `extractors/` | `superindex/extractors/` |
+| `PageIndex/UPSTREAM.md`、`PageIndex/docs/naming-rules.md` | `docs/engine/` |
+| `PageIndex/LICENSE` | 根目录 `LICENSE`（lin han 2026 MIT + VectifyAI 原版权全文），另加 `NOTICE` |
+
+- 引擎来源：VectifyAI/PageIndex v0.2.10，commit `71714e8`，MIT；来源、改动与升级方法见 `docs/engine/UPSTREAM.md`。
+- 项目本身成为可安装包（hatchling）：`uv sync` 把 superindex 以 editable 装进 `.venv`；uv 依赖组只剩 `dev`、`build`（去掉了 `pageindex` 组）。源码运行 `uv run scripts/superindex.py ...` 与 `uv run superindex ...` 等价。
+
+**import 改写**
+
+- `pageindex` → `superindex.engine`（内部导入一并改写）；产品名 PageIndex → SuperIndex：`PageIndexClient` → `SuperIndexClient`、`PageIndexLocalClient` → `SuperIndexLocalClient`、`PageIndexAPIError` → `SuperIndexAPIError`；`version("pageindex")` → `version("superindex")`。
+- 保留原名（指 VectifyAI 托管云服务）：`PageIndexCloudClient`、"PageIndex cloud" / MCP 相关措辞、`PAGEINDEX_API_KEY`、`api.pageindex.ai` 等。
+- 保留原名（存储/输出兼容）：本地存储目录 `.pageindex`、`pi-` 文档 id、`pageindex-citation-NN` 锚点——旧文档库无需重建。
+
+**环境变量改名**（新名优先；只设旧名时仍生效，并在 stderr 提示一次"已更名"）
+
+| 旧名 | 新名 |
+|---|---|
+| `PAGEINDEX_INDEX_MODEL` | `SUPERINDEX_INDEX_MODEL` |
+| `PAGEINDEX_CHAT_MODEL` | `SUPERINDEX_CHAT_MODEL` |
+| `PAGEINDEX_BASE_URL` | `SUPERINDEX_BASE_URL` |
+| `PAGEINDEX_API_KEY_OVERRIDE` | `SUPERINDEX_API_KEY_OVERRIDE` |
+| `PAGEINDEX_REASONING_EFFORT` | `SUPERINDEX_REASONING_EFFORT` |
+
+`PAGEINDEX_API_KEY`（VectifyAI 云服务的 key，本 CLI 不用）不改名。映射在 `superindex/runtime.py`。
+
+**可配置指令与去品牌**
+
+- `ask` / `serve` / `batch` 统一使用同一套常驻指令，语义统一为**替换默认**（此前 ask/batch 的 `--instructions` 是附加，serve 的是替换网页默认）。优先级：`--instructions "文本"` > `--instructions-file 路径` > `SUPERINDEX_INSTRUCTIONS` > `SUPERINDEX_INSTRUCTIONS_FILE` > 内置中性默认（英文财务分析助手提示：准确数字、单位、报告期；文档没有就直说，不猜）。
+- `superindex serve` 的 reasoning effort 与 `ask` 一致：未设置就不发送（去掉了独立运行 webapp 时默认 `"low"` 的行为）。
+- 去品牌：网页标题改为「SuperIndex 财报问答」，示例问题改用虚构公司"港湾人寿 Harbour Life"（`samples/test_corpus_long/HarbourLife_AR2022.md`）；README / `.env.example` / quickstart / packaging 文档不再出现具体公司品牌。
+
+**默认路径变化**
+
+- 文档库：非冻结（pip 安装或源码）时默认**当前工作目录下 `superindex_store/`**（以前源码默认是仓库的 `results/superindex_store`，旧库请用 `--store results/superindex_store` 或 `SUPERINDEX_STORE` 指回）；PyInstaller 冻结 exe 时仍是 exe 同目录 `superindex_store/`。
+- `batch` 输出默认 `<cwd>/results/batch/<时间戳>`（冻结时在 exe 目录下）。
+- `.env`：先找当前工作目录，冻结时再找 exe 目录；已有环境变量优先。
+
+**依赖约束策略**
+
+- `[project].dependencies` 写版本区间（不钉死），便于与其他工具共存；快速迭代的 0.x 库上限卡到下一个 minor。
+- `uv.lock` 锁定实测版本组合；`packaging/requirements-bundle.txt` 由 `uv export --frozen --no-default-groups --group build --no-hashes --no-emit-project -o packaging/requirements-bundle.txt` 生成，不要手改。
+- `anthropic` / `claude` 为可选 extras，CLI 不用。
+
+**打包 / 发布流程**
+
+```bash
+uv lock                      # 改依赖后
+uv run pytest tests -q
+uv build                     # 产出 dist/superindex-0.1.0.tar.gz 与 .whl
+uvx twine check dist/*
+uvx twine upload dist/*      # 需要 PyPI token（TWINE_USERNAME=__token__ / TWINE_PASSWORD）
+```
+
+- 发布前改 `pyproject.toml` 的 `version`；sdist 只含 `superindex/`、`pyproject.toml`、`README.md`、`LICENSE`、`NOTICE`（tests/samples/scripts 仅在仓库）。
+- README 即 PyPI 页面：指向仓库文件的链接必须用绝对 GitHub URL（https://github.com/VoldemortGin/SuperIndex/blob/main/...）。
+- PyInstaller 单机包流程不变：`bash packaging/build_macos.sh` / `packaging\build_windows.ps1`（见 `packaging/README.md`）。
