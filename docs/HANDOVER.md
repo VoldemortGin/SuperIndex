@@ -209,9 +209,9 @@ PAGEINDEX_CHAT_MODEL=deepseek/deepseek-flash
 │   ├── test_azure_di.py       azure_di 的离线测试（28 断言，不联网）
 │   ├── test_backend.py        后端解析的离线测试（25 断言，不联网）
 │   ├── test_registry.py       语料注册表/watcher 的离线测试（135 断言，不联网）
-│   ├── test_llm_retry.py      LLM 预算升级与流式回退（49 断言，stub 掉 litellm）
+│   ├── test_llm_retry.py      LLM 预算升级、流式回退与每次调用埋点（78 断言，stub 掉 litellm）
 │   ├── test_debuglog.py       日志记录/过滤/轮转（44 断言，写临时目录）
-│   ├── test_policy.py         路由策略（132 断言，stub 掉 LLM，只写临时目录）
+│   ├── test_policy.py         路由策略（135 断言，stub 掉 LLM，只写临时目录）
 │   └── test_suggest.py        示例问题生成/缓存（75 断言，stub 掉 LLM，只写临时目录）
 │
 ├── config/                    ★ 业务配置（唯一需要业务方改的地方）
@@ -568,7 +568,7 @@ finish_reason=length)` —— 提问时回答阶段直接报错。
 - 服务器答案预算 1500 → **4096**（`SUPERINDEX_ANSWER_MAX_TOKENS` 可覆盖）
 - 报错信息改成**逐次列出每次尝试**的预算与 reasoning 状态，便于诊断
 
-覆盖测试：`tests/test_llm_retry.py`（39 条，stub 掉 litellm，不联网）。
+覆盖测试：`tests/test_llm_retry.py`（78 条，stub 掉 litellm，不联网）。
 
 ### 5.13 `nav/debuglog.py` —— 结构化调试日志（新增）
 
@@ -657,7 +657,88 @@ $PY -m nav.route index/demo "..." --show-policy
 $PY -m nav.route index/demo "..." --policy /path/x.yaml --corpus 友邦保险
 ```
 
-覆盖测试：`tests/test_policy.py`（128 条，stub 掉 LLM，只写临时目录）。
+覆盖测试：`tests/test_policy.py`（135 条，stub 掉 LLM，只写临时目录）。
+
+### 5.15 每次 LLM 调用的埋点（新增）
+
+**要解决的问题**：日志里只有**阶段总耗时**（`stages.route_ms`），而重试发生在
+这个总耗时**内部**。于是一次「内部重试了两次才成功」的调用，和一次「单纯就是
+慢」的调用，在事后看**完全一样**。之前为了解释一次慢查询，只能拿日志做相关性
+推断——而那恰恰是错的（见 §7 的「冷启动」一节，我据此推错了一次结论）。
+
+现在每次 `chat()` 都留一条记录：
+
+| 字段 | 含义 |
+|---|---|
+| `label` | 调用阶段，可聚合：`route.dirs` / `route.files` / `route.sections` / `route.descend` |
+| `tag` | 具体是哪一个：章节定位记「语料 / 文件」，路由调用为空 |
+| `ms` / `attempt_ms` | 本次总耗时 / **每一次尝试**的耗时 |
+| `attempts` / `retried` | 尝试了几次 / 是否发生过重试 |
+| `prompt_chars` | 提示词长度，用来解释「为什么这次调用变贵了」 |
+
+汇总字段落在 `queries.jsonl` 的每条记录上：`llm_calls`（原始列表）、
+`llm_n_calls`、`llm_n_retried`、`llm_ms`。**第一个该看的是 `llm_n_retried`** ——
+非 0 就说明这次查询有一部分时间花在「恢复」而不是「干活」上。
+
+界面上对应检索框里的一行（`llmstats` 事件）：
+
+```
+模型调用 5 次 · 3.1s · 最慢 0.8s route.dirs
+模型调用 3 次 · 4.2s · 重试 2 次 · 最慢 4.0s route.sections 友邦保险 / AIA_AR2024.md
+```
+
+**两个实现上的坑**（都在注释里写明了，改的时候别踩）：
+
+1. **`ThreadPoolExecutor` 不继承 contextvars。** 采集桶放在 `ContextVar` 里
+   （不是模块全局，否则后台建索引的调用会混进用户的查询记录）。但并行章节
+   定位是提交到线程池的，**默认看不到这个桶** —— 而它们恰恰是「页面多」时
+   最该被记账的那几次调用。所以 `sections_for_all()` 显式
+   `contextvars.copy_context().run` 逐个任务拷贝上下文。
+   注意必须**一个任务一份拷贝**：`Context.run` 不允许同一个 Context 被并发进入，
+   四份共用一个会直接抛异常；拷贝也必须发生在**提交线程**上，在 worker 里拷贝
+   只会拷到 worker 自己那个空上下文。
+2. **`llm_ms` 是各次调用耗时之和，不是墙钟。** 章节定位是并行的，所以
+   `llm_ms` 会大于 `stages.sections`。要比墙钟请对 `stages`，别对 `ms`。
+
+覆盖测试：`tests/test_llm_retry.py`（78 条）里的 6 个埋点用例 +
+`tests/test_policy.py` 的 `test_sections_for_all_carries_the_call_bucket`
+（专门钉住上面第 1 个坑：如果谁把上下文拷贝去掉，并行调用会**静默地**不进
+记录，读起来就像「检索很便宜」——比没有埋点更糟）。
+
+### 5.16 首问冷启动 4~9s（修 bug）
+
+上面那套埋点上线后，第一次真实查询就自己解释了自己：
+
+```
+total=7646ms  route=5159ms  sections=673ms  answer=1692ms
+llm_n_calls=4  llm_ms=2276        ← route 阶段里只有 1222ms 是路由调用
+```
+
+**`stages.route` 和它内部的调用耗时对不上**，差 3.9s。热态复现则完全吻合
+（1454 vs 1453、1152 vs 1150、1423 vs 1421）。所以这是一次性的、每进程
+一次的开销，而且**不在 `litellm.completion()` 里**（那次调用实测只有 448ms）。
+
+逐层量下来是两个叠加的原因，都在 `import litellm` 这一步（它是**懒加载**的，
+所以这笔账会算在**碰巧第一个调用 `chat()` 的请求**头上，在服务器里就是重启后
+的第一个问题）：
+
+1. **litellm 在 import 时联网拉模型价格表**，拉不到才回退到内置副本。本机
+   `HTTPS_PROXY` 指向本地代理，这次请求**超时 9s**。实测冷进程
+   `_pick_dirs_from_tree` 9604ms，其中只有 ~700ms 是真的模型调用。
+   → 修法：`nav/llm.py` 在 import litellm 之前
+   `os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "true")`。
+   PageIndex 自己也有这道防线（`pageindex/utils.py:16`），但 **`nav/` 在查询
+   路径上从不 import 它**，所以那道防线从来没生效过。改完这一条：冷态未解释
+   开销 8874ms → 2967ms。
+2. 剩下的 ~2.9s 就是 **`import litellm` 本身**。
+   → 修法：`llm.warmup()`，服务器启动时先付掉，并把秒数**打印出来**
+   （`warmup : 2.9s (litellm import)`）——启动时的一段沉默也仍然是沉默。
+
+改完实测：重启后**第一个**查询 `route=1454ms` vs 路由调用 `1453ms`，差 1ms；
+总耗时 7646ms → 4834ms。
+
+`litellm.model_cost` 仍然可用（从内置副本填充），全仓库只有
+`PageIndex/pageindex/local_chat.py:1347` 读它，`nav/` 与 `webapp/` 都不用。
 
 ---
 
@@ -836,13 +917,13 @@ $PY -u scripts/02_qa_test.py --skip-index --questions questions_3docs.json \
 # 4. 验证 nav 索引可用（应定位到 友邦保险/2024/annual/ + 股息章节）
 $PY -u -m nav.route samples/test_index "友邦保险 2024 年全年的每股股息是多少？"
 
-# 5. 跑离线测试（488 条断言，不联网，约 30 秒）
+# 5. 跑离线测试（520 条断言，不联网，约 30 秒）
 $PY -u tests/test_azure_di.py     # 28 条：配置/页标记/错误映射
 $PY -u tests/test_backend.py      # 25 条：后端解析/按页切分/PageIndex 接管
 $PY -u tests/test_registry.py     # 135 条：注册表/变更检测/watcher/投放区
-$PY -u tests/test_llm_retry.py    # 49 条：token 预算升级/流式回退/思考与正文分流
+$PY -u tests/test_llm_retry.py    # 78 条：token 预算升级/流式回退/思考与正文分流/每次尝试埋点
 $PY -u tests/test_debuglog.py     # 44 条：日志记录/过滤/轮转/思考量字段
-$PY -u tests/test_policy.py       # 132 条：路由策略（含「空策略 = 原行为」、并行顺序一致）
+$PY -u tests/test_policy.py       # 135 条：路由策略（含「空策略 = 原行为」、并行顺序一致、调用记录跨线程传递）
 $PY -u tests/test_suggest.py      # 75 条：示例问题生成/缓存/失效
 #   注：下载样例 PDF 后 test_backend 会多 2 条（27 条）
 

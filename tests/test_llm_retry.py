@@ -14,6 +14,7 @@ No network: `litellm` is replaced with a scripted stub.
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import sys
 from pathlib import Path
 
@@ -306,6 +307,111 @@ def test_ints_tolerates_prefixes() -> None:
     check("不可解析的项跳过", _ints(["x", 1, None]) == [1], str(_ints(["x", 1, None])))
 
 
+# ── per-call instrumentation ─────────────────────────────────────────────
+# A stage total cannot tell "the model was called three times" apart from "one
+# call had to retry twice and was slow". These cover the record that can.
+def test_calls_are_recorded_on_success() -> None:
+    print("\n[成功也要记一笔 —— 重试过的成功正是要暴露的静默变慢]")
+    with stubbed([reply("一次就好")]):
+        with llm.record_calls() as calls:
+            out = llm.chat("p", label="route.dirs", tag="t1")
+        check("照常返回内容", out == "一次就好", out)
+        check("记录 1 条", len(calls) == 1, str(calls))
+        rec = calls[0]
+        check("label 落库", rec.get("label") == "route.dirs", str(rec.get("label")))
+        check("tag 落库", rec.get("tag") == "t1", str(rec.get("tag")))
+        check("attempts=1", rec.get("attempts") == 1, str(rec.get("attempts")))
+        check("未标记重试", rec.get("retried") is False)
+        check("有耗时且为整数",
+              isinstance(rec.get("ms"), int) and rec["ms"] >= 0, str(rec.get("ms")))
+        check("每次尝试的耗时都在", rec.get("attempt_ms") == [rec["ms"]],
+              str(rec.get("attempt_ms")))
+
+
+def test_retry_is_visible_in_the_record() -> None:
+    print("\n[重试在记录里可见 —— 这是本次埋点的全部意义]")
+    with stubbed([truncated(), reply("重试后拿到")]) as stub:
+        with llm.record_calls() as calls:
+            out = llm.chat("p", effort="low", max_tokens=1000, retries=2,
+                           label="route.files")
+        check("最终拿到内容", out == "重试后拿到", out)
+        check("底层确实调了 2 次", len(stub.calls) == 2, str(len(stub.calls)))
+        rec = calls[0]
+        check("记录里 attempts=2", rec.get("attempts") == 2,
+              str(rec.get("attempts")))
+        check("记录里标了已重试", rec.get("retried") is True)
+        check("两次尝试各有耗时", len(rec.get("attempt_ms") or []) == 2,
+              str(rec.get("attempt_ms")))
+        check("总耗时 = 各次之和", rec.get("ms") == sum(rec["attempt_ms"]),
+              str(rec))
+
+
+def test_no_collector_is_a_noop() -> None:
+    print("\n[没开采集时埋点完全不存在]")
+    with stubbed([reply("ok")]):
+        out = llm.chat("p", label="route.dirs")
+        check("照常返回", out == "ok", out)
+    check("默认没有 bucket", llm._calls.get() is None, str(llm._calls.get()))
+
+
+def test_bucket_is_isolated_across_threads() -> None:
+    print("\n[线程隔离 —— 后台建索引不能污染查询的调用记录]")
+    from concurrent.futures import ThreadPoolExecutor
+
+    def worker(_):
+        llm.chat("p", label="index.summary")
+        return llm._calls.get()
+
+    with stubbed([reply("x")] * 8) as stub:
+        with llm.record_calls() as calls:
+            llm.chat("p", label="route.dirs")
+            # Plain submit: ThreadPoolExecutor does not copy contextvars, so a
+            # thread that is not part of this query cannot see the bucket.
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                blind = list(pool.map(worker, [1, 2]))
+            # Explicit copy, the way sections_for_all does it: same bucket.
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                futs = [pool.submit(contextvars.copy_context().run, worker, 0)
+                        for _ in (1, 2)]
+                [f.result() for f in futs]
+        check("桶里共 3 条（主线程 1 + 拷贝上下文的 2）", len(calls) == 3,
+              str([c["label"] for c in calls]))
+        check("未拷贝上下文的线程看不到 bucket", blind == [None, None], str(blind))
+        check("拷贝了上下文的线程写进了同一个桶",
+              sorted(c["label"] for c in calls)
+              == ["index.summary", "index.summary", "route.dirs"],
+              str([c["label"] for c in calls]))
+        check("底层一共调了 5 次（主线程 1 + 两个池各 2）", len(stub.calls) == 5,
+              str(len(stub.calls)))
+
+
+def test_call_stats_rollup() -> None:
+    print("\n[call_stats 汇总 —— 重试次数是第一个该看的数]")
+    s = llm.call_stats([
+        {"label": "route.dirs", "ms": 800, "retried": False},
+        {"label": "route.files", "ms": 1200, "retried": True},
+    ])
+    check("调用次数", s["llm_n_calls"] == 2, str(s["llm_n_calls"]))
+    check("重试次数", s["llm_n_retried"] == 1, str(s["llm_n_retried"]))
+    check("总耗时", s["llm_ms"] == 2000, str(s["llm_ms"]))
+    check("原始记录保留", s["llm_calls"][1]["label"] == "route.files", str(s))
+    check("None 不炸", llm.call_stats(None)["llm_n_calls"] == 0)
+    check("脏数据被跳过", llm.call_stats([None, "x", {"ms": 5}])["llm_n_calls"] == 1,
+          str(llm.call_stats([None, "x", {"ms": 5}])))
+
+
+def test_chat_json_forwards_label() -> None:
+    print("\n[chat_json 把 label/tag 透传下去]")
+    with stubbed([reply('{"dirs": [0]}')]):
+        with llm.record_calls() as calls:
+            ans = llm.chat_json("p", label="route.dirs", tag="t1")
+        check("仍解析出 JSON", ans == {"dirs": [0]}, str(ans))
+        check("记录带上了 label",
+              bool(calls) and calls[0]["label"] == "route.dirs", str(calls))
+        check("记录带上了 tag", bool(calls) and calls[0]["tag"] == "t1",
+              str(calls))
+
+
 def main() -> int:
     print("=" * 74)
     print("LLM 重试与预算升级测试（stub 掉 litellm，不联网）")
@@ -322,6 +428,12 @@ def main() -> int:
     test_stream_text_still_yields_plain_strings()
     test_json_bare_identifiers()
     test_ints_tolerates_prefixes()
+    test_calls_are_recorded_on_success()
+    test_retry_is_visible_in_the_record()
+    test_no_collector_is_a_noop()
+    test_bucket_is_isolated_across_threads()
+    test_call_stats_rollup()
+    test_chat_json_forwards_label()
     print()
     print("=" * 74)
     print(f"  通过 {len(PASS)}  失败 {len(FAIL)}")

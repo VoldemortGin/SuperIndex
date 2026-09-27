@@ -361,44 +361,64 @@ class Handler(BaseHTTPRequestHandler):
 
                 # Level 0/1: which files. Emitted per step so the UI can show
                 # the model narrowing down while it happens.
+                #
+                # Retrieval is where the round trips are: up to 2 routing calls
+                # plus one section call per file. The answer is a single logical
+                # call whose cost is already `stages.answer_ms`, so the bucket
+                # closes before it — this log answers "how many round trips did
+                # retrieval cost", which the stage totals cannot.
                 trace.mark("route")
-                res.files, t1 = nav.find_files(question, top_n=5)
-                for st in t1:
-                    emit("nav", {"level": "dir", "where": st.where,
-                                 "detail": st.detail, "picked": st.picked,
-                                 "note": st.note})
-                    trace.route_step(level="dir", where=st.where, detail=st.detail,
-                                     picked=st.picked, note=st.note)
-                trace.stage_ms("route", trace.elapsed("route"))
-                trace.files([f.rel_path for f in res.files])
-                if not res.files:
-                    trace.abort("no files located")
-                    emit("error", {"message": "没有定位到相关文件"})
-                    emit("done", {"ok": False, "ms": int((time.time()-started)*1000)})
-                    return
-
-                # Level 2: which sections.
-                trace.mark("sections")
-                for fe, (secs, t2) in zip(res.files, nav.sections_for_all(
-                        question, res.files, 6)):
-                    for st in t2:
-                        emit("nav", {"level": "chapter", "where": st.where,
+                with llm.record_calls() as llm_calls:
+                    res.files, t1 = nav.find_files(question, top_n=5)
+                    for st in t1:
+                        emit("nav", {"level": "dir", "where": st.where,
                                      "detail": st.detail, "picked": st.picked,
                                      "note": st.note})
-                        trace.route_step(level="chapter", where=st.where,
+                        trace.route_step(level="dir", where=st.where,
                                          detail=st.detail, picked=st.picked,
                                          note=st.note)
-                    res.sections += [(fe, s) for s in secs]
-                trace.stage_ms("sections", trace.elapsed("sections"))
+                    trace.stage_ms("route", trace.elapsed("route"))
+
+                    # Level 2: which sections. Skipped when level 1 found
+                    # nothing: `sections_for_all` on an empty list would build a
+                    # pool with zero workers, which raises.
+                    if res.files:
+                        trace.mark("sections")
+                        for fe, (secs, t2) in zip(res.files, nav.sections_for_all(
+                                question, res.files, 6)):
+                            for st in t2:
+                                emit("nav", {"level": "chapter", "where": st.where,
+                                             "detail": st.detail,
+                                             "picked": st.picked, "note": st.note})
+                                trace.route_step(level="chapter", where=st.where,
+                                                 detail=st.detail,
+                                                 picked=st.picked, note=st.note)
+                            res.sections += [(fe, s) for s in secs]
+                        trace.stage_ms("sections", trace.elapsed("sections"))
+
+                stats = llm.call_stats(llm_calls)
+                trace.files([f.rel_path for f in res.files])
+                # Emitted while the trace box is still open, because it is the
+                # line that answers "why was that slow?": whether the model was
+                # called a lot, or one call had to retry.
+                emit("llmstats", stats)
+
+                if not res.files:
+                    trace.abort("no files located", **stats)
+                    emit("error", {"message": "没有定位到相关文件"})
+                    emit("done", {"ok": False, "llm": stats,
+                                  "ms": int((time.time()-started)*1000)})
+                    return
 
                 context, sources = build_context(res, nav)
                 trace.sources(sources)
                 emit("sources", sources)
 
                 if not sources:
-                    trace.abort("no sections located")
+                    trace.abort("no sections located", **stats)
                     emit("error", {"message": "定位到文件但没找到具体章节"})
-                    emit("done", {"ok": False, "ms": int((time.time()-started)*1000)})
+                    emit("done", {"ok": False, "llm": stats,
+                                  "ms": int((time.time()-started)*1000)})
                     return
 
                 emit("stage", {"text": f"生成回答（{len(sources)} 个来源）"})
@@ -423,9 +443,10 @@ class Handler(BaseHTTPRequestHandler):
                 # a large value means the model was thinking, not that retrieval
                 # or the context was expensive.
                 trace.finish(answer, context_chars=len(context),
-                             thinking_chars=thinking_chars)
+                             thinking_chars=thinking_chars, **stats)
 
-            emit("done", {"ok": True, "ms": int((time.time() - started) * 1000)})
+            emit("done", {"ok": True, "llm": stats,
+                          "ms": int((time.time() - started) * 1000)})
         except ClientGone:
             # The reader pressed Stop or closed the tab. Not an error: the
             # answer was simply not wanted any more. Recording it as a failure
@@ -498,10 +519,16 @@ def main() -> int:
     ap.add_argument("--watch-interval", type=float, default=30.0)
     args = ap.parse_args()
 
+    # Pay litellm's import cost here. It is lazy by design, so left alone it
+    # lands inside the first question after a restart and reads as the model
+    # being slow. At boot it is merely slow, and visible.
+    warmed = llm.warmup()
+
     reg = registry()
     print("SuperIndex web UI")
     print(f"  model        : {llm.DEFAULT_MODEL}")
     print(f"  data root    : {DATA_ROOT}")
+    print(f"  warmup       : {warmed:.1f}s (litellm import)")
 
     # Anything already sitting in data/ becomes a corpus on startup.
     fresh = reg.sync_data_root()

@@ -27,6 +27,7 @@ Design notes that matter for robustness at scale:
 from __future__ import annotations
 
 import argparse
+import contextvars
 import json
 import os
 import re
@@ -284,7 +285,7 @@ class Navigator:
         )
         try:
             ans = llm.chat_json(prompt, model=self.model, effort=self.effort,
-                                max_tokens=TOKENS_ROUTE)
+                                max_tokens=TOKENS_ROUTE, label="route.dirs")
             idxs = [i for i in _ints(ans.get("dirs")) if 0 <= i < len(ids)]
         except Exception as exc:  # noqa: BLE001
             # Log it as well as printing: the server runs with verbose=False,
@@ -350,7 +351,8 @@ class Navigator:
             )
             try:
                 ans = llm.chat_json(prompt, model=self.model, effort=self.effort,
-                                    max_tokens=TOKENS_SECTION)
+                                    max_tokens=TOKENS_SECTION,
+                                    label="route.descend")
             except Exception as exc:  # noqa: BLE001
                 self._say(f"  ! 逐层下钻失败: {exc}")
                 break
@@ -457,7 +459,7 @@ class Navigator:
         )
         try:
             ans = llm.chat_json(prompt, model=self.model, effort=self.effort,
-                                max_tokens=TOKENS_SECTION)
+                                max_tokens=TOKENS_SECTION, label="route.files")
             idxs = [i for i in _ints(ans.get("files")) if 0 <= i < len(pool)]
         except Exception as exc:  # noqa: BLE001
             log_error(exc, where="route.files", question=question,
@@ -525,7 +527,9 @@ class Navigator:
         )
         try:
             ans = llm.chat_json(prompt, model=self.model, effort=self.effort,
-                                max_tokens=TOKENS_SECTION)
+                                max_tokens=TOKENS_SECTION,
+                                label="route.sections",
+                                tag=self.display(fe.rel_path))
             idxs = [i for i in _ints(ans.get("sections")) if 0 <= i < len(flat)]
         except Exception as exc:  # noqa: BLE001
             log_error(exc, where="route.sections", question=question,
@@ -599,10 +603,26 @@ class Navigator:
         """
         if len(files) == 1:
             return [self.find_sections(question, files[0], top_n=max_sections)]
+        # `ThreadPoolExecutor` does NOT inherit contextvars, so the per-call
+        # instrumentation bucket that `llm.record_calls()` sets would be
+        # invisible to these workers — and these are precisely the calls that
+        # bucket exists to account for. So copy the context per task and run the
+        # task inside it.
+        #
+        # One copy per task, not one shared: `Context.run` refuses to be entered
+        # twice at once, so a single copy handed to four workers would raise
+        # instead of collecting. The copy must also be taken *here*, on the
+        # calling thread — taking it inside the worker would capture that
+        # worker's own empty context and find nothing.
         with ThreadPoolExecutor(max_workers=min(len(files), 4)) as pool:
-            return list(pool.map(
-                lambda fe: self.find_sections(question, fe, top_n=max_sections),
-                files))
+            futs = [pool.submit(contextvars.copy_context().run,
+                                self.find_sections, question, fe,
+                                top_n=max_sections)
+                    for fe in files]
+            # Read back in submission order, not completion order — the order
+            # is load-bearing (see the note in `run()`), and `f.result()` blocks
+            # in exactly the sequence the futures were created.
+            return [f.result() for f in futs]
 
 
 def merge_manifests(corpora: list[tuple[str, "str | Path", str, str]]

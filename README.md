@@ -124,6 +124,15 @@ collapsible thinking panel does. Section selection is the one stage that was
 purely wasteful: the per-file calls are independent, so they now run
 concurrently (4 files × 0.25 s measured at 0.26 s, not 1.0 s).
 
+One more cost that the stage totals used to hide: **the first question after a
+server restart took 4–9 s longer than the same question warm**, and it was not
+the model. `litellm` is imported lazily and, on import, fetches its model price
+table over the network — which on a proxied machine times out before falling
+back to the bundled copy. That bill landed on whichever request triggered the
+import. Both halves are now paid at startup instead (a local cost map, plus an
+explicit `llm.warmup()` whose duration is printed at boot), and the first query
+after a restart reconciles to within 1 ms of the sum of its LLM calls.
+
 ### Better text in, better answers out
 
 Upstream reads the PDF text layer with PyPDF2. On table-heavy documents that
@@ -238,7 +247,7 @@ Retrieval quality problems are usually measurable before they are fixable:
 
 ### Tested offline
 
-**488 assertions** across the extraction, navigation, registry, LLM-retry,
+**520 assertions** across the extraction, navigation, registry, LLM-retry,
 logging, policy and suggestion layers, with no network and no credentials
 required:
 
@@ -246,9 +255,9 @@ required:
 python tests/test_azure_di.py    # 28 assertions — config, page markers, error mapping
 python tests/test_backend.py     # 25 assertions — backend resolution, page splitting
 python tests/test_registry.py    # 135 assertions — registry, change detection, watcher, drop zone
-python tests/test_llm_retry.py   # 49 assertions — token-budget escalation, stream fallback, thinking/content split
+python tests/test_llm_retry.py   # 78 assertions — token-budget escalation, stream fallback, thinking/content split, per-attempt records
 python tests/test_debuglog.py    # 44 assertions — query/error records, rotation, filters
-python tests/test_policy.py      # 132 assertions — routing policy, incl. "empty = no-op", parallel section order
+python tests/test_policy.py      # 135 assertions — routing policy, incl. "empty = no-op", parallel section order, call-bucket propagation
 python tests/test_suggest.py     # 75 assertions — example-question generation and caching
 ```
 
@@ -462,8 +471,20 @@ rather than guessed at. Two append-only JSONL streams under `results/logs/`:
 
 | File | What's in it |
 |---|---|
-| `queries.jsonl` | one record per question: scope, every routing decision, sources read, the answer, per-stage timings |
+| `queries.jsonl` | one record per question: scope, every routing decision, sources read, the answer, per-stage timings, and a per-call LLM breakdown |
 | `errors.jsonl` | one record per exception: type, message, full traceback, and the context in flight |
+
+Stage timings alone cannot tell "the model was called five times" apart from "one
+call silently retried twice" — a retry happens *inside* the stage total, so both
+look identical after the fact. Each record therefore also carries
+`llm_calls` (one entry per call: stage, duration, **per-attempt** durations,
+whether it retried, prompt size) plus `llm_n_calls`, `llm_n_retried` and
+`llm_ms`. Read `llm_n_retried` first: anything non-zero means part of that
+query's latency went into recovering rather than working. The same line is shown
+in the UI's retrieval panel, e.g. `模型调用 5 次 · 3.1s · 最慢 0.8s route.dirs`.
+
+Note `llm_ms` is the *sum* of call durations, not wall clock — section selection
+runs concurrently, so compare it against `stages`, not against the query total.
 
 Both carry a shared id, so an exception can be joined back to the query it
 belongs to. Read them without the server running:

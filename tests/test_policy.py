@@ -678,6 +678,56 @@ def test_sections_parallel_preserves_order() -> None:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_sections_for_all_carries_the_call_bucket() -> None:
+    """The per-call bucket must survive the hop into the worker threads.
+
+    `ThreadPoolExecutor` does not inherit contextvars, so `sections_for_all`
+    copies the context per task by hand. Without that copy the parallel section
+    calls — the ones that dominate a many-file query — would be missing from the
+    query's call log, and the instrumentation would silently under-report
+    exactly the case it exists for. Silent under-reporting is worse than no
+    instrumentation: it would read as "retrieval was cheap".
+    """
+    print("\n[并行章节调用也进得了调用记录（contextvars 要显式带过去）]")
+    from nav import llm as _llm
+
+    tmp = Path(tempfile.mkdtemp(prefix="policy-ctx-"))
+    try:
+        build_index(tmp)
+        corpora = [("c1", tmp / "c1", "语料一", "s1"),
+                   ("c2", tmp / "c2", "语料二", "s2")]
+
+        def noting_json(prompt, label="", tag="", **_kw):
+            # Stand in for chat()'s own `_note_call`, so this measures the
+            # context hop rather than the litellm plumbing.
+            _llm._note_call({"label": label, "tag": tag, "ms": 1, "attempts": 1,
+                             "attempt_ms": [1], "retried": False})
+            if "章节列表" in prompt:
+                return {"sections": [0]}
+            return {"dirs": [0], "files": [0, 1, 2, 3], "descend": [],
+                    "pick": [0, 1, 2, 3]}
+
+        saved = (_llm.chat_json, _llm.chat)
+        _llm.chat_json = noting_json
+        _llm.chat = lambda prompt, **_kw: ""
+        try:
+            nav = MultiNavigator(corpora, verbose=False, policy=RoutingPolicy())
+            files = list(nav.m.files.values())[:4]
+            with _llm.record_calls() as calls:
+                nav.sections_for_all("2024 年股息", files, 6)
+            check("4 个文件 → 4 次调用都进了记录", len(calls) == 4,
+                  str(len(calls)))
+            check("全部标为 route.sections",
+                  all(c["label"] == "route.sections" for c in calls),
+                  str([c["label"] for c in calls]))
+            check("每次都带上了是哪份文档", all(c["tag"] for c in calls),
+                  str([c["tag"] for c in calls]))
+        finally:
+            _llm.chat_json, _llm.chat = saved
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main() -> int:
     print("=" * 74)
     print("policy 测试（临时目录 + 打桩 LLM，不联网）")
@@ -697,6 +747,7 @@ def main() -> int:
     test_route_integration()
     test_sections_parallel_preserves_order()
     test_trace_records_policy()
+    test_sections_for_all_carries_the_call_bucket()
     print()
     print("=" * 74)
     print(f"  通过 {len(PASS)}  失败 {len(FAIL)}")

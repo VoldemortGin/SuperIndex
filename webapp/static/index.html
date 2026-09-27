@@ -407,6 +407,24 @@ function srcHTML(list){
   return `<div class="src-hd">引用 ${items.length} 处 · ${byDoc.size} 个文档</div>${rows}`;
 }
 
+// 检索阶段的模型调用汇总。这是「为什么这次慢」的第一手答案：阶段耗时只给
+// 一个总数，看不出里面是一次调用还是三次。重试单独用琥珀色点出来 —— 一次
+// 调用内部重试两次，耗时翻倍，而阶段耗时上没有任何异常迹象，最容易被当成
+// 「模型就是慢」放过去。最慢的那次也点名，否则只知道总时长还是无从下手。
+function llmLine(s){
+  if (!s || !s.llm_n_calls) return '';
+  const slow = (s.llm_calls || []).reduce(
+    (a, b) => ((b.ms || 0) > ((a && a.ms) || 0) ? b : a), null);
+  const retry = s.llm_n_retried
+    ? ` <span class="fb">· 重试 ${s.llm_n_retried} 次</span>` : '';
+  const worst = (slow && slow.ms)
+    ? ` · 最慢 ${(slow.ms / 1000).toFixed(1)}s ${esc(slow.label || '')}`
+      + (slow.tag ? ` ${esc(shortDoc(slow.tag))}` : '')
+    : '';
+  return `<div class="step">模型调用 <b>${s.llm_n_calls}</b> 次`
+       + ` · ${(s.llm_ms / 1000).toFixed(1)}s${retry}${worst}</div>`;
+}
+
 // ── state ───────────────────────────────────────────────────────────────
 async function load(){
   try{ S = await (await fetch('/api/state')).json(); }catch(e){ return; }
@@ -653,7 +671,13 @@ async function ask(){
   // 思考区默认隐藏，收到第一个 thinking 事件才出现，不留空壳；框的整体高度
   // 由 CSS 固定（.trace-body），所以它出现/内容变长都只在框内滚动，不顶页面。
   let thinkChars = 0, answered = false, thinkText = '', thinkRaf = 0;
-  const showThinking = () => { think.hidden = false; trace.classList.add('live'); };
+  const showThinking = () => {
+    think.hidden = false; trace.classList.add('live');
+    // 思考区一出现就从固定高度里分走一半，.steps 的可视区随之变矮 —— 之前
+    // 「滚到底」的那个位置于是不再到底，刚写进去的「模型调用 N 次」正好被顶
+    // 出可视区。这里再贴一次底，否则那行最该被看到的诊断信息反而是看不到的。
+    steps.scrollTop = steps.scrollHeight;
+  };
   // 思考可以长到几千字；每帧写一次 DOM，避免每个 chunk 都触发一次回流。
   const flushThink = () => {
     thinkRaf = 0;
@@ -697,6 +721,13 @@ async function ask(){
           steps.scrollTop = steps.scrollHeight;
         }
         else if (ev === 'sources') srcs.innerHTML = srcHTML(d);
+        else if (ev === 'llmstats'){
+          const html = llmLine(d);
+          if (html){
+            steps.insertAdjacentHTML('beforeend', html);
+            steps.scrollTop = steps.scrollHeight;
+          }
+        }
         else if (ev === 'thinking'){
           if (think.hidden) showThinking();
           thinkText += d.delta; thinkChars = thinkText.length;

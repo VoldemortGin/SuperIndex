@@ -1,11 +1,14 @@
 """Shared LLM helper: one call, JSON out, with repair and retry."""
 from __future__ import annotations
 
+import contextvars
 import json
 import os
 import re
 import sys
+import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Optional
 
@@ -18,6 +21,19 @@ try:
     load_dotenv(ROOT / ".env")
 except ImportError:  # pragma: no cover
     pass
+
+# litellm fetches its model price table over the network the first time it is
+# imported, and only falls back to the bundled copy once that request fails. On
+# a proxied or slow network that is a multi-second stall, and because the import
+# is lazy it is charged to whichever request happens to trigger it — in the
+# server, the first question after a restart (measured: 9.6s in a cold process,
+# ~4s when a background call got there first and held the import lock).
+# Nothing in nav/ needs live pricing, so keep the lookup local.
+#
+# `setdefault`, so an explicit value in the environment or .env still wins.
+# PageIndex guards this too (pageindex/utils.py:16), but only for its own import
+# path — `nav` never imports it on the query path, so that guard never runs.
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "true")
 
 from nav.debuglog import error as log_error  # noqa: E402
 
@@ -32,10 +48,101 @@ DEFAULT_EFFORT = os.getenv("NAV_REASONING_EFFORT", "none")
 MAX_TOKEN_CEILING = int(os.getenv("NAV_MAX_TOKEN_CEILING", "16384"))
 
 
+# ── per-call instrumentation ─────────────────────────────────────────────
+# A query that takes 12s because one routing call silently retried twice looks
+# *identical* in the logs to one that is merely slow: the trace records stage
+# totals (`stages.route_ms`), and a retry happens inside that total. Recording
+# the attempt sequence turns "why was this slow?" from a correlation exercise
+# into a read.
+#
+# A ContextVar rather than a module global, because the background indexer
+# calls `chat()` on its own thread while a query is in flight. With a global,
+# an indexing run would be recorded as part of the user's query.
+_calls: "contextvars.ContextVar[Optional[list]]" = contextvars.ContextVar(
+    "nav_llm_calls", default=None)
+# Worker threads share one bucket (`sections_for_all` hands the context to each
+# task), so appends are serialized rather than leaning on list.append being
+# atomic under the GIL.
+_calls_lock = threading.Lock()
+
+
+@contextmanager
+def record_calls():
+    """Collect one record per `chat()` call made inside this block.
+
+    Yields the bucket — a plain list of dicts, appended as each call finishes,
+    so it stays readable while the block is still running.
+
+    Nothing is recorded when no block is active, which is what keeps the
+    indexer's calls out of a query's bucket. Note that **threads spawned inside
+    the block do not inherit it by themselves**: `ThreadPoolExecutor` does not
+    copy contextvars, so `sections_for_all` copies the context per task by hand
+    (see nav/route.py).
+    """
+    bucket: list = []
+    token = _calls.set(bucket)
+    try:
+        yield bucket
+    finally:
+        _calls.reset(token)
+
+
+def _note_call(rec: dict) -> None:
+    """File one call's stats with the active bucket, if any. Never raises.
+
+    Instrumentation must not be able to break the call it is measuring.
+    """
+    bucket = _calls.get()
+    if bucket is None:
+        return
+    try:
+        with _calls_lock:
+            bucket.append(rec)
+    except Exception:  # noqa: BLE001 - see docstring
+        pass
+
+
+def call_stats(calls: Optional[list]) -> dict:
+    """Roll a bucket up into the fields the query record carries.
+
+    `llm_n_retried` is the number to read first: a non-zero value means the
+    model returned nothing usable at least once, so part of this query's
+    latency went into recovering rather than working. `llm_ms` is the wall clock
+    spent in `chat()` — compare it against `stages` to see how much of the query
+    was retrieval round trips.
+    """
+    items = [c for c in (calls or []) if isinstance(c, dict)]
+    return {
+        "llm_calls": items,
+        "llm_n_calls": len(items),
+        "llm_n_retried": sum(1 for c in items if c.get("retried")),
+        "llm_ms": sum(int(c.get("ms") or 0) for c in items),
+    }
+
+
 def _litellm():
     import litellm
     litellm.suppress_debug_info = True
     return litellm
+
+
+def warmup() -> float:
+    """Import litellm now, so the first question does not pay for it.
+
+    The import costs seconds (it pulls in the provider SDKs and builds the model
+    table) and it is deliberately lazy, which means it lands inside whichever
+    call to `chat()` happens to be first. In the server that is the user's first
+    question after a restart, where it is indistinguishable from the model being
+    slow: measured at 9.6s in a cold process, and ~4s when a background call had
+    already started the import and held the lock.
+
+    Call this once at startup. Returns the seconds spent so the caller can show
+    it rather than silently eating it — an unexplained stall at boot is still an
+    unexplained stall.
+    """
+    t0 = time.time()
+    _litellm()
+    return time.time() - t0
 
 
 def _quote_bare_tokens(body: str) -> str:
@@ -97,7 +204,8 @@ def extract_json(text: str) -> Optional[Any]:
 
 
 def chat(prompt: str, model: str = DEFAULT_MODEL, effort: str = DEFAULT_EFFORT,
-         max_tokens: int = 2048, retries: int = 2) -> str:
+         max_tokens: int = 2048, retries: int = 2, label: str = "",
+         tag: str = "") -> str:
     """One completion. Retries on empty content or transport errors.
 
     A `finish_reason == "length"` reply gets special handling: the model ran out
@@ -105,16 +213,23 @@ def chat(prompt: str, model: str = DEFAULT_MODEL, effort: str = DEFAULT_EFFORT,
     doubles `max_tokens` and drops `reasoning_effort`, because reasoning tokens
     are usually what consumed the budget — which is why a "low effort" call can
     return no content at all while still reporting a normal finish.
+
+    `label` and `tag` name the call site and never reach the model: `label`
+    groups calls by stage ("route.dirs"), `tag` names the individual one (which
+    file, say). Both land in the record collected by `record_calls()`.
     """
     litellm = _litellm()
     budget = max_tokens
     reasoning = effort
     attempts: list[str] = []
+    timings: list[int] = []          # ms per attempt, same order as `attempts`
     for attempt in range(retries + 1):
         kwargs: dict[str, Any] = {"max_tokens": budget}
         if reasoning:
             kwargs["reasoning_effort"] = reasoning
         note = ""
+        content = ""
+        t0 = time.time()
         try:
             resp = litellm.completion(
                 model=model,
@@ -122,35 +237,54 @@ def chat(prompt: str, model: str = DEFAULT_MODEL, effort: str = DEFAULT_EFFORT,
                 **kwargs)
             choice = resp.choices[0]
             content = (choice.message.content or "").strip()
-            if content:
-                return content
-            finish = choice.finish_reason
-            note = (f"empty content, finish_reason={finish}, "
-                    f"max_tokens={budget}, reasoning={reasoning or 'off'}")
-            if finish == "length" and attempt < retries:
-                budget = min(budget * 2, MAX_TOKEN_CEILING)
-                if reasoning:
-                    reasoning = ""      # free the budget for actual content
-                    note += f" -> retry with max_tokens={budget}, reasoning off"
-                else:
-                    note += f" -> retry with max_tokens={budget}"
+            if not content:
+                finish = choice.finish_reason
+                note = (f"empty content, finish_reason={finish}, "
+                        f"max_tokens={budget}, reasoning={reasoning or 'off'}")
+                if finish == "length" and attempt < retries:
+                    budget = min(budget * 2, MAX_TOKEN_CEILING)
+                    if reasoning:
+                        reasoning = ""      # free the budget for actual content
+                        note += f" -> retry with max_tokens={budget}, reasoning off"
+                    else:
+                        note += f" -> retry with max_tokens={budget}"
         except Exception as exc:  # noqa: BLE001
             note = f"{type(exc).__name__}: {exc} (max_tokens={budget})"
+        timings.append(int((time.time() - t0) * 1000))
+        if content:
+            # Recorded on the *success* path too, and that is the whole point:
+            # a call that retried once and then worked is exactly the silent
+            # slowdown this exists to expose. Only the failure path used to
+            # leave a trace, and it leaves one in errors.jsonl, where nobody
+            # looks when the answer eventually arrived.
+            _note_call({
+                "label": label or "llm",
+                "tag": tag,
+                "model": model,
+                "ms": sum(timings),
+                "attempts": len(timings),
+                "attempt_ms": list(timings),
+                "retried": len(timings) > 1,
+                "prompt_chars": len(prompt),
+            })
+            return content
         attempts.append(f"#{attempt + 1}: {note}")
         if attempt < retries:
             time.sleep(1.5 * (attempt + 1))
     detail = " | ".join(attempts)
     log_error(RuntimeError(detail), where="llm.chat", model=model,
-              prompt_chars=len(prompt), attempts=attempts)
+              prompt_chars=len(prompt), attempts=attempts, attempt_ms=timings,
+              label=label)
     raise RuntimeError(
         f"LLM call failed after {retries + 1} attempts: {detail}")
 
 
 def chat_json(prompt: str, model: str = DEFAULT_MODEL, effort: str = DEFAULT_EFFORT,
-              max_tokens: int = 2048, retries: int = 2) -> Any:
+              max_tokens: int = 2048, retries: int = 2, label: str = "",
+              tag: str = "") -> Any:
     """Completion whose reply must contain JSON. Raises if none parses."""
     raw = chat(prompt, model=model, effort=effort, max_tokens=max_tokens,
-               retries=retries)
+               retries=retries, label=label, tag=tag)
     parsed = extract_json(raw)
     if parsed is None:
         raise RuntimeError(f"reply contained no JSON: {raw[:200]!r}")
