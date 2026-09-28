@@ -2,10 +2,22 @@
 
 **Structure-navigation retrieval for large document corpora — built on [PageIndex](https://github.com/VectifyAI/PageIndex).**
 
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-22C55E)](LICENSE)
+[![No vectors](https://img.shields.io/badge/retrieval-structure--only%2C%20no%20vectors-4F46E5)](#no-vectors-anywhere)
+[![Tests](https://img.shields.io/badge/tests-offline%2C%20no%20credentials-0891B2)](#tested-offline)
+
 PageIndex answers *"where in this report is the figure?"*. SuperIndex answers the
 question that comes first: **"which report?"** — across thousands of files spread
 over a deep directory tree, with no vector store and no embedding model anywhere
 in the stack.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/score-versus-path-dark.png">
+  <img alt="Two columns answering the same question. On the left, ranking by similarity returns three near-tied scores (0.94, 0.94, 0.93) that cannot be told apart. On the right, descending by decision returns a readable path: directory, then file, then section." src="docs/diagrams/score-versus-path.png">
+</picture>
+
+*Same question, two designs. One returns a number you can only believe; the other returns a route you can print, log and argue with.*
 
 > **New to this?** Open
 > **[`docs/ArchitectureIntro.html`](docs/ArchitectureIntro.html)** — 20 diagrams
@@ -23,6 +35,13 @@ dividend notes differ by a single digit, so their embeddings are nearly
 identical — and when we measured it on a real corpus, **57% of chunks had a
 near-duplicate in another document**, some of them character-for-character
 identical. No embedding model can separate those, because the input is the same.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/vector-versus-structure-dark.png">
+  <img alt="Two panels side by side. Vector retrieval ranks three passages at 0.94, 0.93 and 0.93 — the 2023 note is the wrong one, but the input is identical so the vectors are too. Structure navigation instead walks AIA, 2024/annual, AIA_AR2024.md and lands on the Dividends section, lines 1208-1236." src="docs/diagrams/vector-versus-structure.png">
+</picture>
+
+*The 2023 note is the wrong one — but it scores 0.93 against the 2024 note's 0.94, because the input is the same and so are the vectors.*
 
 PageIndex takes a different route: it builds an explicit tree over a document and
 has the model *reason* about which node to open. Answers trace back to a page
@@ -45,14 +64,12 @@ A three-level addressing model — **corpus → document → section** — where
 level is a separate index sized so the cheap one stays resident and the expensive
 one is fetched on demand.
 
-```
-question
- ├─ L0  which file?      read the whole directory tree, model picks 1–4 directories
- ├─ L1  which file?      list files under those, model picks 1–5
- └─ L2  which section?   read each candidate's chapter tree, model picks 1–6
-        ↓
-      section text + provenance
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/addressing-funnel-dark.png">
+  <img alt="A question descends through three levels. L0 picks 1 to 4 directories from the whole folder tree in one prompt — 229 directories, 8,904 characters, about 2K tokens. L1 picks 1 to 5 files under those directories. L2 picks 1 to 6 sections, one call per candidate file, running in parallel. The result is section text plus provenance, capped at 20,000 characters." src="docs/diagrams/addressing-funnel.png">
+</picture>
+
+*Three decisions, each narrow enough to check by eye. The whole directory tree fits in one prompt even when the files do not.*
 
 Three model decisions, each with a deterministic fallback. **Cost does not grow
 with directory depth**, because the directory tree is far smaller than the file
@@ -121,6 +138,13 @@ Measured over 21 recorded queries (`results/logs/queries.jsonl`):
 | section selection — one call per candidate file | 1.2 s | 2.8 s | 5% |
 | **end to end** | **23.3 s** | 114.0 s | — |
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/measured-latency-dark.png">
+  <img alt="A bar chart of one question end to end, mean of 21 recorded queries. Answer generation 17.9 seconds, 77 percent. Routing 4.2 seconds, 18 percent. Section selection 1.2 seconds, 5 percent. Below, three figures: 0.09 seconds to index 144 files with no LLM, 125 KB manifest resident in memory, and about 2K tokens for the full directory tree." src="docs/diagrams/measured-latency.png">
+</picture>
+
+*Answer generation is 77% of the wall clock. Retrieval is not the problem — the model's thinking is.*
+
 The dominant cost is not retrieval and not the context: the slowest query on
 record spent **93 s answering from a 3 KB context**. It is the model's thinking.
 `reasoning_effort` is not a usable brake here — turning it off entirely moved
@@ -147,6 +171,13 @@ label-to-value association gone. Scanned PDFs are refused outright.
 
 SuperIndex makes extraction **pluggable**, with **Azure Document Intelligence as
 the default whenever it is configured**:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/extraction-and-build-dark.png">
+  <img alt="The build pipeline. Source documents in md, markdown, txt or pdf fall through four extraction backends in order: Azure DI for real Markdown with tables kept, the offline flash engine for headings from font size and layout, one node per page as a coarse fallback, then the PDF's own bookmarks. Stage 1 builds structure into manifest.json and trees per document with no LLM in 0.09 seconds. Stage 2 generates optional summaries, one line per file and directory, incremental and LLM-backed." src="docs/diagrams/extraction-and-build.png">
+</picture>
+
+*Extraction degrades in a useful order rather than failing. Structure is built with no LLM at all; summaries are a separate, optional pass.*
 
 | | text layer | Azure Document Intelligence |
 |---|---|---|
@@ -257,6 +288,13 @@ Retrieval quality problems are usually measurable before they are fixable:
 logging, policy and suggestion layers, with no network and no credentials
 required:
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/test-suite-dark.png">
+  <img alt="A bar chart of assertions per file: test_registry.py and test_policy.py 135 each, test_llm_retry.py 78, test_suggest.py 75, test_debuglog.py 44, test_azure_di.py 28, test_backend.py 25. Colours group them by concern: registry and routing, LLM behaviour, suggestions, extraction. The footer reads 520 assertions, 0 failures, no network, no credentials, no test framework." src="docs/diagrams/test-suite.png">
+</picture>
+
+*Seven plain scripts, no test framework, no network, no credentials.*
+
 ```bash
 python tests/test_azure_di.py    # 28 assertions — config, page markers, error mapping
 python tests/test_backend.py     # 25 assertions — backend resolution, page splitting
@@ -278,20 +316,15 @@ directories, so they never touch `results/logs/`.
 
 ## How it fits together
 
-```
-        ┌──────────────────────────────────────────────┐
-        │  Application    webapp/ directory UI         │
-        ├──────────────────────────────────────────────┤
-        │  ADDED BY       extractors/  nav/  registry/ │
-        │  SUPERINDEX     text source  tree  watch +   │
-        │                              walk  status    │
-        ├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┤
-        │  UPSTREAM       flash/classic  agent loop    │
-        │  (unmodified)   tree building  4 tools       │
-        ├──────────────────────────────────────────────┤
-        │  Storage        PageIndex store · nav index  │
-        └──────────────────────────────────────────────┘
-```
+SuperIndex adds a layer above the engine (which file?) and underneath it (where
+does text come from?). The engine in between is untouched.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/layer-not-a-fork-dark.png">
+  <img alt="Four stacked rows. Application: webapp/ chat UI over SSE, and scripts/ for CLI and diagnostics. Added by SuperIndex: extractors/ for where text comes from, nav/ for corpus to file to section, and tests/ plus docs/ with 520 offline assertions. A dashed line marks the boundary with the upstream engine, which is vendored and never edited: flash and classic tree building, the agent loop for retrieval, and four read tools over tree and pages. Storage: the PageIndex store for tree and pages, and the nav index for manifest and trees." src="docs/diagrams/layer-not-a-fork.png">
+</picture>
+
+*A layer above the engine (*which file?*) and underneath it (*where does text come from?*). The engine in between is never edited.*
 
 **[`docs/ArchitectureIntro.html`](docs/ArchitectureIntro.html) is the place to
 start** — 20 diagrams organised as *problem statement → how SuperIndex solves it
@@ -477,6 +510,13 @@ whole store on a bigger volume.
 Every question is logged, so a wrong answer can be diagnosed after the fact
 rather than guessed at. Two append-only JSONL streams under `results/logs/`:
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/retrieval-sequence-dark.png">
+  <img alt="The retrieval pipeline as a numbered sequence with a deterministic fallback beside each step. Load the routing policy from config/routing_policy.yaml. L0 picks directories from the folder tree, one model call, falling back to keyword scoring over paths and summaries. L1 picks files, one model call, falling back to keyword scoring over names and summaries. L2 picks sections, one call per candidate file in parallel, falling back to keyword scoring over section titles. Then context assembly, local with no model call, then the answer streamed with thinking included. A panel notes that every step is appended to results/logs/queries.jsonl — the scope, each decision, the sources read, the answer, per-stage timings, and a per-call breakdown of the model calls." src="docs/diagrams/retrieval-sequence.png">
+</picture>
+
+*Every step is recorded — including which fallback fired, and whether any model call had to retry.*
+
 | File | What's in it |
 |---|---|
 | `queries.jsonl` | one record per question: scope, every routing decision, sources read, the answer, per-stage timings, and a per-call LLM breakdown |
@@ -605,6 +645,7 @@ Stated plainly, because they are the questions a new user hits first.
 | Project state, decisions, gotchas | [`docs/HANDOVER.md`](docs/HANDOVER.md) |
 | Structured-table proposal | [`docs/dify-improvement-plan.md`](docs/dify-improvement-plan.md) |
 | What was vendored, how to update | [`PageIndex/UPSTREAM.md`](PageIndex/UPSTREAM.md) |
+| How the README diagrams are generated | [`docs/diagrams/README.md`](docs/diagrams/README.md) |
 
 ---
 
