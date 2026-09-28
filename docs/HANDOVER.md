@@ -610,7 +610,7 @@ python scripts/07_logs.py --stats
 - 超过 `SUPERINDEX_LOG_MAX_BYTES`（默认 16MB）自动轮转成 `.1`
 - `SUPERINDEX_DEBUG_LOG=0` 可关闭，`SUPERINDEX_LOG_DIR` 可换位置
 
-覆盖测试：`tests/test_debuglog.py`（40 条，全部写临时目录）。
+覆盖测试：`tests/test_debuglog.py`（44 条，全部写临时目录）。
 
 ### 5.14 `nav/policy.py` + `config/routing_policy.yaml` —— 业务路由策略（新增）
 

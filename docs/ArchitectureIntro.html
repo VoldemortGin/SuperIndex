@@ -3,125 +3,791 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PageIndex — Architecture</title>
+<title>SuperIndex — Architecture, Indexing and Retrieval</title>
 <style>
+/* ══════════════════════════════════════════════════════════════════════════
+   Design tokens. Cool slate neutrals so the accents carry the colour.
+   The --dg-* names are kept as aliases: every diagram in this page was
+   written against them, so re-pointing them here recolours the whole deck
+   from one place.
+   ══════════════════════════════════════════════════════════════════════════ */
 :root{
-  --bg:#FBFAF7; --surface:#FFFFFF; --border:rgba(0,0,0,.12); --border-soft:rgba(0,0,0,.07);
-  --text:#2C2C2A; --text-2:#5F5E5A; --text-3:#888780; --code-bg:#F1EFE8;
-  --accent:#185FA5;
-  --dg-gray-50:#F1EFE8; --dg-gray-400:#888780; --dg-gray-600:#5F5E5A; --dg-gray-800:#2C2C2A;
-  --dg-blue-50:#E6F1FB; --dg-blue-600:#185FA5; --dg-blue-800:#0C447C;
-  --dg-teal-50:#E1F5EE; --dg-teal-600:#0F6E56; --dg-teal-800:#04342C;
-  --dg-amber-50:#FAEEDA; --dg-amber-600:#854F0B; --dg-amber-800:#412402;
+  --bg:#F6F8FE; --surface:#FFFFFF; --surface-2:#FBFCFE;
+  --border:rgba(15,23,42,.13); --border-soft:rgba(15,23,42,.07);
+  --ink:#0F172A; --ink-2:#475569; --ink-3:#7C8AA5; --code-bg:#EEF2FF;
+
+  --indigo:#4F46E5;  --indigo-t:#EEF2FF;  --indigo-d:#312E81;
+  --cyan:#0891B2;    --cyan-t:#ECFEFF;    --cyan-d:#164E63;
+  --violet:#7C3AED;  --violet-t:#F5F3FF;  --violet-d:#4C1D95;
+  --emerald:#059669; --emerald-t:#ECFDF5; --emerald-d:#064E3B;
+  --amber:#D97706;   --amber-t:#FFFBEB;   --amber-d:#78350F;
+  --rose:#E11D48;    --rose-t:#FFF1F2;    --rose-d:#881337;
+  --accent:var(--indigo);
+  /* Text drawn on top of a solid accent fill. Must flip with the theme: the
+     accent hues are dark in light mode and light in dark mode, so a hardcoded
+     white badge label ends up at 2:1 contrast in dark mode. */
+  --on-accent:#FFFFFF;
+
   --dg-card:#FFFFFF;
+  --dg-gray-50:#F1F5F9; --dg-gray-400:#7C8AA5; --dg-gray-600:#475569; --dg-gray-800:#1E293B;
+  --dg-blue-50:var(--indigo-t);   --dg-blue-600:var(--indigo);   --dg-blue-800:var(--indigo-d);
+  --dg-teal-50:var(--emerald-t);  --dg-teal-600:var(--emerald);  --dg-teal-800:var(--emerald-d);
+  --dg-amber-50:var(--amber-t);   --dg-amber-600:var(--amber);   --dg-amber-800:var(--amber-d);
+  --dg-violet-50:var(--violet-t); --dg-violet-600:var(--violet); --dg-violet-800:var(--violet-d);
+
   --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
   --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
 }
 @media (prefers-color-scheme:dark){
   :root{
-    --bg:#1a1a19; --surface:#232322; --border:rgba(255,255,255,.16); --border-soft:rgba(255,255,255,.09);
-    --text:#F1EFE8; --text-2:#B4B2A9; --text-3:#888780; --code-bg:#2C2C2A;
-    --accent:#85B7EB;
-    --dg-gray-50:#444441; --dg-gray-400:#B4B2A9; --dg-gray-600:#D3D1C7; --dg-gray-800:#F1EFE8;
-    --dg-blue-50:#0C447C; --dg-blue-600:#85B7EB; --dg-blue-800:#E6F1FB;
-    --dg-teal-50:#085041; --dg-teal-600:#5DCAA5; --dg-teal-800:#E1F5EE;
-    --dg-amber-50:#633806; --dg-amber-600:#EF9F27; --dg-amber-800:#FAEEDA;
-    --dg-card:#1a1a19;
+    --bg:#0B1020; --surface:#121A2E; --surface-2:#0F1626;
+    --border:rgba(255,255,255,.15); --border-soft:rgba(255,255,255,.08);
+    --ink:#E8EDF7; --ink-2:#A9B6CE; --ink-3:#7C8AA5; --code-bg:#1B2440;
+
+    --indigo:#A5B4FC;  --indigo-t:#1E1B4B;  --indigo-d:#E0E7FF;
+    --cyan:#67E8F9;    --cyan-t:#083344;    --cyan-d:#CFFAFE;
+    --violet:#C4B5FD;  --violet-t:#2E1065;  --violet-d:#EDE9FE;
+    --emerald:#6EE7B7; --emerald-t:#022C22; --emerald-d:#D1FAE5;
+    --amber:#FCD34D;   --amber-t:#3B2606;   --amber-d:#FEF3C7;
+    --rose:#FDA4AF;    --rose-t:#4C0519;    --rose-d:#FFE4E6;
+
+    --on-accent:#0B1020;
+
+    --dg-card:#0B1020;
+    --dg-gray-50:#1B2440; --dg-gray-400:#8B9AB8; --dg-gray-600:#C3CDE0; --dg-gray-800:#E8EDF7;
   }
 }
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15px;line-height:1.7;-webkit-font-smoothing:antialiased}
-.wrap{max-width:880px;margin:0 auto;padding:56px 24px 96px}
-header{border-bottom:1px solid var(--border);padding-bottom:28px;margin-bottom:40px}
-h1{font-size:30px;font-weight:600;margin:0 0 10px;letter-spacing:-.02em}
-.sub{color:var(--text-2);font-size:15px;margin:0}
-.meta{color:var(--text-3);font-size:13px;margin-top:16px;font-family:var(--mono)}
-h2{font-size:20px;font-weight:600;margin:56px 0 16px;padding-top:8px;letter-spacing:-.01em}
-h3{font-size:16px;font-weight:600;margin:32px 0 10px}
-p{margin:0 0 16px}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.72;-webkit-font-smoothing:antialiased}
+.wrap{max-width:960px;margin:0 auto;padding:40px 28px 100px}
 a{color:var(--accent)}
-code{font-family:var(--mono);font-size:.88em;background:var(--code-bg);padding:.15em .4em;border-radius:4px}
-pre{background:var(--code-bg);border:1px solid var(--border-soft);border-radius:10px;padding:16px 18px;overflow-x:auto;margin:0 0 18px}
-pre code{background:none;padding:0;font-size:13px;line-height:1.6}
-table{width:100%;border-collapse:collapse;margin:0 0 20px;font-size:14px}
-th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--border-soft);vertical-align:top}
-th{font-weight:600;color:var(--text-2);font-size:13px;border-bottom:1px solid var(--border)}
-td code{font-size:12px}
-figure{margin:0 0 24px;background:var(--surface);border:1px solid var(--border-soft);border-radius:14px;padding:22px 18px 14px}
+code{font-family:var(--mono);font-size:.88em;background:var(--code-bg);padding:.15em .42em;border-radius:5px;color:var(--indigo-d)}
+@media (prefers-color-scheme:dark){code{color:var(--indigo-d)}}
+
+/* ── hero ───────────────────────────────────────────────────────────────── */
+.hero{position:relative;overflow:hidden;background:var(--surface);border:1px solid var(--border-soft);border-radius:22px;padding:44px 40px 36px;margin-bottom:26px}
+.hero::before{content:'';position:absolute;inset:0 0 auto 0;height:6px;
+  background:linear-gradient(90deg,var(--indigo),var(--cyan) 38%,var(--violet) 70%,var(--emerald))}
+.hero::after{content:'';position:absolute;right:-140px;top:-140px;width:380px;height:380px;border-radius:50%;
+  background:radial-gradient(circle,rgba(79,70,229,.13),transparent 68%);pointer-events:none}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--indigo);margin:0 0 12px}
+.hero h1{font-size:42px;line-height:1.08;font-weight:750;letter-spacing:-.035em;margin:0 0 14px}
+.hero h1 em{font-style:normal;background:linear-gradient(96deg,var(--indigo),var(--violet) 55%,var(--cyan));
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.tagline{font-size:17px;color:var(--ink-2);margin:0;max-width:64ch}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:30px}
+.stat{border-radius:14px;padding:15px 16px;background:var(--surface-2);border:1px solid var(--border-soft);border-top:3px solid var(--indigo)}
+.stat:nth-child(2){border-top-color:var(--cyan)}
+.stat:nth-child(3){border-top-color:var(--violet)}
+.stat:nth-child(4){border-top-color:var(--emerald)}
+.stat b{display:block;font-size:24px;font-weight:700;letter-spacing:-.03em;line-height:1.15}
+.stat span{display:block;font-size:12.5px;color:var(--ink-3);margin-top:5px;line-height:1.45}
+
+/* ── table of contents ──────────────────────────────────────────────────── */
+nav.toc{background:var(--surface);border:1px solid var(--border-soft);border-radius:18px;padding:22px 26px;margin-bottom:10px}
+nav.toc h3{margin:0 0 12px;font-size:12px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.1em;font-family:var(--mono)}
+nav.toc ol{margin:0;padding:0;list-style:none;counter-reset:none}
+nav.toc li{margin:0;padding:9px 0;border-bottom:1px dashed var(--border-soft);display:flex;gap:14px;align-items:baseline;font-size:14.5px}
+nav.toc li:last-child{border-bottom:0}
+nav.toc li.sub{padding-left:26px;font-size:14px}
+nav.toc .n{font-family:var(--mono);font-size:12.5px;color:var(--indigo);font-weight:600;flex:none;width:34px}
+nav.toc li.sub .n{width:34px;color:var(--violet)}
+nav.toc a{text-decoration:none;color:var(--ink)}
+nav.toc a:hover{color:var(--accent)}
+nav.toc .d{color:var(--ink-3);font-size:13px;margin-left:auto;text-align:right}
+
+/* ── sections ───────────────────────────────────────────────────────────── */
+section.part{padding:46px 0 8px;border-top:1px solid var(--border-soft);margin-top:34px}
+section.part:first-of-type{border-top:0;margin-top:0}
+section.part::before{content:'';display:block;width:60px;height:4px;border-radius:4px;margin-bottom:24px;
+  background:linear-gradient(90deg,var(--indigo),var(--cyan))}
+section.part.p2::before{background:linear-gradient(90deg,var(--indigo),var(--violet))}
+section.part.p3::before{background:linear-gradient(90deg,var(--violet),var(--cyan))}
+section.part.p4::before{background:linear-gradient(90deg,var(--emerald),var(--cyan))}
+
+h2{display:flex;align-items:center;gap:15px;flex-wrap:wrap;font-size:28px;font-weight:750;letter-spacing:-.03em;margin:0 0 6px;line-height:1.2}
+h2 .num{flex:none;display:inline-flex;align-items:center;justify-content:center;width:42px;height:42px;border-radius:13px;
+  font-size:19px;font-weight:700;color:#fff;background:linear-gradient(140deg,var(--indigo),var(--violet));
+  box-shadow:0 6px 16px -4px rgba(79,70,229,.5)}
+.p2 h2 .num{background:linear-gradient(140deg,var(--indigo),var(--cyan))}
+.p3 h2 .num{background:linear-gradient(140deg,var(--violet),var(--indigo))}
+.p4 h2 .num{background:linear-gradient(140deg,var(--emerald),var(--cyan))}
+h2 .kick{font-size:14px;font-weight:500;color:var(--ink-3);font-family:var(--mono);letter-spacing:0}
+.h2sub{color:var(--ink-2);font-size:16px;margin:0 0 26px;max-width:70ch}
+
+h3{display:flex;align-items:center;gap:11px;font-size:19px;font-weight:680;letter-spacing:-.015em;margin:40px 0 14px}
+h3 .n{flex:none;font-family:var(--mono);font-size:12.5px;font-weight:700;color:var(--indigo);
+  background:var(--indigo-t);border-radius:8px;padding:4px 9px}
+.p2 h3 .n{color:var(--cyan-d);background:var(--cyan-t)}
+.p3 h3 .n{color:var(--violet-d);background:var(--violet-t)}
+.p4 h3 .n{color:var(--emerald-d);background:var(--emerald-t)}
+
+p{margin:0 0 16px}
+p.lead{font-size:16.5px;color:var(--ink-2)}
+ul,ol{padding-left:22px;margin:0 0 18px}
+li{margin:7px 0}
+strong{font-weight:660}
+
+/* ── callouts ───────────────────────────────────────────────────────────── */
+.card{border-radius:14px;padding:16px 20px;margin:0 0 22px;font-size:14.5px;border:1px solid transparent}
+.card .t{display:block;font-weight:700;font-size:13px;letter-spacing:.02em;margin-bottom:5px;text-transform:uppercase}
+.key{background:var(--indigo-t);border-color:rgba(79,70,229,.28);color:var(--indigo-d)}
+.key .t{color:var(--indigo)}
+.win{background:var(--emerald-t);border-color:rgba(5,150,105,.28);color:var(--emerald-d)}
+.win .t{color:var(--emerald)}
+.note{background:var(--amber-t);border-color:rgba(217,119,6,.3);color:var(--amber-d)}
+.note .t{color:var(--amber)}
+.warn{background:var(--rose-t);border-color:rgba(225,29,72,.28);color:var(--rose-d)}
+.warn .t{color:var(--rose)}
+
+/* ── figures ────────────────────────────────────────────────────────────── */
+figure{margin:0 0 26px;background:var(--surface);border:1px solid var(--border-soft);border-radius:18px;
+  padding:24px 22px 16px;position:relative;overflow:hidden}
+figure::before{content:'';position:absolute;inset:0 0 auto 0;height:3px;
+  background:linear-gradient(90deg,var(--indigo),var(--cyan) 45%,var(--violet))}
 figure svg{display:block;width:100%;height:auto}
-figcaption{color:var(--text-3);font-size:13px;margin-top:14px;text-align:center}
+figcaption{color:var(--ink-3);font-size:13px;margin-top:15px;text-align:center;line-height:1.6}
+figcaption b{color:var(--ink-2);font-weight:600}
 svg text{font-family:var(--sans)}
-nav.toc{background:var(--surface);border:1px solid var(--border-soft);border-radius:14px;padding:20px 24px;margin-bottom:8px}
-nav.toc h3{margin:0 0 10px;font-size:14px;color:var(--text-2);text-transform:uppercase;letter-spacing:.06em}
-nav.toc ol{margin:0;padding-left:20px;color:var(--text-2);font-size:14px}
-nav.toc li{margin:4px 0}
-nav.toc a{text-decoration:none}
-nav.toc a:hover{text-decoration:underline}
-.note{border-left:3px solid var(--dg-amber-600);background:var(--dg-amber-50);color:var(--dg-amber-800);padding:14px 18px;border-radius:0 10px 10px 0;margin:0 0 20px;font-size:14px}
-.note strong{font-weight:600}
-.key{border-left:3px solid var(--accent);background:var(--dg-blue-50);color:var(--dg-blue-800);padding:14px 18px;border-radius:0 10px 10px 0;margin:0 0 20px;font-size:14px}
-ul,ol{padding-left:22px;margin:0 0 16px}
-li{margin:6px 0}
-footer{margin-top:72px;padding-top:24px;border-top:1px solid var(--border);color:var(--text-3);font-size:13px}
-@media print{body{background:#fff}figure{break-inside:avoid}}
+
+/* ── tables ─────────────────────────────────────────────────────────────── */
+table{width:100%;border-collapse:collapse;margin:0 0 22px;font-size:14px}
+th,td{text-align:left;padding:10px 13px;border-bottom:1px solid var(--border-soft);vertical-align:top}
+th{font-weight:650;color:var(--ink-3);font-size:12px;text-transform:uppercase;letter-spacing:.06em;
+  border-bottom:1px solid var(--border);background:var(--surface-2)}
+tbody tr:hover{background:var(--surface-2)}
+td code{font-size:12px}
+td.k{font-weight:640;color:var(--ink)}
+
+pre{background:var(--surface);border:1px solid var(--border-soft);border-left:3px solid var(--indigo);
+  border-radius:12px;padding:16px 20px;overflow-x:auto;margin:0 0 22px}
+pre code{background:none;padding:0;font-size:13px;line-height:1.65;color:var(--ink)}
+
+/* ── metric cards ───────────────────────────────────────────────────────── */
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:0 0 24px}
+.kpi{background:var(--surface);border:1px solid var(--border-soft);border-radius:14px;padding:17px 18px;border-left:3px solid var(--indigo)}
+.kpi:nth-child(2){border-left-color:var(--cyan)}
+.kpi:nth-child(3){border-left-color:var(--violet)}
+.kpi b{display:block;font-size:23px;font-weight:700;letter-spacing:-.03em;line-height:1.15}
+.kpi span{display:block;color:var(--ink-3);font-size:12.5px;margin-top:5px;line-height:1.45}
+
+footer{margin-top:60px;padding-top:26px;border-top:1px solid var(--border);color:var(--ink-3);font-size:13px}
+footer p{margin:0 0 10px}
+@media (max-width:760px){
+  .stats,.kpis{grid-template-columns:1fr 1fr}
+  .hero{padding:32px 24px}
+  .hero h1{font-size:32px}
+}
+@media (max-width:520px){.stats,.kpis{grid-template-columns:1fr}nav.toc .d{display:none}}
+@media print{body{background:#fff}figure{break-inside:avoid}section.part{break-before:page}}
 </style>
 </head>
 <body>
 <div class="wrap">
 
-<header>
-  <h1>PageIndex &amp; SuperIndex — Architecture</h1>
-  <p class="sub">Part I covers the upstream engine: two indexing paths, one agentic retrieval loop, and the storage model. Part II covers SuperIndex, the layer this project adds on top to handle thousands of documents across deep directory trees.</p>
-  <p class="meta">PageIndex pinned to upstream commit 71714e8 · v0.2.10 · MIT</p>
+<header class="hero">
+  <p class="eyebrow">Architecture · Indexing · Retrieval</p>
+  <h1>SuperIndex <em>— structure-navigation retrieval</em></h1>
+  <p class="tagline">Ask a question across thousands of documents and get an answer you can trace back to a file, a section and a line number. No vector store, no embedding model, not even <code>numpy</code>.</p>
+  <div class="stats">
+    <div class="stat"><b>0.09 s</b><span>to structurally index 144 files / 2,304 nodes</span></div>
+    <div class="stat"><b>125 KB</b><span>routing index — small enough to keep in memory</span></div>
+    <div class="stat"><b>520</b><span>offline assertions, 0 failures, no credentials</span></div>
+    <div class="stat"><b>0</b><span>embedding, vector-store or numerical dependencies</span></div>
+  </div>
 </header>
 
 <nav class="toc">
-  <h3>Part I — PageIndex (upstream engine)</h3>
+  <h3>Contents</h3>
   <ol>
-    <li><a href="#summary">The one-sentence version</a></li>
-    <li><a href="#layers">Layered architecture</a></li>
-    <li><a href="#indexing">Two indexing paths</a></li>
-    <li><a href="#retrieval">The retrieval loop</a></li>
-    <li><a href="#deps">External dependencies</a></li>
-    <li><a href="#storage">Storage and the node model</a></li>
-    <li><a href="#details">Implementation details worth knowing</a></li>
-  </ol>
-  <h3 style="margin-top:18px">Part II — SuperIndex (this project)</h3>
-  <ol start="8">
-    <li><a href="#why">Why a layer above PageIndex was needed</a></li>
-    <li><a href="#compose">How SuperIndex composes with PageIndex</a></li>
-    <li><a href="#addressing">Three-level addressing and the index split</a></li>
-    <li><a href="#navigator">The two-level navigator</a></li>
-    <li><a href="#loadbearing">Design decisions that are load-bearing</a></li>
-    <li><a href="#limits">What SuperIndex does not solve</a></li>
+    <li><span class="n">1</span><a href="#s1">Problem Statement</a><span class="d">similarity is not relevance</span></li>
+    <li><span class="n">2</span><a href="#s2">How SuperIndex Solves the Problem</a><span class="d">navigate, don't compare</span></li>
+    <li class="sub"><span class="n">2.1</span><a href="#s21">Build Index</a><span class="d">two stages, one of them free</span></li>
+    <li class="sub"><span class="n">2.2</span><a href="#s22">Query</a><span class="d">three decisions, one streamed answer</span></li>
+    <li><span class="n">3</span><a href="#s3">Software Architecture</a><span class="d">layers, modules, storage, config</span></li>
+    <li><span class="n">4</span><a href="#s4">Testing Result</a><span class="d">what is proven, and what is not</span></li>
   </ol>
 </nav>
 
-<h2 id="summary">1. The one-sentence version</h2>
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<section class="part p1">
+<h2 id="s1"><span class="num">1</span>Problem Statement<span class="kick">similarity is not relevance</span></h2>
+<p class="h2sub">Vector retrieval returns the passage whose meaning is closest to the question. On financial and regulatory documents, the closest passage is routinely the wrong one — and the reason is structural, not a tuning problem.</p>
 
-<div class="key">
-  <strong>Two indexing engines that produce the same tree, plus one agentic retrieval loop. Everything else is supporting machinery.</strong>
-</div>
+<p class="lead">An embedding turns text into a list of numbers so that texts meaning similar things land near each other. Ask a question, embed it, return the nearest passages. This works well on prose. It fails on documents that are <em>supposed</em> to be near-identical.</p>
 
-<p>The consequence of that design is the cleanest thing about the codebase: <strong>the retrieval side does not care how a document was indexed.</strong> Swap the indexing engine and no retrieval code changes.</p>
+<p>Two consecutive years of a dividend note:</p>
 
-<p>This project already leans on that property. Adding the Azure Document Intelligence extractor changed only <em>where the text comes from</em>; the tree builder and the retrieval loop were untouched.</p>
+<pre><code>AIA_AR2024.md  p.118   Dividends per share: 175.72 HK cents
+AIA_AR2023.md  p.112   Dividends per share: 175.72 HK cents</code></pre>
 
-<h3>What is deliberately absent</h3>
-<p>There is no vector store and no embedding model anywhere in the dependency list. Not even <code>numpy</code>. Retrieval is the chat model reasoning over an explicit tree, which is what makes an answer traceable to a page number rather than to a cosine score.</p>
+<p>Change one digit and the embeddings stay almost identical, because almost all of the input is the same. <strong>No distance metric can separate two texts whose content is the same.</strong> We measured it on a real corpus: <strong>57% of chunks had a near-duplicate in another document</strong>, some of them character-for-character identical.</p>
+
+<figure>
+<svg viewBox="0 0 680 306" role="img" xmlns="http://www.w3.org/2000/svg">
+  <title>Vector retrieval versus structure navigation</title>
+  <desc>Left: a question is matched against three near-identical dividend notes and the ranking cannot separate them. Right: the same question descends a directory tree to one file and one section.</desc>
+
+  <!-- LEFT PANEL -->
+  <rect x="16" y="12" width="316" height="282" rx="12" fill="var(--dg-amber-50)" stroke="var(--dg-amber-600)" stroke-width="0.5"/>
+  <text x="32" y="36" font-size="13" font-weight="600" fill="var(--dg-amber-800)">Vector retrieval</text>
+  <text x="32" y="54" font-size="11" fill="var(--dg-amber-800)">rank every passage by similarity</text>
+
+  <rect x="32" y="66" width="284" height="32" rx="8" fill="var(--dg-card)" stroke="var(--dg-amber-600)" stroke-width="0.5"/>
+  <text x="174" y="82" font-size="11.5" fill="var(--dg-amber-800)" text-anchor="middle" dominant-baseline="central">2024 dividend per share?</text>
+
+  <line x1="174" y1="100" x2="174" y2="112" stroke="var(--dg-amber-600)" stroke-width="0.8"/>
+  <polygon points="174,116 170,108 178,108" fill="var(--dg-amber-600)"/>
+
+  <rect x="32" y="120" width="284" height="30" rx="8" fill="var(--dg-card)" stroke="var(--dg-amber-600)" stroke-width="0.5"/>
+  <text x="44" y="135" font-size="11" fill="var(--dg-amber-800)" dominant-baseline="central">AIA_AR2024.md  p.118</text>
+  <text x="304" y="135" font-size="11" fill="var(--dg-amber-800)" text-anchor="end" dominant-baseline="central">0.94</text>
+
+  <rect x="32" y="154" width="284" height="30" rx="8" fill="var(--dg-amber-50)" stroke="var(--dg-amber-600)" stroke-width="1.6"/>
+  <text x="44" y="169" font-size="11" fill="var(--dg-amber-800)" dominant-baseline="central">AIA_AR2023.md  p.112</text>
+  <text x="304" y="169" font-size="11" fill="var(--dg-amber-800)" text-anchor="end" dominant-baseline="central">0.93</text>
+
+  <rect x="32" y="188" width="284" height="30" rx="8" fill="var(--dg-card)" stroke="var(--dg-amber-600)" stroke-width="0.5"/>
+  <text x="44" y="203" font-size="11" fill="var(--dg-amber-800)" dominant-baseline="central">AIA_AR2022.md  p.106</text>
+  <text x="304" y="203" font-size="11" fill="var(--dg-amber-800)" text-anchor="end" dominant-baseline="central">0.93</text>
+
+  <text x="32" y="240" font-size="11" fill="var(--dg-amber-800)">The 2023 note is the wrong one — but it scores</text>
+  <text x="32" y="256" font-size="11" fill="var(--dg-amber-800)">0.93 against the 2024 note's 0.94. The input is</text>
+  <text x="32" y="272" font-size="11" fill="var(--dg-amber-800)">the same, so the vectors are the same.</text>
+
+  <!-- RIGHT PANEL -->
+  <rect x="348" y="12" width="316" height="282" rx="12" fill="var(--dg-blue-50)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
+  <text x="364" y="36" font-size="13" font-weight="600" fill="var(--dg-blue-800)">Structure navigation</text>
+  <text x="364" y="54" font-size="11" fill="var(--dg-blue-800)">choose a branch, then open it</text>
+
+  <rect x="364" y="66" width="284" height="32" rx="8" fill="var(--dg-card)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
+  <text x="506" y="82" font-size="11.5" fill="var(--dg-blue-800)" text-anchor="middle" dominant-baseline="central">2024 dividend per share?</text>
+
+  <line x1="506" y1="100" x2="506" y2="112" stroke="var(--dg-blue-600)" stroke-width="0.8"/>
+  <polygon points="506,116 502,108 510,108" fill="var(--dg-blue-600)"/>
+
+  <text x="376" y="135" font-size="11" font-family="var(--mono)" fill="var(--dg-blue-800)" dominant-baseline="central">AIA/</text>
+  <text x="376" y="155" font-size="11" font-family="var(--mono)" fill="var(--dg-blue-800)" dominant-baseline="central">  2024/annual/</text>
+  <text x="376" y="175" font-size="11" font-family="var(--mono)" fill="var(--dg-blue-800)" dominant-baseline="central">    AIA_AR2024.md</text>
+
+  <rect x="372" y="190" width="272" height="30" rx="8" fill="var(--dg-card)" stroke="var(--dg-teal-600)" stroke-width="1.6"/>
+  <text x="384" y="205" font-size="11" font-family="var(--mono)" fill="var(--dg-teal-800)" dominant-baseline="central">Dividends</text>
+  <text x="632" y="205" font-size="11" fill="var(--dg-teal-800)" text-anchor="end" dominant-baseline="central">lines 1208–1236</text>
+
+  <text x="364" y="240" font-size="11" fill="var(--dg-blue-800)">Three decisions, each one narrow enough to</text>
+  <text x="364" y="256" font-size="11" fill="var(--dg-blue-800)">check by eye. The result is a file and a line</text>
+  <text x="364" y="272" font-size="11" fill="var(--dg-blue-800)">range — not a score you have to trust.</text>
+</svg>
+<figcaption><b>Figure 1</b> — The same question, two retrieval strategies. On the left the ranking is a dead end: near-identical inputs cannot be separated by any distance metric. On the right the answer is a path, and a path can be shown.</figcaption>
+</figure>
+
+<div class="card key"><span class="t">The root cause</span>
+Similarity is a property of the <em>text</em>. Relevance is a property of the <em>question</em>. When two passages are near-identical, the text cannot tell you which one the question is about — only the structure around it can: which year, which entity, which report.</div>
+
+<p>There is a second failure, and it arrives earlier. PageIndex's tree models <strong>one document</strong> — the right unit for "where in this report is the figure?", and it answers that well. But a real corpus is not one report. It is thousands of files in a directory tree several levels deep, and the first question a user asks is not <em>where in this report</em> but <strong>which report at all</strong>.</p>
+
+<figure>
+<svg viewBox="0 0 680 310" role="img" xmlns="http://www.w3.org/2000/svg">
+  <title>The addressing gap: one document versus a corpus</title>
+  <desc>PageIndex models one document and answers where inside it. A corpus raises the prior question of which document, which a flat list of file names cannot answer.</desc>
+
+  <rect x="40" y="34" width="280" height="146" rx="14" fill="var(--dg-blue-50)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
+  <text x="56" y="60" font-size="12.5" font-weight="600" fill="var(--dg-blue-800)">One document</text>
+  <text x="56" y="78" font-size="10.5" fill="var(--dg-blue-600)">PageIndex's unit of addressing</text>
+  <text x="56" y="104" font-size="11" fill="var(--dg-blue-800)">Q &#183; where in this report?</text>
+  <text x="56" y="122" font-size="11" font-family="var(--mono)" fill="var(--dg-blue-800)">A &#183; page 118</text>
+  <text x="56" y="148" font-size="10" fill="var(--dg-blue-600)">the tree models the whole answer</text>
+  <text x="56" y="164" font-size="10" fill="var(--dg-blue-600)">addressed by node_id + page range</text>
+
+  <circle cx="340" cy="107" r="17" fill="var(--dg-card)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
+  <text x="340" y="107" font-size="10.5" fill="var(--dg-gray-600)" text-anchor="middle" dominant-baseline="central">vs</text>
+
+  <rect x="360" y="34" width="280" height="146" rx="14" fill="var(--dg-amber-50)" stroke="var(--dg-amber-600)" stroke-width="0.5"/>
+  <text x="376" y="60" font-size="12.5" font-weight="600" fill="var(--dg-amber-800)">A corpus</text>
+  <text x="376" y="78" font-size="10.5" fill="var(--dg-amber-600)">what a real deployment looks like</text>
+  <text x="376" y="104" font-size="11" fill="var(--dg-amber-800)">Q &#183; which report?</text>
+  <text x="376" y="122" font-size="11" font-family="var(--mono)" fill="var(--dg-amber-800)">A &#183; ???</text>
+  <text x="376" y="148" font-size="10" fill="var(--dg-amber-600)">1,000 names is not a choice</text>
+  <text x="376" y="164" font-size="10" fill="var(--dg-amber-600)">a flat list gives nothing to reason with</text>
+
+  <rect x="40" y="200" width="600" height="90" rx="14" fill="var(--dg-gray-50)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
+  <text x="56" y="224" font-size="11.5" font-weight="600" fill="var(--dg-gray-800)">The gap</text>
+  <text x="56" y="246" font-size="11" fill="var(--dg-gray-800)">PageIndex answers <tspan font-weight="600">where inside</tspan> a document. The question that comes first &#8212;</text>
+  <text x="56" y="262" font-size="11" fill="var(--dg-gray-800)"><tspan font-weight="600">which document</tspan> &#8212; has no model: a flat list of 1,000 filenames gives the model</text>
+  <text x="56" y="278" font-size="11" fill="var(--dg-gray-800)">nothing to reason with. SuperIndex adds that level, and with it the first real decision.</text>
+</svg>
+<figcaption><b>Figure 2</b> — PageIndex's unit is one document; a corpus raises a question one level above it. That missing level is where SuperIndex sits.</figcaption>
+</figure>
 
 <table>
-  <tr><th>Property</th><th>Value</th></tr>
-  <tr><td>Package</td><td><code>pageindex</code> 0.2.10, MIT, upstream <code>VectifyAI/PageIndex</code></td></tr>
-  <tr><td>Python</td><td>&gt;= 3.10</td></tr>
-  <tr><td>Indexing cost</td><td>zero for the <code>flash</code> skeleton; per-document for <code>classic</code></td></tr>
-  <tr><td>Retrieval primitives</td><td>4 read-only tools</td></tr>
-  <tr><td>Vector / embedding deps</td><td>none</td></tr>
+  <thead><tr><th></th><th>One document (PageIndex)</th><th>A corpus (the real deployment)</th></tr></thead>
+  <tbody>
+    <tr><td class="k">Unit of addressing</td><td>Page range inside one tree</td><td>Need to pick <em>which</em> document before any page range means anything</td></tr>
+    <tr><td class="k">Document discovery</td><td><code>browse_documents</code> returns a flat list</td><td>A flat list of 1,000 names gives the model no basis for choosing</td></tr>
+    <tr><td class="k">Directory structure</td><td>Not modelled</td><td>The directory tree <em>is</em> the strongest routing signal available — year, entity, report type</td></tr>
+    <tr><td class="k">Extraction</td><td>PDF text layer</td><td>Mangles tables; refuses scanned PDFs outright</td></tr>
+  </tbody>
 </table>
 
-<h2 id="layers">2. Layered architecture</h2>
+<div class="card win"><span class="t">What that leaves us needing</span>
+A retrieval design in which the answer is produced by <b>decisions that can be printed, logged and configured</b> — rather than by a distance that can only be believed.</div>
+</section>
 
-<p>Five layers, but only two of them hold real logic. The rest are adapters and storage.</p>
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<section class="part p2">
+<h2 id="s2"><span class="num">2</span>How SuperIndex Solves the Problem<span class="kick">navigate, don't compare</span></h2>
+<p class="h2sub">Replace one distance with three decisions. Narrow the corpus before reading anything: which folder, which file, which section. Only then read — and read a single time.</p>
+
+<p class="lead">That single change is the whole design. Retrieval becomes a sequence of <strong>choices</strong> — which folder, which file, which section — instead of a <strong>distance</strong> you have to trust. Choices can be printed, logged, argued with, and configured by the people who own the documents.</p>
+
+<figure>
+<svg viewBox="0 0 680 310" role="img" xmlns="http://www.w3.org/2000/svg">
+  <title>One distance versus three decisions</title>
+  <desc>Similarity ranking returns a score that can only be believed; navigation returns three choices that can be printed, logged and configured.</desc>
+
+  <rect x="40" y="34" width="286" height="190" rx="14" fill="var(--dg-amber-50)" stroke="var(--dg-amber-600)" stroke-width="0.5"/>
+  <text x="56" y="60" font-size="12.5" font-weight="600" fill="var(--dg-amber-800)">Rank by similarity</text>
+  <text x="56" y="78" font-size="10.5" fill="var(--dg-amber-600)">one number decides</text>
+
+  <rect x="56" y="90" width="254" height="20" rx="6" fill="var(--dg-card)" stroke="var(--dg-amber-600)" stroke-width="0.5"/>
+  <text x="66" y="100" font-size="10" font-family="var(--mono)" fill="var(--dg-amber-800)" dominant-baseline="central">AIA_AR2024  p.118</text>
+  <text x="300" y="100" font-size="10" fill="var(--dg-amber-800)" text-anchor="end" dominant-baseline="central">0.94</text>
+  <rect x="56" y="114" width="254" height="20" rx="6" fill="var(--dg-card)" stroke="var(--dg-amber-600)" stroke-width="0.5"/>
+  <text x="66" y="124" font-size="10" font-family="var(--mono)" fill="var(--dg-amber-800)" dominant-baseline="central">AIA_AR2023  p.112</text>
+  <text x="300" y="124" font-size="10" fill="var(--dg-amber-800)" text-anchor="end" dominant-baseline="central">0.94</text>
+  <rect x="56" y="138" width="254" height="20" rx="6" fill="var(--dg-card)" stroke="var(--dg-amber-600)" stroke-width="0.5"/>
+  <text x="66" y="148" font-size="10" font-family="var(--mono)" fill="var(--dg-amber-800)" dominant-baseline="central">AIA_AR2022  p.109</text>
+  <text x="300" y="148" font-size="10" fill="var(--dg-amber-800)" text-anchor="end" dominant-baseline="central">0.93</text>
+  <rect x="56" y="162" width="254" height="20" rx="6" fill="var(--dg-card)" stroke="var(--dg-amber-600)" stroke-width="0.5"/>
+  <text x="66" y="172" font-size="10" font-family="var(--mono)" fill="var(--dg-amber-800)" dominant-baseline="central">board-minutes  p.4</text>
+  <text x="300" y="172" font-size="10" fill="var(--dg-amber-800)" text-anchor="end" dominant-baseline="central">0.71</text>
+
+  <text x="56" y="200" font-size="10" fill="var(--dg-amber-800)">the two right answers are tied &#8212;</text>
+  <text x="56" y="212" font-size="10" fill="var(--dg-amber-800)">and 0.02 from being ranked away</text>
+
+  <rect x="354" y="34" width="286" height="190" rx="14" fill="var(--dg-blue-50)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
+  <text x="370" y="60" font-size="12.5" font-weight="600" fill="var(--dg-blue-800)">Descend by decision</text>
+  <text x="370" y="78" font-size="10.5" fill="var(--dg-blue-600)">three answers you can read</text>
+
+  <rect x="370" y="94" width="254" height="24" rx="7" fill="var(--dg-card)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
+  <text x="382" y="106" font-size="9.5" font-family="var(--mono)" fill="var(--dg-blue-800)" dominant-baseline="central">dir &#8594; &#21451;&#37030;&#20445;&#38505; / 2024 / annual</text>
+  <rect x="370" y="124" width="254" height="24" rx="7" fill="var(--dg-card)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
+  <text x="382" y="136" font-size="9.5" font-family="var(--mono)" fill="var(--dg-blue-800)" dominant-baseline="central">file &#8594; AIA_AR2024.md</text>
+  <rect x="370" y="154" width="254" height="24" rx="7" fill="var(--dg-card)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
+  <text x="382" y="166" font-size="9.5" font-family="var(--mono)" fill="var(--dg-blue-800)" dominant-baseline="central">section &#8594; Dividends</text>
+
+  <text x="370" y="200" font-size="10" fill="var(--dg-blue-800)">a path you can print, log, and</text>
+  <text x="370" y="212" font-size="10" fill="var(--dg-blue-800)">hand to whoever owns the data</text>
+
+  <rect x="40" y="240" width="600" height="52" rx="14" fill="var(--dg-gray-50)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
+  <text x="56" y="262" font-size="11" fill="var(--dg-gray-800)">Same question. Same corpus. One design returns a number you can only believe &#8212;</text>
+  <text x="56" y="280" font-size="11" fill="var(--dg-gray-800)">the other returns a route you can print, log and argue with.</text>
+</svg>
+<figcaption><b>Figure 3</b> — The whole design in one comparison: a score versus a path. Everything else on this page is the mechanism behind the right-hand column.</figcaption>
+</figure>
+
+<div class="card key"><span class="t">The load-bearing consequence</span>
+Because nothing is ranked by similarity, there is no embedding model, no vector database and no <code>numpy</code> anywhere in the stack. The only thing that costs money is asking a model to choose between candidates — and that happens a <b>bounded</b> number of times per question, regardless of how deep the folders go.</div>
+
+<h3 id="s21"><span class="n">2.1</span>Build Index</h3>
+
+<p>Indexing runs in two stages, and <strong>the first one is free</strong>.</p>
+
+<ol>
+  <li><strong>Structure.</strong> Extract text, derive a chapter tree, write the manifest and one tree file per document. No LLM, no API key, no network. On a 144-file / 2,304-node corpus this takes <strong>0.09 seconds</strong>.</li>
+  <li><strong>Summaries.</strong> Ask a model for a one-line description of each file and directory, so routing has something to reason over beyond a folder name. This is the only stage that costs money, and it is incremental.</li>
+</ol>
+
+<p>That order matters commercially: you can index an entire corpus, inspect its structure, and decide whether it is worth summarising — <em>before</em> paying for anything.</p>
+
+<figure>
+<svg viewBox="0 0 680 344" role="img" xmlns="http://www.w3.org/2000/svg">
+  <title>Index build pipeline and the extraction fallback order</title>
+  <desc>Source files are extracted by the best available backend, turned into chapter trees, and written to the manifest and tree files. Summaries are an optional second pass.</desc>
+
+  <rect x="40" y="14" width="600" height="46" rx="12" fill="var(--dg-gray-50)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
+  <text x="56" y="37" font-size="11.5" font-weight="600" fill="var(--dg-gray-800)" dominant-baseline="central">Source documents</text>
+  <text x="200" y="37" font-size="11" font-family="var(--mono)" fill="var(--dg-gray-600)" dominant-baseline="central">.md · .markdown · .txt · .pdf, nested to any depth</text>
+
+  <line x1="340" y1="62" x2="340" y2="74" stroke="var(--dg-gray-600)" stroke-width="0.8"/>
+  <polygon points="340,78 336,70 344,70" fill="var(--dg-gray-600)"/>
+
+  <rect x="40" y="82" width="600" height="126" rx="12" fill="var(--dg-blue-50)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
+  <text x="56" y="104" font-size="11.5" font-weight="600" fill="var(--dg-blue-800)">Extraction — best available backend, in this order</text>
+  <text x="56" y="120" font-size="10.5" fill="var(--dg-blue-800)">each step falls through only if the one above produced nothing usable</text>
+
+  <rect x="56" y="130" width="136" height="30" rx="8" fill="var(--dg-card)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
+  <text x="124" y="145" font-size="10.5" fill="var(--dg-blue-800)" text-anchor="middle" dominant-baseline="central">1 · Azure DI</text>
+  <rect x="200" y="130" width="136" height="30" rx="8" fill="var(--dg-card)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
+  <text x="268" y="145" font-size="10.5" fill="var(--dg-blue-800)" text-anchor="middle" dominant-baseline="central">2 · flash (offline)</text>
+  <rect x="344" y="130" width="136" height="30" rx="8" fill="var(--dg-card)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
+  <text x="412" y="145" font-size="10.5" fill="var(--dg-blue-800)" text-anchor="middle" dominant-baseline="central">3 · one node / page</text>
+  <rect x="488" y="130" width="136" height="30" rx="8" fill="var(--dg-card)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
+  <text x="556" y="145" font-size="10.5" fill="var(--dg-blue-800)" text-anchor="middle" dominant-baseline="central">4 · PDF bookmarks</text>
+
+  <text x="56" y="176" font-size="10" fill="var(--dg-blue-800)">real Markdown,</text>
+  <text x="56" y="189" font-size="10" fill="var(--dg-blue-800)">tables kept</text>
+  <text x="200" y="176" font-size="10" fill="var(--dg-blue-800)">headings from font size</text>
+  <text x="200" y="189" font-size="10" fill="var(--dg-blue-800)">&amp; layout — free, no LLM</text>
+  <text x="344" y="176" font-size="10" fill="var(--dg-blue-800)">coarse, but every</text>
+  <text x="344" y="189" font-size="10" fill="var(--dg-blue-800)">page stays reachable</text>
+  <text x="488" y="176" font-size="10" fill="var(--dg-blue-800)">no text layer</text>
+  <text x="488" y="189" font-size="10" fill="var(--dg-blue-800)">at all</text>
+
+  <line x1="340" y1="208" x2="340" y2="220" stroke="var(--dg-gray-600)" stroke-width="0.8"/>
+  <polygon points="340,224 336,216 344,216" fill="var(--dg-gray-600)"/>
+
+  <rect x="40" y="228" width="600" height="46" rx="12" fill="var(--dg-teal-50)" stroke="var(--dg-teal-600)" stroke-width="0.5"/>
+  <text x="56" y="251" font-size="11.5" font-weight="600" fill="var(--dg-teal-800)" dominant-baseline="central">Stage 1 — structure</text>
+  <text x="230" y="251" font-size="11" font-family="var(--mono)" fill="var(--dg-teal-800)" dominant-baseline="central">chapter tree → manifest.json + trees/&lt;key&gt;.json</text>
+  <text x="620" y="251" font-size="10.5" fill="var(--dg-teal-800)" text-anchor="end" dominant-baseline="central">no LLM · 0.09 s</text>
+
+  <line x1="340" y1="274" x2="340" y2="286" stroke="var(--dg-gray-600)" stroke-width="0.8"/>
+  <polygon points="340,290 336,282 344,282" fill="var(--dg-gray-600)"/>
+
+  <rect x="40" y="294" width="600" height="46" rx="12" fill="var(--dg-amber-50)" stroke="var(--dg-amber-600)" stroke-width="0.5"/>
+  <text x="56" y="317" font-size="11.5" font-weight="600" fill="var(--dg-amber-800)" dominant-baseline="central">Stage 2 — summaries (optional)</text>
+  <text x="290" y="317" font-size="11" fill="var(--dg-amber-800)" dominant-baseline="central">one line per file and per directory</text>
+  <text x="620" y="317" font-size="10.5" fill="var(--dg-amber-800)" text-anchor="end" dominant-baseline="central">LLM · incremental</text>
+</svg>
+<figcaption><b>Figure 4</b> — Extraction degrades in a useful order rather than failing. A configured-but-broken Azure backend <em>aborts</em> instead of silently falling back — a quieter failure would mean indexing worse text than you paid for.</figcaption>
+</figure>
+
+<p>The index is deliberately split by <strong>how often it is read</strong>, not by document. The part needed to decide <em>where</em> to look is small and always loaded; the part needed to <em>read</em> a document is large and fetched only for the handful of files that survive routing.</p>
+
+<figure>
+<svg viewBox="0 0 680 268" role="img" xmlns="http://www.w3.org/2000/svg">
+  <title>The index split: manifest versus chapter trees</title>
+  <desc>The manifest holds the directory tree and file metadata and is always loaded. Chapter trees are large and loaded only on demand.</desc>
+
+  <rect x="40" y="20" width="272" height="150" rx="12" fill="var(--dg-blue-50)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
+  <text x="56" y="44" font-size="12" font-weight="600" fill="var(--dg-blue-800)">manifest.json</text>
+  <text x="56" y="64" font-size="11" fill="var(--dg-blue-800)">the routing index</text>
+  <text x="56" y="90" font-size="10.5" font-family="var(--mono)" fill="var(--dg-blue-800)">· directory tree</text>
+  <text x="56" y="108" font-size="10.5" font-family="var(--mono)" fill="var(--dg-blue-800)">· file names, sizes, mtimes</text>
+  <text x="56" y="126" font-size="10.5" font-family="var(--mono)" fill="var(--dg-blue-800)">· one-line summaries</text>
+  <text x="56" y="152" font-size="11" fill="var(--dg-blue-800)">125 KB for 144 files — small</text>
+  <text x="56" y="166" font-size="11" fill="var(--dg-blue-800)">enough to keep in memory.</text>
+
+  <rect x="368" y="20" width="272" height="150" rx="12" fill="var(--dg-teal-50)" stroke="var(--dg-teal-600)" stroke-width="0.5"/>
+  <text x="384" y="44" font-size="12" font-weight="600" fill="var(--dg-teal-800)">trees/&lt;key&gt;.json</text>
+  <text x="384" y="64" font-size="11" fill="var(--dg-teal-800)">one per document</text>
+  <text x="384" y="90" font-size="10.5" font-family="var(--mono)" fill="var(--dg-teal-800)">· chapter hierarchy</text>
+  <text x="384" y="108" font-size="10.5" font-family="var(--mono)" fill="var(--dg-teal-800)">· line / page range per node</text>
+  <text x="384" y="126" font-size="10.5" font-family="var(--mono)" fill="var(--dg-teal-800)">· the document's own text</text>
+  <text x="384" y="152" font-size="11" fill="var(--dg-teal-800)">Big. Needed for maybe 5 of</text>
+  <text x="384" y="166" font-size="11" fill="var(--dg-teal-800)">1,000 files, so it is lazy.</text>
+
+  <line x1="312" y1="95" x2="368" y2="95" stroke="var(--dg-gray-600)" stroke-width="0.8"/>
+  <polygon points="368,95 360,91 360,99" fill="var(--dg-gray-600)"/>
+  <text x="340" y="84" font-size="10" fill="var(--dg-gray-600)" text-anchor="middle">only</text>
+  <text x="340" y="112" font-size="10" fill="var(--dg-gray-600)" text-anchor="middle">after</text>
+  <text x="340" y="126" font-size="10" fill="var(--dg-gray-600)" text-anchor="middle">routing</text>
+
+  <rect x="40" y="188" width="600" height="60" rx="12" fill="var(--dg-gray-50)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
+  <text x="56" y="210" font-size="11.5" fill="var(--dg-gray-800)">A corpus of a thousand documents is still a few hundred KB of manifest — so routing never touches</text>
+  <text x="56" y="228" font-size="11.5" fill="var(--dg-gray-800)">the bulk of the index, and the expensive half is read only for the documents that actually get opened.</text>
+</svg>
+<figcaption><b>Figure 5</b> — Split by access pattern. This is what lets the router stay cheap as the corpus grows — the cost of the manifest grows with file <em>count</em>, not with document <em>size</em>.</figcaption>
+</figure>
+
+<div class="kpis">
+  <div class="kpi"><b>0.09 s</b><span>structural index over 144 files / 2,304 nodes — no LLM, no API key</span></div>
+  <div class="kpi"><b>125 KB</b><span>manifest for those 144 files, re-read on every query</span></div>
+  <div class="kpi"><b>~2K tok</b><span>the entire directory tree — 8,904 characters, one prompt</span></div>
+</div>
+
+<div class="card win"><span class="t">Why the split is load-bearing</span>
+The manifest grows with file <b>count</b>, not with document <b>size</b>. A thousand documents is still a few hundred KB of routing index — so routing never touches the bulk of the index, and the expensive half is read only for documents that actually get opened.</div>
+
+<h4>Two engines, one tree shape</h4>
+
+<p>Text is turned into a chapter tree by whichever engine fits the document. The two have very different cost profiles, and the choice is per document.</p>
+
+<figure>
+<svg viewBox="0 0 680 380" role="img" xmlns="http://www.w3.org/2000/svg">
+  <title>Two indexing paths</title>
+  <desc>flash builds the tree offline from layout statistics; classic uses an LLM to read the table of contents.</desc>
+  <defs>
+    <marker id="a1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <rect x="240" y="20" width="200" height="44" rx="10" fill="var(--dg-gray-50)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
+  <text x="340" y="42" font-size="13" font-weight="500" fill="var(--dg-gray-800)" text-anchor="middle" dominant-baseline="central">Input PDF</text>
+
+  <path d="M320 64 V76 H187 V88" fill="none" stroke="var(--dg-teal-600)" stroke-width="1.5" marker-end="url(#a1)"/>
+  <path d="M360 64 V76 H493 V88" fill="none" stroke="var(--dg-amber-600)" stroke-width="1.5" marker-end="url(#a1)"/>
+
+  <rect x="40" y="90" width="295" height="202" rx="14" fill="var(--dg-teal-50)" stroke="var(--dg-teal-600)" stroke-width="0.5"/>
+  <text x="58" y="110" font-size="13" font-weight="500" fill="var(--dg-teal-800)">flash — layout statistics</text>
+  <text x="58" y="126" font-size="11" fill="var(--dg-teal-600)">no LLM, free, deterministic</text>
+  <rect x="58" y="136" width="259" height="32" rx="6" fill="var(--dg-card)" stroke="var(--dg-teal-600)" stroke-width="0.5"/>
+  <text x="70" y="152" font-size="12" fill="var(--dg-teal-800)" dominant-baseline="central">Character-level parse (pypdfium2)</text>
+  <rect x="58" y="174" width="259" height="32" rx="6" fill="var(--dg-card)" stroke="var(--dg-teal-600)" stroke-width="0.5"/>
+  <text x="70" y="190" font-size="12" fill="var(--dg-teal-800)" dominant-baseline="central">Header / footer / column classification</text>
+  <rect x="58" y="212" width="259" height="32" rx="6" fill="var(--dg-card)" stroke="var(--dg-teal-600)" stroke-width="0.5"/>
+  <text x="70" y="228" font-size="12" fill="var(--dg-teal-800)" dominant-baseline="central">Heading detection (size / position)</text>
+  <rect x="58" y="250" width="259" height="32" rx="6" fill="var(--dg-card)" stroke="var(--dg-teal-600)" stroke-width="0.5"/>
+  <text x="70" y="266" font-size="12" fill="var(--dg-teal-800)" dominant-baseline="central">Clustering → outline assembly</text>
+
+  <rect x="345" y="90" width="295" height="202" rx="14" fill="var(--dg-amber-50)" stroke="var(--dg-amber-600)" stroke-width="0.5"/>
+  <text x="363" y="110" font-size="13" font-weight="500" fill="var(--dg-amber-800)">classic — LLM reads the TOC</text>
+  <text x="363" y="126" font-size="11" fill="var(--dg-amber-600)">needs an LLM, semantic, costs money</text>
+  <rect x="363" y="136" width="259" height="32" rx="6" fill="var(--dg-card)" stroke="var(--dg-amber-600)" stroke-width="0.5"/>
+  <text x="375" y="152" font-size="12" fill="var(--dg-amber-800)" dominant-baseline="central">Locate the TOC pages</text>
+  <rect x="363" y="174" width="259" height="32" rx="6" fill="var(--dg-card)" stroke="var(--dg-amber-600)" stroke-width="0.5"/>
+  <text x="375" y="190" font-size="12" fill="var(--dg-amber-800)" dominant-baseline="central">Extract entries, verify completeness</text>
+  <rect x="363" y="212" width="259" height="32" rx="6" fill="var(--dg-card)" stroke="var(--dg-amber-600)" stroke-width="0.5"/>
+  <text x="375" y="228" font-size="12" fill="var(--dg-amber-800)" dominant-baseline="central">Map entries to physical pages</text>
+  <rect x="363" y="250" width="259" height="32" rx="6" fill="var(--dg-card)" stroke="var(--dg-amber-600)" stroke-width="0.5"/>
+  <text x="375" y="266" font-size="12" fill="var(--dg-amber-800)" dominant-baseline="central">Split nodes by page range</text>
+
+  <path d="M187 292 V302 H340" fill="none" stroke="var(--dg-gray-600)" stroke-width="1.5"/>
+  <path d="M493 292 V302 H340" fill="none" stroke="var(--dg-gray-600)" stroke-width="1.5"/>
+  <line x1="340" y1="302" x2="340" y2="312" stroke="var(--dg-gray-600)" stroke-width="1.5" marker-end="url(#a1)"/>
+
+  <rect x="170" y="316" width="340" height="44" rx="10" fill="var(--dg-gray-50)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
+  <text x="340" y="338" font-size="13" font-weight="500" fill="var(--dg-gray-800)" text-anchor="middle" dominant-baseline="central">Same tree shape (title / node_id / page range)</text>
+</svg>
+<figcaption><b>Figure 6</b> — Both engines emit the same node structure, which is why retrieval is engine-agnostic.</figcaption>
+</figure>
+
+<p>Because the <code>flash</code> skeleton needs no LLM, an entire corpus can be parsed and its structure inspected before spending anything — which is what makes the 144-file corpus cheap to work with. The <code>classic</code> path is more accurate when a document has a real table of contents, but note what ships beside it: <code>check_if_toc_extraction_is_complete</code>, <code>check_if_toc_transformation_is_complete</code>, <code>_validate_physical_indices</code>. Those exist because the LLM step is not reliable and has to be verified.</p>
+
+<h4>Re-indexing is incremental</h4>
+
+<p>Adding one document to a corpus of a thousand should not cost a thousand documents' worth of work. The gate is a size + mtime comparison against the manifest, plus a builder version — so the cost of a re-index is proportional to what actually changed.</p>
+
+<figure>
+<svg viewBox="0 0 680 246" role="img" xmlns="http://www.w3.org/2000/svg">
+  <title>Incremental re-indexing</title>
+  <desc>A size and mtime comparison decides whether a file is reprocessed, so editing one file costs one file's worth of work.</desc>
+
+  <rect x="40" y="20" width="600" height="48" rx="12" fill="var(--dg-gray-50)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
+  <text x="56" y="44" font-size="11.5" fill="var(--dg-gray-800)" dominant-baseline="central">Watcher finds a file whose size or mtime changed</text>
+  <text x="620" y="44" font-size="11" font-family="var(--mono)" fill="var(--dg-gray-600)" text-anchor="end" dominant-baseline="central">N files → 1 changed</text>
+
+  <line x1="340" y1="68" x2="340" y2="80" stroke="var(--dg-gray-600)" stroke-width="0.8"/>
+  <polygon points="340,84 336,76 344,76" fill="var(--dg-gray-600)"/>
+
+  <rect x="40" y="88" width="600" height="60" rx="12" fill="var(--dg-blue-50)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
+  <text x="56" y="110" font-size="11.5" font-weight="600" fill="var(--dg-blue-800)">Gate: size + mtime unchanged, and builder version matches?</text>
+  <text x="56" y="130" font-size="10.5" fill="var(--dg-blue-800)">If yes, the existing chapter tree and its summary are reused — nothing is re-extracted and no model is called.</text>
+
+  <line x1="200" y1="148" x2="200" y2="164" stroke="var(--dg-teal-600)" stroke-width="0.8"/>
+  <polygon points="200,168 196,160 204,160" fill="var(--dg-teal-600)"/>
+  <line x1="480" y1="148" x2="480" y2="164" stroke="var(--dg-amber-600)" stroke-width="0.8"/>
+  <polygon points="480,168 476,160 484,160" fill="var(--dg-amber-600)"/>
+
+  <rect x="40" y="170" width="320" height="56" rx="12" fill="var(--dg-teal-50)" stroke="var(--dg-teal-600)" stroke-width="0.5"/>
+  <text x="56" y="192" font-size="11.5" font-weight="600" fill="var(--dg-teal-800)">N − 1 files: untouched</text>
+  <text x="56" y="212" font-size="10.5" fill="var(--dg-teal-800)">summaries and trees kept as they are</text>
+
+  <rect x="376" y="170" width="264" height="56" rx="12" fill="var(--dg-amber-50)" stroke="var(--dg-amber-600)" stroke-width="0.5"/>
+  <text x="392" y="192" font-size="11.5" font-weight="600" fill="var(--dg-amber-800)">1 file: re-extracted</text>
+  <text x="392" y="212" font-size="10.5" fill="var(--dg-amber-800)">and its summary regenerated</text>
+</svg>
+<figcaption><b>Figure 7</b> — Editing one document in a thousand costs one document's worth of work. A change to the extraction logic itself is handled by bumping <code>BUILDER_VERSION</code>, which deliberately invalidates every cached tree — otherwise a logic improvement would look like "nothing changed".</figcaption>
+</figure>
+
+<div class="card note"><span class="t">The subtlety</span>
+Size and mtime alone are not enough. When the <b>extraction logic</b> changes, every file's size and mtime stay identical while the tree they produce would be different — so a <code>BUILDER_VERSION</code> constant is part of the gate. Bump it and the whole corpus re-derives; forget to, and an improvement silently never takes effect.</div>
+
+<h4>Where the text comes from</h4>
+
+<p>The extraction backend matters more than it sounds, because a tree built from mangled text is wrong no matter how good the navigation is. Extraction is pluggable, and the best available backend is chosen in a fixed order, falling through only when the one above produced nothing usable.</p>
+
+<table>
+  <thead><tr><th></th><th>Text layer (default)</th><th>Azure Document Intelligence</th></tr></thead>
+  <tbody>
+    <tr><td class="k">Cost</td><td>free</td><td>per page</td></tr>
+    <tr><td class="k">Tables</td><td>mangled — a chart page flattens to <code>175230</code>, two numbers fused, label-to-value association gone</td><td>real Markdown tables</td></tr>
+    <tr><td class="k">Scanned PDFs</td><td>refused outright</td><td>OCR'd</td></tr>
+    <tr><td class="k">Page anchors</td><td>synthesised as <code>&lt;!-- page: N --&gt;</code></td><td>injected at real page boundaries, read from <code>analyzeResult.pages[].spans[].offset</code></td></tr>
+  </tbody>
+</table>
+
+<div class="card note"><span class="t">Configured means default</span>
+Set <code>AZURE_DI_ENDPOINT</code> and <code>AZURE_DI_KEY</code> and every entry point picks it up — no flag to remember. With nothing configured you get the text layer, exactly as before. The backend never switches silently: each run prints which one it used and why.</div>
+
+<div class="card warn"><span class="t">A configured-but-failing backend aborts the run</span>
+Degrading quietly to the text layer would hide a wrong key or endpoint and change index quality with nobody noticing. Silent degradation is the worst class of bug in a retrieval system, so it is made loud. <code>AZURE_DI_FALLBACK=1</code> opts into the soft behaviour.</div>
+
+<h3 id="s22"><span class="n">2.2</span>Query</h3>
+
+<p class="lead">A question is answered by walking three levels in sequence. Each level is an index into the next, and each level is a model decision — there is no similarity ranking anywhere in the path.</p>
+
+<figure>
+<svg viewBox="0 0 680 384" role="img" xmlns="http://www.w3.org/2000/svg">
+  <title>The three-level addressing funnel</title>
+  <desc>A question narrows from the whole directory tree to a few directories, then a few files, then a few sections, then to assembled context.</desc>
+
+  <rect x="200" y="10" width="280" height="36" rx="10" fill="var(--dg-gray-50)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
+  <text x="340" y="28" font-size="12" fill="var(--dg-gray-800)" text-anchor="middle" dominant-baseline="central">"What was the dividend per share in 2024?"</text>
+
+  <line x1="340" y1="46" x2="340" y2="58" stroke="var(--dg-gray-600)" stroke-width="0.8"/>
+  <polygon points="340,62 336,54 344,54" fill="var(--dg-gray-600)"/>
+
+  <rect x="40" y="66" width="600" height="62" rx="12" fill="var(--dg-blue-50)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
+  <rect x="56" y="80" width="34" height="22" rx="6" fill="var(--dg-blue-600)"/>
+  <text x="73" y="91" font-size="10.5" font-weight="600" fill="var(--on-accent)" text-anchor="middle" dominant-baseline="central">L0</text>
+  <text x="102" y="85" font-size="12" font-weight="600" fill="var(--dg-blue-800)">Which directories?</text>
+  <text x="102" y="104" font-size="11" fill="var(--dg-blue-800)">The whole folder tree, in one prompt — 229 directories, 8,904 characters (~2K tokens).</text>
+  <text x="624" y="97" font-size="11" fill="var(--dg-blue-800)" text-anchor="end" dominant-baseline="central">pick 1–4</text>
+
+  <line x1="340" y1="128" x2="340" y2="140" stroke="var(--dg-gray-600)" stroke-width="0.8"/>
+  <polygon points="340,144 336,136 344,136" fill="var(--dg-gray-600)"/>
+
+  <rect x="80" y="148" width="520" height="62" rx="12" fill="var(--dg-blue-50)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
+  <rect x="96" y="162" width="34" height="22" rx="6" fill="var(--dg-blue-600)"/>
+  <text x="113" y="173" font-size="10.5" font-weight="600" fill="var(--on-accent)" text-anchor="middle" dominant-baseline="central">L1</text>
+  <text x="142" y="167" font-size="12" font-weight="600" fill="var(--dg-blue-800)">Which files?</text>
+  <text x="142" y="186" font-size="11" fill="var(--dg-blue-800)">Only the files under those directories — names and one-line summaries.</text>
+  <text x="584" y="179" font-size="11" fill="var(--dg-blue-800)" text-anchor="end" dominant-baseline="central">pick 1–5</text>
+
+  <line x1="340" y1="210" x2="340" y2="222" stroke="var(--dg-gray-600)" stroke-width="0.8"/>
+  <polygon points="340,226 336,218 344,218" fill="var(--dg-gray-600)"/>
+
+  <rect x="120" y="230" width="440" height="62" rx="12" fill="var(--dg-blue-50)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
+  <rect x="136" y="244" width="34" height="22" rx="6" fill="var(--dg-blue-600)"/>
+  <text x="153" y="255" font-size="10.5" font-weight="600" fill="var(--on-accent)" text-anchor="middle" dominant-baseline="central">L2</text>
+  <text x="182" y="249" font-size="12" font-weight="600" fill="var(--dg-blue-800)">Which sections?</text>
+  <text x="182" y="268" font-size="11" fill="var(--dg-blue-800)">Each candidate's chapter tree — and these run in parallel.</text>
+  <text x="544" y="261" font-size="11" fill="var(--dg-blue-800)" text-anchor="end" dominant-baseline="central">pick 1–6</text>
+
+  <line x1="340" y1="292" x2="340" y2="304" stroke="var(--dg-gray-600)" stroke-width="0.8"/>
+  <polygon points="340,308 336,300 344,300" fill="var(--dg-gray-600)"/>
+
+  <rect x="160" y="312" width="360" height="62" rx="12" fill="var(--dg-teal-50)" stroke="var(--dg-teal-600)" stroke-width="0.5"/>
+  <text x="340" y="334" font-size="12" font-weight="600" fill="var(--dg-teal-800)" text-anchor="middle">Section text + provenance</text>
+  <text x="340" y="354" font-size="11" fill="var(--dg-teal-800)" text-anchor="middle">assembled in relevance order, capped at 20,000 characters</text>
+</svg>
+<figcaption><b>Figure 8</b> — Three model decisions, each with a deterministic fallback. Because the directory tree is far smaller than the file count, <strong>cost does not grow with directory depth</strong> — the whole tree fits in one prompt even when the files do not.</figcaption>
+</figure>
+
+<div class="card key"><span class="t">Why this stays cheap as the corpus grows</span>
+The directory tree is far smaller than the file count — <b>144 files lived in 229 directories</b>, and the whole directory listing is 8,904 characters (≈2K tokens). Directories are what the first level reads, so level 1 can show the whole tree in one call and its cost does not grow with directory depth.</div>
+
+<p>Put together, the path a question takes is a bounded number of model calls plus one streamed answer. Nothing here scales with corpus size except the length of one listing.</p>
+
+<figure>
+<svg viewBox="0 0 680 418" role="img" xmlns="http://www.w3.org/2000/svg">
+  <title>The sequence of one question</title>
+  <desc>Load the routing policy, then three model decisions, then local context assembly, then a streamed answer.</desc>
+
+  <rect x="40" y="12" width="420" height="34" rx="10" fill="var(--dg-gray-50)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
+  <text x="56" y="29" font-size="11.5" fill="var(--dg-gray-800)" dominant-baseline="central">Load the routing policy</text>
+  <text x="444" y="29" font-size="10.5" font-family="var(--mono)" fill="var(--dg-gray-600)" text-anchor="end" dominant-baseline="central">config/routing_policy.yaml</text>
+
+  <rect x="40" y="56" width="420" height="34" rx="10" fill="var(--dg-blue-50)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
+  <text x="56" y="73" font-size="11.5" fill="var(--dg-blue-800)" dominant-baseline="central">L0 · pick directories from the folder tree</text>
+  <text x="444" y="73" font-size="10.5" fill="var(--dg-blue-800)" text-anchor="end" dominant-baseline="central">1 model call</text>
+
+  <rect x="40" y="100" width="420" height="34" rx="10" fill="var(--dg-blue-50)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
+  <text x="56" y="117" font-size="11.5" fill="var(--dg-blue-800)" dominant-baseline="central">L1 · pick files under those directories</text>
+  <text x="444" y="117" font-size="10.5" fill="var(--dg-blue-800)" text-anchor="end" dominant-baseline="central">1 model call</text>
+
+  <rect x="40" y="144" width="420" height="34" rx="10" fill="var(--dg-blue-50)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
+  <text x="56" y="161" font-size="11.5" fill="var(--dg-blue-800)" dominant-baseline="central">L2 · pick sections, one call per candidate file</text>
+  <text x="444" y="161" font-size="10.5" fill="var(--dg-blue-800)" text-anchor="end" dominant-baseline="central">N calls, in parallel</text>
+
+  <rect x="40" y="188" width="420" height="34" rx="10" fill="var(--dg-gray-50)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
+  <text x="56" y="205" font-size="11.5" fill="var(--dg-gray-800)" dominant-baseline="central">Assemble context from the chosen sections</text>
+  <text x="444" y="205" font-size="10.5" font-family="var(--mono)" fill="var(--dg-gray-600)" text-anchor="end" dominant-baseline="central">local · no model call</text>
+
+  <rect x="40" y="232" width="420" height="34" rx="10" fill="var(--dg-teal-50)" stroke="var(--dg-teal-600)" stroke-width="0.5"/>
+  <text x="56" y="249" font-size="11.5" fill="var(--dg-teal-800)" dominant-baseline="central">Stream the answer, thinking included</text>
+  <text x="444" y="249" font-size="10.5" fill="var(--dg-teal-800)" text-anchor="end" dominant-baseline="central">1 model call, streamed</text>
+
+  <line x1="486" y1="12" x2="486" y2="266" stroke="var(--dg-gray-400)" stroke-width="0.8" stroke-dasharray="3 3"/>
+  <text x="500" y="30" font-size="10.5" font-weight="600" fill="var(--dg-gray-800)">Deterministic fallback</text>
+  <text x="500" y="74" font-size="10" fill="var(--dg-gray-600)">keyword scoring over</text>
+  <text x="500" y="88" font-size="10" fill="var(--dg-gray-600)">paths and summaries</text>
+  <text x="500" y="118" font-size="10" fill="var(--dg-gray-600)">keyword scoring over</text>
+  <text x="500" y="132" font-size="10" fill="var(--dg-gray-600)">names and summaries</text>
+  <text x="500" y="162" font-size="10" fill="var(--dg-gray-600)">keyword scoring over</text>
+  <text x="500" y="176" font-size="10" fill="var(--dg-gray-600)">section titles</text>
+  <text x="500" y="206" font-size="10" fill="var(--dg-gray-600)">—</text>
+  <text x="500" y="250" font-size="10" fill="var(--dg-gray-600)">—</text>
+
+  <rect x="40" y="286" width="600" height="120" rx="12" fill="var(--dg-gray-50)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
+  <text x="56" y="308" font-size="11.5" font-weight="600" fill="var(--dg-gray-800)">What is recorded while this runs</text>
+  <text x="56" y="330" font-size="11" fill="var(--dg-gray-800)">Every step above is appended to <tspan font-family="var(--mono)">results/logs/queries.jsonl</tspan>: the scope, each decision, the sources</text>
+  <text x="56" y="348" font-size="11" fill="var(--dg-gray-800)">read, the answer, per-stage timings, and a per-call breakdown of the model calls — how many, how long</text>
+  <text x="56" y="366" font-size="11" fill="var(--dg-gray-800)">each took, and whether any of them had to retry. A query that was slow because one call silently</text>
+  <text x="56" y="384" font-size="11" fill="var(--dg-gray-800)">retried twice is therefore distinguishable from one that was simply slow.</text>
+</svg>
+<figcaption><b>Figure 9</b> — The whole retrieval path costs a bounded number of model calls — two serial routing calls plus one per candidate file, run concurrently. The answer itself is a single streamed call, and it dominates the wall clock. The routing policy is re-read from disk on every query, so editing it needs no restart.</figcaption>
+</figure>
+
+<h4>Every decision has a deterministic backstop</h4>
+
+<p>If the model returns nothing usable at a level, the pipeline does not dead-end and does not fall back to the whole corpus. It scores the candidates <em>at that level</em> with keyword matching and carries on.</p>
+
+<figure>
+<svg viewBox="0 0 680 210" role="img" xmlns="http://www.w3.org/2000/svg">
+  <title>The fallback chain for each decision</title>
+  <desc>Each model decision falls back to deterministic keyword scoring, and the fallback is recorded in the trace.</desc>
+
+  <rect x="40" y="20" width="180" height="52" rx="12" fill="var(--dg-blue-50)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
+  <text x="130" y="42" font-size="11.5" font-weight="600" fill="var(--dg-blue-800)" text-anchor="middle">Model picks</text>
+  <text x="130" y="58" font-size="10.5" fill="var(--dg-blue-800)" text-anchor="middle">1–4 dirs / 1–5 files / 1–6 sections</text>
+
+  <line x1="220" y1="46" x2="256" y2="46" stroke="var(--dg-gray-600)" stroke-width="0.8"/>
+  <polygon points="260,46 252,42 252,50" fill="var(--dg-gray-600)"/>
+  <text x="240" y="36" font-size="10" fill="var(--dg-gray-600)" text-anchor="middle">empty?</text>
+
+  <rect x="260" y="20" width="180" height="52" rx="12" fill="var(--dg-amber-50)" stroke="var(--dg-amber-600)" stroke-width="0.5"/>
+  <text x="350" y="42" font-size="11.5" font-weight="600" fill="var(--dg-amber-800)" text-anchor="middle">Keyword scoring</text>
+  <text x="350" y="58" font-size="10.5" fill="var(--dg-amber-800)" text-anchor="middle">aliases, years, paths, summaries</text>
+
+  <line x1="440" y1="46" x2="476" y2="46" stroke="var(--dg-gray-600)" stroke-width="0.8"/>
+  <polygon points="480,46 472,42 472,50" fill="var(--dg-gray-600)"/>
+
+  <rect x="480" y="20" width="160" height="52" rx="12" fill="var(--dg-teal-50)" stroke="var(--dg-teal-600)" stroke-width="0.5"/>
+  <text x="560" y="42" font-size="11.5" font-weight="600" fill="var(--dg-teal-800)" text-anchor="middle">Always a result</text>
+  <text x="560" y="58" font-size="10.5" fill="var(--dg-teal-800)" text-anchor="middle">navigation never dead-ends</text>
+
+  <rect x="40" y="92" width="600" height="98" rx="12" fill="var(--dg-gray-50)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
+  <text x="56" y="114" font-size="11.5" font-weight="600" fill="var(--dg-gray-800)">A fallback is never silent</text>
+  <text x="56" y="136" font-size="11" fill="var(--dg-gray-800)">When the keyword path fires, the step carries a note — "model picked nothing, used keyword fallback" —</text>
+  <text x="56" y="154" font-size="11" fill="var(--dg-gray-800)">which is written into the query log and shown in the UI's retrieval trace. Retrieval quality problems</text>
+  <text x="56" y="172" font-size="11" fill="var(--dg-gray-800)">are usually visible as a fallback rate, which is a number you can act on, rather than a vague sense</text>
+  <text x="56" y="186" font-size="11" fill="var(--dg-gray-800)">that answers got worse.</text>
+</svg>
+<figcaption><b>Figure 10</b> — Deterministic backstops are what make an LLM-driven pipeline acceptable in a setting where a dead end is worse than a mediocre answer.</figcaption>
+</figure>
+
+<div class="card note"><span class="t">Fallbacks resolve at the current level, not globally</span>
+Falling back to the whole corpus is a blunt instrument that gets worse as the corpus grows. If the model abstains at a level that already has candidate files, use those files — not all 144.</div>
+
+<h4>Why level 1 shows the entire tree instead of descending</h4>
+
+<p>The first implementation descended one directory level at a time. It was slower and less reliable, for a reason worth recording:</p>
+
+<table>
+  <thead><tr><th></th><th>Level-by-level descent</th><th>Whole tree in one call</th></tr></thead>
+  <tbody>
+    <tr><td class="k">Model calls</td><td>One per level — grows with depth</td><td>Two, regardless of depth</td></tr>
+    <tr><td class="k">What the model sees</td><td>One level at a time; cannot compare across branches</td><td>The whole shape, including which branch is deeper</td></tr>
+    <tr><td class="k">Failure mode</td><td>An early wrong turn is unrecoverable</td><td>A wrong branch is still visible in context</td></tr>
+  </tbody>
+</table>
+
+<p>Descent is still implemented, and is used automatically when the directory count exceeds a budget (240 by default) — but it is the exception, not the default path.</p>
+
+<div class="card win"><span class="t">Three decisions, each with a fallback</span>
+No step in the query path can return nothing. The worst case is a mediocre candidate set, which is a far better failure than a dead end — and the fallback is recorded, so a degraded answer is visible rather than mysterious.</div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<section class="part p3">
+<h2 id="s3"><span class="num">3</span>Software Architecture<span class="kick">a layer, not a fork</span></h2>
+<p class="h2sub">Five layers, two of which hold real logic. SuperIndex adds a level above the engine and a pluggable boundary underneath it — and modifies nothing in between.</p>
+
+<h3 id="s31"><span class="n">3.1</span>The layered view</h3>
 
 <figure>
 <svg viewBox="0 0 680 360" role="img" xmlns="http://www.w3.org/2000/svg">
@@ -173,71 +839,195 @@ footer{margin-top:72px;padding-top:24px;border-top:1px solid var(--border);color
   <rect x="517" y="294" width="111" height="36" rx="8" fill="var(--dg-card)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
   <text x="572" y="312" font-size="11" fill="var(--dg-gray-800)" text-anchor="middle" dominant-baseline="central">openai-agents</text>
 </svg>
-<figcaption>Figure 1 — Five layers. Real logic lives in the indexing and retrieval rows.</figcaption>
+<figcaption><b>Figure 11</b> — Five layers. Real logic lives in the indexing and retrieval rows.</figcaption>
 </figure>
 
-<h2 id="indexing">3. Two indexing paths</h2>
+<h3 id="s32"><span class="n">3.2</span>A layer, not a fork</h3>
 
-<p>The two engines have very different cost profiles, and the choice is per document.</p>
+<p><strong>Not a single file inside <code>PageIndex/</code> is modified.</strong> The engine is vendored at a pinned commit and every customisation is applied from outside at runtime, so <code>git pull</code> inside it stays clean and upstream improvements remain reachable.</p>
 
 <figure>
-<svg viewBox="0 0 680 380" role="img" xmlns="http://www.w3.org/2000/svg">
-  <title>Two indexing paths</title>
-  <desc>flash builds the tree offline from layout statistics; classic uses an LLM to read the table of contents.</desc>
-  <defs>
-    <marker id="a1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-    </marker>
-  </defs>
+<svg viewBox="0 0 680 360" role="img" xmlns="http://www.w3.org/2000/svg">
+  <title>How SuperIndex composes with PageIndex</title>
+  <desc>SuperIndex adds an application layer, an extraction backend and a corpus navigator above and below the unmodified PageIndex engine.</desc>
 
-  <rect x="240" y="20" width="200" height="44" rx="10" fill="var(--dg-gray-50)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
-  <text x="340" y="42" font-size="13" font-weight="500" fill="var(--dg-gray-800)" text-anchor="middle" dominant-baseline="central">Input PDF</text>
+  <rect x="40" y="20" width="600" height="46" rx="12" fill="var(--dg-gray-50)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
+  <text x="52" y="43" font-size="12" font-weight="500" fill="var(--dg-gray-800)" dominant-baseline="central">Application</text>
+  <rect x="160" y="26" width="228" height="34" rx="8" fill="var(--dg-card)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
+  <text x="274" y="43" font-size="12" fill="var(--dg-gray-800)" text-anchor="middle" dominant-baseline="central">webapp/ — chat UI (SSE)</text>
+  <rect x="400" y="26" width="228" height="34" rx="8" fill="var(--dg-card)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
+  <text x="514" y="43" font-size="12" fill="var(--dg-gray-800)" text-anchor="middle" dominant-baseline="central">scripts/ — CLI + diagnostics</text>
 
-  <path d="M320 64 V76 H187 V88" fill="none" stroke="var(--dg-teal-600)" stroke-width="1.5" marker-end="url(#a1)"/>
-  <path d="M360 64 V76 H493 V88" fill="none" stroke="var(--dg-amber-600)" stroke-width="1.5" marker-end="url(#a1)"/>
+  <rect x="40" y="84" width="600" height="74" rx="12" fill="var(--dg-blue-50)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
+  <text x="52" y="108" font-size="12" font-weight="500" fill="var(--dg-blue-800)" dominant-baseline="central">Added by</text>
+  <text x="52" y="126" font-size="12" font-weight="500" fill="var(--dg-blue-800)" dominant-baseline="central">SuperIndex</text>
+  <rect x="160" y="96" width="148" height="50" rx="8" fill="var(--dg-card)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
+  <text x="234" y="113" font-size="11" fill="var(--dg-blue-800)" text-anchor="middle" dominant-baseline="central">extractors/</text>
+  <text x="234" y="130" font-size="11" fill="var(--dg-blue-600)" text-anchor="middle" dominant-baseline="central">where text comes from</text>
+  <rect x="318" y="96" width="148" height="50" rx="8" fill="var(--dg-card)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
+  <text x="392" y="113" font-size="11" fill="var(--dg-blue-800)" text-anchor="middle" dominant-baseline="central">nav/</text>
+  <text x="392" y="130" font-size="11" fill="var(--dg-blue-600)" text-anchor="middle" dominant-baseline="central">corpus → file → section</text>
+  <rect x="476" y="96" width="152" height="50" rx="8" fill="var(--dg-card)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
+  <text x="552" y="113" font-size="11" fill="var(--dg-blue-800)" text-anchor="middle" dominant-baseline="central">tests/ + docs/</text>
+  <text x="552" y="130" font-size="11" fill="var(--dg-blue-600)" text-anchor="middle" dominant-baseline="central">520 offline assertions</text>
 
-  <rect x="40" y="90" width="295" height="202" rx="14" fill="var(--dg-teal-50)" stroke="var(--dg-teal-600)" stroke-width="0.5"/>
-  <text x="58" y="110" font-size="13" font-weight="500" fill="var(--dg-teal-800)">flash — layout statistics</text>
-  <text x="58" y="126" font-size="11" fill="var(--dg-teal-600)">no LLM, free, deterministic</text>
-  <rect x="58" y="136" width="259" height="32" rx="6" fill="var(--dg-card)" stroke="var(--dg-teal-600)" stroke-width="0.5"/>
-  <text x="70" y="152" font-size="12" fill="var(--dg-teal-800)" dominant-baseline="central">Character-level parse (pypdfium2)</text>
-  <rect x="58" y="174" width="259" height="32" rx="6" fill="var(--dg-card)" stroke="var(--dg-teal-600)" stroke-width="0.5"/>
-  <text x="70" y="190" font-size="12" fill="var(--dg-teal-800)" dominant-baseline="central">Header / footer / column classification</text>
-  <rect x="58" y="212" width="259" height="32" rx="6" fill="var(--dg-card)" stroke="var(--dg-teal-600)" stroke-width="0.5"/>
-  <text x="70" y="228" font-size="12" fill="var(--dg-teal-800)" dominant-baseline="central">Heading detection (size / position)</text>
-  <rect x="58" y="250" width="259" height="32" rx="6" fill="var(--dg-card)" stroke="var(--dg-teal-600)" stroke-width="0.5"/>
-  <text x="70" y="266" font-size="12" fill="var(--dg-teal-800)" dominant-baseline="central">Clustering → outline assembly</text>
+  <line x1="40" y1="174" x2="640" y2="174" stroke="var(--dg-amber-600)" stroke-width="1" stroke-dasharray="5 4"/>
+  <text x="340" y="174" font-size="11" fill="var(--dg-amber-800)" text-anchor="middle" dominant-baseline="central" style="paint-order:stroke;stroke:var(--bg);stroke-width:6px">PageIndex/ — vendored, never edited</text>
 
-  <rect x="345" y="90" width="295" height="202" rx="14" fill="var(--dg-amber-50)" stroke="var(--dg-amber-600)" stroke-width="0.5"/>
-  <text x="363" y="110" font-size="13" font-weight="500" fill="var(--dg-amber-800)">classic — LLM reads the TOC</text>
-  <text x="363" y="126" font-size="11" fill="var(--dg-amber-600)">needs an LLM, semantic, costs money</text>
-  <rect x="363" y="136" width="259" height="32" rx="6" fill="var(--dg-card)" stroke="var(--dg-amber-600)" stroke-width="0.5"/>
-  <text x="375" y="152" font-size="12" fill="var(--dg-amber-800)" dominant-baseline="central">Locate the TOC pages</text>
-  <rect x="363" y="174" width="259" height="32" rx="6" fill="var(--dg-card)" stroke="var(--dg-amber-600)" stroke-width="0.5"/>
-  <text x="375" y="190" font-size="12" fill="var(--dg-amber-800)" dominant-baseline="central">Extract entries, verify completeness</text>
-  <rect x="363" y="212" width="259" height="32" rx="6" fill="var(--dg-card)" stroke="var(--dg-amber-600)" stroke-width="0.5"/>
-  <text x="375" y="228" font-size="12" fill="var(--dg-amber-800)" dominant-baseline="central">Map entries to physical pages</text>
-  <rect x="363" y="250" width="259" height="32" rx="6" fill="var(--dg-card)" stroke="var(--dg-amber-600)" stroke-width="0.5"/>
-  <text x="375" y="266" font-size="12" fill="var(--dg-amber-800)" dominant-baseline="central">Split nodes by page range</text>
+  <rect x="40" y="190" width="600" height="74" rx="12" fill="var(--dg-gray-50)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
+  <text x="52" y="214" font-size="12" font-weight="500" fill="var(--dg-gray-800)" dominant-baseline="central">Upstream</text>
+  <text x="52" y="232" font-size="12" font-weight="500" fill="var(--dg-gray-800)" dominant-baseline="central">engine</text>
+  <rect x="160" y="202" width="148" height="50" rx="8" fill="var(--dg-card)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
+  <text x="234" y="219" font-size="11" fill="var(--dg-gray-800)" text-anchor="middle" dominant-baseline="central">flash / classic</text>
+  <text x="234" y="236" font-size="11" fill="var(--dg-gray-600)" text-anchor="middle" dominant-baseline="central">tree building</text>
+  <rect x="318" y="202" width="148" height="50" rx="8" fill="var(--dg-card)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
+  <text x="392" y="219" font-size="11" fill="var(--dg-gray-800)" text-anchor="middle" dominant-baseline="central">agent loop</text>
+  <text x="392" y="236" font-size="11" fill="var(--dg-gray-600)" text-anchor="middle" dominant-baseline="central">retrieval</text>
+  <rect x="476" y="202" width="152" height="50" rx="8" fill="var(--dg-card)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
+  <text x="552" y="219" font-size="11" fill="var(--dg-gray-800)" text-anchor="middle" dominant-baseline="central">4 read tools</text>
+  <text x="552" y="236" font-size="11" fill="var(--dg-gray-600)" text-anchor="middle" dominant-baseline="central">tree + pages</text>
 
-  <path d="M187 292 V302 H340" fill="none" stroke="var(--dg-gray-600)" stroke-width="1.5"/>
-  <path d="M493 292 V302 H340" fill="none" stroke="var(--dg-gray-600)" stroke-width="1.5"/>
-  <line x1="340" y1="302" x2="340" y2="312" stroke="var(--dg-gray-600)" stroke-width="1.5" marker-end="url(#a1)"/>
-
-  <rect x="170" y="316" width="340" height="44" rx="10" fill="var(--dg-gray-50)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
-  <text x="340" y="338" font-size="13" font-weight="500" fill="var(--dg-gray-800)" text-anchor="middle" dominant-baseline="central">Same tree shape (title / node_id / page range)</text>
+  <rect x="40" y="282" width="600" height="58" rx="12" fill="var(--dg-gray-50)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
+  <text x="52" y="311" font-size="12" font-weight="500" fill="var(--dg-gray-800)" dominant-baseline="central">Storage</text>
+  <rect x="160" y="294" width="228" height="34" rx="8" fill="var(--dg-card)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
+  <text x="274" y="311" font-size="11" fill="var(--dg-gray-800)" text-anchor="middle" dominant-baseline="central">PageIndex store (tree + pages)</text>
+  <rect x="400" y="294" width="228" height="34" rx="8" fill="var(--dg-card)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
+  <text x="514" y="311" font-size="11" fill="var(--dg-gray-800)" text-anchor="middle" dominant-baseline="central">nav index (manifest + trees)</text>
 </svg>
-<figcaption>Figure 2 — Both engines emit the same node structure, which is why retrieval is engine-agnostic.</figcaption>
+<figcaption><b>Figure 12</b> — SuperIndex adds a layer above (which file?) and underneath (where does text come from?). The engine in between is untouched.</figcaption>
 </figure>
 
-<h3>Why the offline path matters</h3>
-<p>Because the <code>flash</code> skeleton needs no LLM, the entire corpus can be parsed and its structure inspected before spending anything. In this project that is what makes the 10-document corpus cheap to work with: the skeleton build takes about 45 seconds and costs nothing.</p>
+<table>
+  <thead><tr><th>Extension</th><th>Mechanism</th><th>Why not edit upstream</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="k">Extraction backend<br><code>extractors/backend.py</code></td>
+      <td>Monkeypatches <code>LocalAPI._extract_page_texts</code> — a <code>staticmethod</code> returning one string per page, so a drop-in replacement is sufficient.</td>
+      <td>Upstream stays <code>git pull</code>-able and the diff against it stays empty. Two runtime knobs (<code>SUMMARY_CONCURRENCY</code>, <code>reasoning_effort</code>) are applied the same way.</td>
+    </tr>
+    <tr>
+      <td class="k">Corpus navigator<br><code>nav/</code></td>
+      <td>Sits entirely beside upstream. It builds its own index and never calls into <code>PageIndex/</code> for retrieval.</td>
+      <td>The navigator answers a different question (which file?) than upstream does (where in the file?). Keeping them separate means either can be replaced alone.</td>
+    </tr>
+  </tbody>
+</table>
 
-<p>The <code>classic</code> path is more accurate on documents that have a real table of contents, but note what the author put next to it — <code>check_if_toc_extraction_is_complete</code>, <code>check_if_toc_transformation_is_complete</code>, <code>_validate_physical_indices</code>. Those functions exist because the LLM step is not reliable and has to be verified.</p>
+<p>Both are possible because of the property from §2.1: <strong>the indexing engines emit the same tree shape, so nothing downstream depends on how a tree was built.</strong> SuperIndex changes where text comes from and how many documents are addressed — not how a tree is shaped or traversed.</p>
 
-<h2 id="retrieval">4. The retrieval loop</h2>
+<h3 id="s33"><span class="n">3.3</span>Module map</h3>
 
-<p>At query time the chat model is not given a ranked list of chunks. It is given <em>tools</em> and a tree, and it decides what to look at.</p>
+<figure>
+<svg viewBox="0 0 680 330" role="img" xmlns="http://www.w3.org/2000/svg">
+  <title>Module map: what lives where</title>
+  <desc>Nine top-level places: the vendored engine, extraction, the navigator, the interface and tooling, configuration, the index, the drop zone and the tests.</desc>
+
+  <text x="40" y="22" font-size="11" fill="var(--dg-gray-600)">Nine places. Three of them are the ones you will actually touch.</text>
+
+  <rect x="40" y="40" width="190" height="82" rx="12" fill="var(--dg-gray-50)" stroke="var(--dg-gray-600)" stroke-width="0.5" stroke-dasharray="4 3"/>
+  <circle cx="56" cy="62" r="4.5" fill="var(--dg-gray-400)"/>
+  <text x="70" y="62" font-size="11.5" font-weight="600" fill="var(--dg-gray-800)" dominant-baseline="central">PageIndex/</text>
+  <text x="54" y="86" font-size="10" fill="var(--dg-gray-600)">upstream engine</text>
+  <text x="54" y="102" font-size="10" fill="var(--dg-gray-600)">vendored, never edited</text>
+
+  <rect x="245" y="40" width="190" height="82" rx="12" fill="var(--dg-teal-50)" stroke="var(--dg-teal-600)" stroke-width="0.5"/>
+  <circle cx="261" cy="62" r="4.5" fill="var(--dg-teal-600)"/>
+  <text x="275" y="62" font-size="11.5" font-weight="600" fill="var(--dg-teal-800)" dominant-baseline="central">extractors/</text>
+  <text x="259" y="86" font-size="10" fill="var(--dg-teal-600)">where text comes from</text>
+  <text x="259" y="102" font-size="10" fill="var(--dg-teal-600)">pluggable backends</text>
+
+  <rect x="450" y="40" width="190" height="82" rx="12" fill="var(--dg-blue-50)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
+  <circle cx="466" cy="62" r="4.5" fill="var(--dg-blue-600)"/>
+  <text x="480" y="62" font-size="11.5" font-weight="600" fill="var(--dg-blue-800)" dominant-baseline="central">nav/</text>
+  <text x="464" y="86" font-size="10" fill="var(--dg-blue-600)">corpus index + routing</text>
+  <text x="464" y="102" font-size="10" fill="var(--dg-blue-600)">the navigator</text>
+
+  <rect x="40" y="136" width="190" height="82" rx="12" fill="var(--dg-blue-50)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
+  <circle cx="56" cy="158" r="4.5" fill="var(--dg-blue-600)"/>
+  <text x="70" y="158" font-size="11.5" font-weight="600" fill="var(--dg-blue-800)" dominant-baseline="central">webapp/</text>
+  <text x="54" y="182" font-size="10" fill="var(--dg-blue-600)">chat UI</text>
+  <text x="54" y="198" font-size="10" fill="var(--dg-blue-600)">SSE server</text>
+
+  <rect x="245" y="136" width="190" height="82" rx="12" fill="var(--dg-blue-50)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
+  <circle cx="261" cy="158" r="4.5" fill="var(--dg-blue-600)"/>
+  <text x="275" y="158" font-size="11.5" font-weight="600" fill="var(--dg-blue-800)" dominant-baseline="central">scripts/</text>
+  <text x="259" y="182" font-size="10" fill="var(--dg-blue-600)">CLI</text>
+  <text x="259" y="198" font-size="10" fill="var(--dg-blue-600)">diagnostics + probes</text>
+
+  <rect x="450" y="136" width="190" height="82" rx="12" fill="var(--dg-amber-50)" stroke="var(--dg-amber-600)" stroke-width="0.5"/>
+  <circle cx="466" cy="158" r="4.5" fill="var(--dg-amber-600)"/>
+  <text x="480" y="158" font-size="11.5" font-weight="600" fill="var(--dg-amber-800)" dominant-baseline="central">config/</text>
+  <text x="464" y="182" font-size="10" fill="var(--dg-amber-600)">routing policy</text>
+  <text x="464" y="198" font-size="10" fill="var(--dg-amber-600)">business rules</text>
+
+  <rect x="40" y="232" width="190" height="82" rx="12" fill="var(--dg-teal-50)" stroke="var(--dg-teal-600)" stroke-width="0.5"/>
+  <circle cx="56" cy="254" r="4.5" fill="var(--dg-teal-600)"/>
+  <text x="70" y="254" font-size="11.5" font-weight="600" fill="var(--dg-teal-800)" dominant-baseline="central">index/</text>
+  <text x="54" y="278" font-size="10" fill="var(--dg-teal-600)">the product index</text>
+  <text x="54" y="294" font-size="10" fill="var(--dg-teal-600)">manifest + trees</text>
+
+  <rect x="245" y="232" width="190" height="82" rx="12" fill="var(--dg-gray-50)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
+  <circle cx="261" cy="254" r="4.5" fill="var(--dg-gray-400)"/>
+  <text x="275" y="254" font-size="11.5" font-weight="600" fill="var(--dg-gray-800)" dominant-baseline="central">data/</text>
+  <text x="259" y="278" font-size="10" fill="var(--dg-gray-600)">drop zone</text>
+  <text x="259" y="294" font-size="10" fill="var(--dg-gray-600)">each subdir = a corpus</text>
+
+  <rect x="450" y="232" width="190" height="82" rx="12" fill="var(--dg-teal-50)" stroke="var(--dg-teal-600)" stroke-width="0.5"/>
+  <circle cx="466" cy="254" r="4.5" fill="var(--dg-teal-600)"/>
+  <text x="480" y="254" font-size="11.5" font-weight="600" fill="var(--dg-teal-800)" dominant-baseline="central">tests/</text>
+  <text x="464" y="278" font-size="10" fill="var(--dg-teal-600)">520 assertions</text>
+  <text x="464" y="294" font-size="10" fill="var(--dg-teal-600)">offline, no framework</text>
+</svg>
+<figcaption><b>Figure 13</b> — Colour marks the layer: <b>grey</b> upstream and data, <b>teal</b> extraction and storage, <b>indigo</b> navigation and interface, <b>amber</b> configuration. Only <code>config/</code>, <code>data/</code> and <code>nav/</code> are expected to change in normal use.</figcaption>
+</figure>
+
+<h3 id="s34"><span class="n">3.4</span>Storage and the node model</h3>
+
+<p>The tree and the page text are stored separately. The tree is small and can be held in memory; the text is large and fetched on demand. <code>node_id</code> plus a page range is what makes an answer citable.</p>
+
+<figure>
+<svg viewBox="0 0 680 282" role="img" xmlns="http://www.w3.org/2000/svg">
+  <title>Storage layout and tree node fields</title>
+  <desc>Documents are stored in per-document directories with tree, pages and metadata separate; nodes address text by page range.</desc>
+
+  <rect x="40" y="40" width="295" height="222" rx="14" fill="var(--dg-gray-50)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
+  <text x="58" y="62" font-size="13" font-weight="500" fill="var(--dg-gray-800)" dominant-baseline="central">Local store layout</text>
+  <text x="58" y="88" font-size="11" fill="var(--dg-gray-800)" font-family="var(--mono)" dominant-baseline="central">index_store/</text>
+  <text x="58" y="108" font-size="11" fill="var(--dg-gray-800)" font-family="var(--mono)" dominant-baseline="central">├── manifest.json</text>
+  <text x="230" y="108" font-size="11" fill="var(--dg-gray-600)" dominant-baseline="central">document list</text>
+  <text x="58" y="128" font-size="11" fill="var(--dg-gray-800)" font-family="var(--mono)" dominant-baseline="central">├── .lock</text>
+  <text x="230" y="128" font-size="11" fill="var(--dg-gray-600)" dominant-baseline="central">write lock</text>
+  <text x="58" y="148" font-size="11" fill="var(--dg-gray-800)" font-family="var(--mono)" dominant-baseline="central">└── docs/</text>
+  <text x="58" y="168" font-size="11" fill="var(--dg-gray-800)" font-family="var(--mono)" dominant-baseline="central">    └── pi-30695a4c/</text>
+  <text x="58" y="188" font-size="11" fill="var(--dg-blue-600)" font-family="var(--mono)" dominant-baseline="central">        ├── tree.json</text>
+  <text x="230" y="188" font-size="11" fill="var(--dg-blue-600)" dominant-baseline="central">tree + summaries</text>
+  <text x="58" y="208" font-size="11" fill="var(--dg-blue-600)" font-family="var(--mono)" dominant-baseline="central">        ├── pages.json</text>
+  <text x="230" y="208" font-size="11" fill="var(--dg-blue-600)" dominant-baseline="central">page text</text>
+  <text x="58" y="228" font-size="11" fill="var(--dg-gray-800)" font-family="var(--mono)" dominant-baseline="central">        └── doc.json</text>
+  <text x="230" y="228" font-size="11" fill="var(--dg-gray-600)" dominant-baseline="central">metadata</text>
+  <text x="58" y="248" font-size="11" fill="var(--dg-gray-400)" dominant-baseline="central">writes are atomic, so no half-built index</text>
+
+  <rect x="345" y="40" width="295" height="222" rx="14" fill="var(--dg-blue-50)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
+  <text x="363" y="62" font-size="13" font-weight="500" fill="var(--dg-blue-800)" dominant-baseline="central">Tree node fields</text>
+  <text x="363" y="88" font-size="11" fill="var(--dg-blue-800)" font-family="var(--mono)" dominant-baseline="central">{</text>
+  <text x="363" y="108" font-size="11" fill="var(--dg-blue-800)" font-family="var(--mono)" dominant-baseline="central">  "title": "Chairman's…",</text>
+  <text x="363" y="128" font-size="11" fill="var(--dg-blue-800)" font-family="var(--mono)" dominant-baseline="central">  "node_id": "0003",</text>
+  <text x="363" y="148" font-size="11" fill="var(--dg-blue-800)" font-family="var(--mono)" dominant-baseline="central">  "start_index": 5,</text>
+  <text x="363" y="168" font-size="11" fill="var(--dg-blue-800)" font-family="var(--mono)" dominant-baseline="central">  "end_index": 12,</text>
+  <text x="363" y="188" font-size="11" fill="var(--dg-blue-800)" font-family="var(--mono)" dominant-baseline="central">  "summary": "…",</text>
+  <text x="363" y="208" font-size="11" fill="var(--dg-blue-800)" font-family="var(--mono)" dominant-baseline="central">  "nodes": [ … ]</text>
+  <text x="363" y="228" font-size="11" fill="var(--dg-blue-800)" font-family="var(--mono)" dominant-baseline="central">}</text>
+  <text x="363" y="248" font-size="11" fill="var(--dg-blue-600)" dominant-baseline="central">node_id + page range = the address</text>
+</svg>
+<figcaption><b>Figure 14</b> — <code>node_id</code> plus the page range is what makes an answer citable.</figcaption>
+</figure>
+
+<div class="card key"><span class="t">This split is worth copying</span>
+SuperIndex's own navigator uses the same shape one level up: a small always-loaded <code>manifest.json</code> for routing, and large per-document trees fetched by key. Storage is plain JSON throughout — readable with <code>cat</code>, and requiring no service to be running.</div>
+
+<h3 id="s35"><span class="n">3.5</span>The loop upstream still provides</h3>
+
+<p>Inside a single document, PageIndex offers an agentic loop: the model is given four read-only tools and a tree, and decides for itself what to open. SuperIndex does not use it on the query path — a bounded set of routing calls followed by one streamed answer is cheaper and more predictable — but it remains available, and it is the reason a page number can be cited at all.</p>
 
 <figure>
 <svg viewBox="0 0 680 310" role="img" xmlns="http://www.w3.org/2000/svg">
@@ -284,35 +1074,93 @@ footer{margin-top:72px;padding-top:24px;border-top:1px solid var(--border);color
   <text x="340" y="256" font-size="13" font-weight="500" fill="var(--dg-gray-800)" text-anchor="middle" dominant-baseline="central">Answer with page citations</text>
   <text x="340" y="274" font-size="11" fill="var(--dg-gray-600)" text-anchor="middle" dominant-baseline="central">points at a page, not at "a similar passage"</text>
 </svg>
-<figcaption>Figure 3 — The loop is driven by <code>openai-agents</code>; <code>chat_stream.py</code> wraps it for streaming.</figcaption>
+<figcaption><b>Figure 15</b> — The loop is driven by <code>openai-agents</code>; <code>chat_stream.py</code> wraps it for streaming.</figcaption>
 </figure>
 
-<h3>The tool surface is tiny</h3>
-<pre><code>_READ_TOOLS = ("browse_documents", "get_document",
-               "get_document_structure", "get_page_content")
-_MANAGEMENT_TOOLS = ("remove_document",)</code></pre>
+<div class="card note"><span class="t">Why <code>get_document_structure</code> paginates</span>
+It splits oversized trees via <code>_split_structure</code> and <code>_split_oversized_node</code>. On the AIA corpus this is observable: a 452,593-character tree comes back as <b>9 parts</b>. Intentional, not a defect — but it is the main driver of retrieval cost on that path, because every part is a round trip.</div>
+
+<h3 id="s36"><span class="n">3.6</span>Business knowledge is configuration</h3>
+
+<p>Someone inside the business knows that statutory reports live under <code>annual/</code>, that <code>_drafts/</code> must never be searched, that "友邦" and "AIA" are the same company. That knowledge belongs to the business, so it lives in <code>config/routing_policy.yaml</code> — editable without touching Python, and re-read on every question so there is nothing to restart.</p>
+
+<figure>
+<svg viewBox="0 0 680 244" role="img" xmlns="http://www.w3.org/2000/svg">
+  <title>What the routing policy can and cannot do</title>
+  <desc>Only exclusions remove candidates. Weights and scopes only bias a ranking over candidates that are still present.</desc>
+
+  <rect x="40" y="20" width="600" height="60" rx="12" fill="var(--dg-amber-50)" stroke="var(--dg-amber-600)" stroke-width="0.5"/>
+  <text x="56" y="42" font-size="12" font-weight="600" fill="var(--dg-amber-800)">exclude — the only hard filter</text>
+  <text x="56" y="62" font-size="11" fill="var(--dg-amber-800)">Removes directories from the candidate set before the model ever sees them. Matched on whole path</text>
+  <text x="56" y="76" font-size="11" fill="var(--dg-amber-800)">segments, so excluding <tspan font-family="var(--mono)">drafts</tspan> does not also exclude a folder called <tspan font-family="var(--mono)">drafts_final_approved</tspan>.</text>
+
+  <rect x="40" y="92" width="600" height="60" rx="12" fill="var(--dg-blue-50)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
+  <text x="56" y="114" font-size="12" font-weight="600" fill="var(--dg-blue-800)">weights and scopes — bias only</text>
+  <text x="56" y="134" font-size="11" fill="var(--dg-blue-800)">Annotate candidates the model is already looking at ("prefer this one when equally relevant"). They</text>
+  <text x="56" y="148" font-size="11" fill="var(--dg-blue-800)">cannot add a candidate, and they cannot rescue a question whose answer is not in the corpus.</text>
+
+  <rect x="40" y="164" width="600" height="62" rx="12" fill="var(--dg-teal-50)" stroke="var(--dg-teal-600)" stroke-width="0.5"/>
+  <text x="56" y="186" font-size="12" font-weight="600" fill="var(--dg-teal-800)">Two properties that make it safe to hand over</text>
+  <text x="56" y="206" font-size="11" fill="var(--dg-teal-800)"><tspan font-weight="600">An empty policy is a no-op.</tspan> Delete the file and routing behaves exactly as it did before the feature existed.</text>
+  <text x="56" y="220" font-size="11" fill="var(--dg-teal-800)"><tspan font-weight="600">A broken policy is never fatal.</tspan> A typo degrades to defaults and is recorded, not thrown.</text>
+</svg>
+<figcaption><b>Figure 16</b> — Two rules, deliberately opposite in strictness. A ranking hint that misfires produces a slightly worse answer; a filter that misfires hides a document entirely — so only one of the two is allowed to remove anything.</figcaption>
+</figure>
 
 <table>
-  <tr><th>Tool</th><th>Purpose</th><th>Note</th></tr>
-  <tr><td><code>browse_documents</code></td><td>List documents and folders</td><td>Entry point for multi-document corpora</td></tr>
-  <tr><td><code>get_document</code></td><td>Document metadata</td><td>Status, page count, description</td></tr>
-  <tr><td><code>get_document_structure</code></td><td>Return the tree</td><td><strong>Paginates</strong> when the tree exceeds a budget</td></tr>
-  <tr><td><code>get_page_content</code></td><td>Fetch page text</td><td>Accepts a page spec like <code>"1-3,5"</code></td></tr>
-  <tr><td><code>remove_document</code></td><td>Delete a document</td><td>Not exposed by default</td></tr>
+  <thead><tr><th>Knob</th><th>Effect</th><th>Strictness</th></tr></thead>
+  <tbody>
+    <tr><td class="k"><code>directories.exclude</code></td><td>Removes a directory from the candidate set</td><td>Matches a <strong>whole path segment</strong> — so <code>draft</code> does not catch <code>drafting-guidelines/</code></td></tr>
+    <tr><td class="k"><code>directories.weights</code></td><td>Biases the ranking, and is labelled in the prompt</td><td>Matches a <strong>substring</strong> or glob; weights accumulate</td></tr>
+    <tr><td class="k"><code>directories.scopes</code></td><td>Advisory hint rendered into the prompt</td><td>Pure suggestion, never filters</td></tr>
+    <tr><td class="k"><code>periods</code> · <code>aliases</code></td><td>Extra year formats and synonym groups for the fallback matcher</td><td>Expansion only; never removes candidates</td></tr>
+    <tr><td class="k"><code>instructions</code></td><td>Free text appended to the selection prompts</td><td>Soft rules — precedence, tie-breaking</td></tr>
+  </tbody>
 </table>
 
-<div class="note">
-  <strong>Why <code>get_document_structure</code> paginates.</strong> It splits oversized trees via <code>_split_structure</code> and <code>_split_oversized_node</code>. On the AIA corpus this is observable: a 452,593-character tree comes back as <strong>9 parts</strong>. This is intentional, not a defect — but it is also the main driver of retrieval cost, because every part is a round trip.
-</div>
+<div class="card win"><span class="t">Empty policy = built-in behaviour</span>
+Delete the file and routing behaves exactly as if the feature did not exist. Every rule is an <em>addition</em>, never a switch — which is the only reason it is safe to hand this file to a business user. A malformed file logs to <code>results/logs/errors.jsonl</code> and falls back to the defaults rather than failing the query.</div>
 
-<h3>Defensive details</h3>
-<p>Two small things in <code>agent_tools.py</code> say a lot about running this in production:</p>
-<ul>
-  <li><code>_coerce_bool_args</code> — the docstring reads: <em>"Models routinely send booleans as JSON strings ("false"); the bare truthiness tests downstream would read those as True."</em></li>
-  <li>Response envelopes carry a <code>next_steps</code> field, so each tool result tells the model what it could usefully do next rather than leaving it to guess.</li>
-</ul>
+<h3 id="s37"><span class="n">3.7</span>Every answer is auditable</h3>
 
-<h2 id="deps">5. External dependencies</h2>
+<p>Because the answer came from decisions, the decisions can be printed. Internal identifiers never reach the model or the user — paths are translated to readable names at the boundary, so what you audit is what was actually asked.</p>
+
+<figure>
+<svg viewBox="0 0 680 250" role="img" xmlns="http://www.w3.org/2000/svg">
+  <title>What an answer can be traced back to</title>
+  <desc>A similarity score cannot be argued with, whereas a file, section and line range can be opened and checked.</desc>
+
+  <rect x="40" y="20" width="286" height="120" rx="12" fill="var(--dg-amber-50)" stroke="var(--dg-amber-600)" stroke-width="0.5"/>
+  <text x="56" y="44" font-size="12" font-weight="600" fill="var(--dg-amber-800)">A score</text>
+  <text x="56" y="70" font-size="11" font-family="var(--mono)" fill="var(--dg-amber-800)">chunk 4471 · similarity 0.87</text>
+  <text x="56" y="90" font-size="11" fill="var(--dg-amber-800)">Why this chunk and not the one at</text>
+  <text x="56" y="106" font-size="11" fill="var(--dg-amber-800)">0.86? There is no answer that does</text>
+  <text x="56" y="122" font-size="11" fill="var(--dg-amber-800)">not restate the score.</text>
+
+  <rect x="354" y="20" width="286" height="120" rx="12" fill="var(--dg-teal-50)" stroke="var(--dg-teal-600)" stroke-width="0.5"/>
+  <text x="370" y="44" font-size="12" font-weight="600" fill="var(--dg-teal-800)">A path</text>
+  <text x="370" y="70" font-size="10.5" font-family="var(--mono)" fill="var(--dg-teal-800)">dir → 友邦保险 / 2024 / annual</text>
+  <text x="370" y="86" font-size="10.5" font-family="var(--mono)" fill="var(--dg-teal-800)">file → AIA_AR2024.md</text>
+  <text x="370" y="102" font-size="10.5" font-family="var(--mono)" fill="var(--dg-teal-800)">section → Dividends</text>
+  <text x="370" y="118" font-size="10.5" font-family="var(--mono)" fill="var(--dg-teal-800)">lines → 1208–1236</text>
+
+  <rect x="40" y="152" width="600" height="84" rx="12" fill="var(--dg-gray-50)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
+  <text x="56" y="174" font-size="11.5" font-weight="600" fill="var(--dg-gray-800)">The consequence for a wrong answer</text>
+  <text x="56" y="194" font-size="11" fill="var(--dg-gray-800)">You can open the file at those lines and see whether the document is wrong, whether the wrong</text>
+  <text x="56" y="212" font-size="11" fill="var(--dg-gray-800)">section was chosen, or whether the right section was chosen and read badly. Those are three</text>
+  <text x="56" y="230" font-size="11" fill="var(--dg-gray-800)">different bugs with three different fixes, and the trace tells them apart without re-running anything.</text>
+</svg>
+<figcaption><b>Figure 17</b> — Internal identifiers never reach the model or the user — paths are translated to readable names at the boundary, so what you audit is what was actually asked.</figcaption>
+</figure>
+
+<p>Stage timings alone cannot tell "the model was called five times" apart from "one call silently retried twice" — a retry happens <em>inside</em> a stage total, so afterwards both look identical. Every query record therefore carries a per-call breakdown: which stage, how long, how many attempts, and whether it retried.</p>
+
+<pre><code>模型调用 5 次 · 3.1s · 最慢 0.8s route.dirs
+模型调用 3 次 · 4.2s · 重试 2 次 · 最慢 4.0s route.sections 友邦保险 / AIA_AR2024.md</code></pre>
+
+<p>Read <code>llm_n_retried</code> first: anything non-zero means part of that query's latency went into recovering rather than working. This is not decoration — the instrumentation immediately surfaced a four-second stall on the first question after a server restart, which turned out to be a lazily-imported library fetching a price table over a slow network. That is now paid at startup instead.</p>
+
+<h3 id="s38"><span class="n">3.8</span>Dependency footprint</h3>
 
 <p>Grouped by purpose. Three entries are optional extras rather than hard requirements.</p>
 
@@ -359,432 +1207,170 @@ _MANAGEMENT_TOOLS = ("remove_document",)</code></pre>
   <text x="508" y="184" font-size="11" fill="var(--dg-gray-400)" dominant-baseline="central">ships in the wheel</text>
   <text x="508" y="208" font-size="11" fill="var(--dg-gray-400)" dominant-baseline="central">~1 MB</text>
 </svg>
-<figcaption>Figure 4 — Four groups. Notably missing: any vector store, embedding model, or numerical library.</figcaption>
+<figcaption><b>Figure 18</b> — Four groups. Notably missing: any vector store, embedding model, or numerical library.</figcaption>
 </figure>
 
-<table>
-  <tr><th>Group</th><th>Package</th><th>Why it is there</th></tr>
-  <tr><td rowspan="5">LLM access</td><td><code>litellm==1.97.0</code></td><td>Model routing layer — this is why any provider works</td></tr>
-  <tr><td><code>openai&gt;=1.70</code></td><td>Client used by the agent runtime</td></tr>
-  <tr><td><code>openai-agents&gt;=0.18.1</code></td><td>Drives the retrieval loop</td></tr>
-  <tr><td><code>anthropic</code> <em>(extra)</em></td><td><code>pip install "pageindex[anthropic]"</code></td></tr>
-  <tr><td><code>claude-agent-sdk</code> <em>(extra)</em></td><td><code>pip install "pageindex[claude]"</code></td></tr>
-  <tr><td rowspan="4">PDF parsing</td><td><code>pypdfium2==5.13.0</code></td><td>Backs <code>flash</code>'s character-level parsing</td></tr>
-  <tr><td><code>PyPDF2==3.0.1</code></td><td>Text-layer extraction — the path that mangles tables</td></tr>
-  <tr><td><code>Pillow&gt;=9.0</code></td><td>Image handling</td></tr>
-  <tr><td><code>pymupdf</code> <em>(optional)</em></td><td>Commented out in <code>requirements.txt</code></td></tr>
-  <tr><td rowspan="2">Protocol</td><td><code>mcp&gt;=1.19,&lt;3</code></td><td>MCP bridge</td></tr>
-  <tr><td><code>urllib3&gt;=1.26</code></td><td>MCP retries use <code>Retry(allowed_methods=...)</code></td></tr>
-  <tr><td rowspan="5">Utilities</td><td><code>requests</code></td><td>HTTP</td></tr>
-  <tr><td><code>python-dotenv</code></td><td>Reads <code>.env</code></td></tr>
-  <tr><td><code>pyyaml</code></td><td>Reads <code>config.yaml</code></td></tr>
-  <tr><td><code>regex</code></td><td>Unicode-aware patterns</td></tr>
-  <tr><td><code>sortedcontainers</code></td><td>Ordered structures in the flash pipeline</td></tr>
-  <tr><td>Bundled data</td><td><code>pageindex/flash/data/*.json</code></td><td>Shipped in the wheel; excluded <code>assets/</code> is not</td></tr>
-</table>
+<div class="card key"><span class="t">Notably missing</span>
+Any vector store, any embedding model, any numerical library. There is no <code>faiss</code>, no <code>numpy</code>, no similarity index to keep in sync with the documents. Retrieval is a chat model reasoning over an explicit tree — which is precisely what makes an answer traceable to a page number instead of to a cosine score.</div>
+</section>
 
-<h2 id="storage">6. Storage and the node model</h2>
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<section class="part p4">
+<h2 id="s4"><span class="num">4</span>Testing Result<span class="kick">what is proven, and what is not</span></h2>
+<p class="h2sub">520 assertions across seven files, all offline — no network, no credentials, no test framework. Run any file directly and it prints its own pass/fail count.</p>
 
-<p>The tree and the page text are stored separately. The tree is small and can be held in memory; the text is large and fetched on demand.</p>
+<div class="kpis">
+  <div class="kpi"><b>520</b><span>assertions passing</span></div>
+  <div class="kpi"><b>0</b><span>failures, and 0 external dependencies to install</span></div>
+  <div class="kpi"><b>7</b><span>files, each a self-contained script</span></div>
+</div>
 
 <figure>
-<svg viewBox="0 0 680 282" role="img" xmlns="http://www.w3.org/2000/svg">
-  <title>Storage layout and tree node fields</title>
-  <desc>Documents are stored in per-document directories with tree, pages and metadata separate; nodes address text by page range.</desc>
+<svg viewBox="0 0 680 310" role="img" xmlns="http://www.w3.org/2000/svg">
+  <title>Test suite: 520 assertions, 0 failures</title>
+  <desc>Bar chart of assertions per test file, grouped by what they protect: routing, LLM behaviour, suggestions and extraction.</desc>
 
-  <rect x="40" y="40" width="295" height="222" rx="14" fill="var(--dg-gray-50)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
-  <text x="58" y="62" font-size="13" font-weight="500" fill="var(--dg-gray-800)" dominant-baseline="central">Local store layout</text>
-  <text x="58" y="88" font-size="11" fill="var(--dg-gray-800)" font-family="var(--mono)" dominant-baseline="central">index_store/</text>
-  <text x="58" y="108" font-size="11" fill="var(--dg-gray-800)" font-family="var(--mono)" dominant-baseline="central">├── manifest.json</text>
-  <text x="230" y="108" font-size="11" fill="var(--dg-gray-600)" dominant-baseline="central">document list</text>
-  <text x="58" y="128" font-size="11" fill="var(--dg-gray-800)" font-family="var(--mono)" dominant-baseline="central">├── .lock</text>
-  <text x="230" y="128" font-size="11" fill="var(--dg-gray-600)" dominant-baseline="central">write lock</text>
-  <text x="58" y="148" font-size="11" fill="var(--dg-gray-800)" font-family="var(--mono)" dominant-baseline="central">└── docs/</text>
-  <text x="58" y="168" font-size="11" fill="var(--dg-gray-800)" font-family="var(--mono)" dominant-baseline="central">    └── pi-30695a4c/</text>
-  <text x="58" y="188" font-size="11" fill="var(--dg-blue-600)" font-family="var(--mono)" dominant-baseline="central">        ├── tree.json</text>
-  <text x="230" y="188" font-size="11" fill="var(--dg-blue-600)" dominant-baseline="central">tree + summaries</text>
-  <text x="58" y="208" font-size="11" fill="var(--dg-blue-600)" font-family="var(--mono)" dominant-baseline="central">        ├── pages.json</text>
-  <text x="230" y="208" font-size="11" fill="var(--dg-blue-600)" dominant-baseline="central">page text</text>
-  <text x="58" y="228" font-size="11" fill="var(--dg-gray-800)" font-family="var(--mono)" dominant-baseline="central">        └── doc.json</text>
-  <text x="230" y="228" font-size="11" fill="var(--dg-gray-600)" dominant-baseline="central">metadata</text>
-  <text x="58" y="248" font-size="11" fill="var(--dg-gray-400)" dominant-baseline="central">writes are atomic, so no half-built index</text>
+  <text x="40" y="30" font-size="11.5" font-weight="600" fill="var(--dg-gray-800)">Assertions per file</text>
+  <line x1="205" y1="44" x2="205" y2="252" stroke="var(--dg-gray-400)" stroke-width="0.5"/>
 
-  <rect x="345" y="40" width="295" height="222" rx="14" fill="var(--dg-blue-50)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
-  <text x="363" y="62" font-size="13" font-weight="500" fill="var(--dg-blue-800)" dominant-baseline="central">Tree node fields</text>
-  <text x="363" y="88" font-size="11" fill="var(--dg-blue-800)" font-family="var(--mono)" dominant-baseline="central">{</text>
-  <text x="363" y="108" font-size="11" fill="var(--dg-blue-800)" font-family="var(--mono)" dominant-baseline="central">  "title": "Chairman's…",</text>
-  <text x="363" y="128" font-size="11" fill="var(--dg-blue-800)" font-family="var(--mono)" dominant-baseline="central">  "node_id": "0003",</text>
-  <text x="363" y="148" font-size="11" fill="var(--dg-blue-800)" font-family="var(--mono)" dominant-baseline="central">  "start_index": 5,</text>
-  <text x="363" y="168" font-size="11" fill="var(--dg-blue-800)" font-family="var(--mono)" dominant-baseline="central">  "end_index": 12,</text>
-  <text x="363" y="188" font-size="11" fill="var(--dg-blue-800)" font-family="var(--mono)" dominant-baseline="central">  "summary": "…",</text>
-  <text x="363" y="208" font-size="11" fill="var(--dg-blue-800)" font-family="var(--mono)" dominant-baseline="central">  "nodes": [ … ]</text>
-  <text x="363" y="228" font-size="11" fill="var(--dg-blue-800)" font-family="var(--mono)" dominant-baseline="central">}</text>
-  <text x="363" y="248" font-size="11" fill="var(--dg-blue-600)" dominant-baseline="central">node_id + page range = the address</text>
+  <text x="40" y="74" font-size="10.5" font-family="var(--mono)" fill="var(--dg-gray-800)" dominant-baseline="central">test_registry.py</text>
+  <rect x="205" y="64" width="360" height="20" rx="5" fill="var(--dg-blue-600)"/>
+  <text x="573" y="74" font-size="10.5" fill="var(--dg-gray-800)" dominant-baseline="central">135</text>
+
+  <text x="40" y="102" font-size="10.5" font-family="var(--mono)" fill="var(--dg-gray-800)" dominant-baseline="central">test_policy.py</text>
+  <rect x="205" y="92" width="360" height="20" rx="5" fill="var(--dg-blue-600)"/>
+  <text x="573" y="102" font-size="10.5" fill="var(--dg-gray-800)" dominant-baseline="central">135</text>
+
+  <text x="40" y="130" font-size="10.5" font-family="var(--mono)" fill="var(--dg-gray-800)" dominant-baseline="central">test_llm_retry.py</text>
+  <rect x="205" y="120" width="208" height="20" rx="5" fill="var(--dg-teal-600)"/>
+  <text x="421" y="130" font-size="10.5" fill="var(--dg-gray-800)" dominant-baseline="central">78</text>
+
+  <text x="40" y="158" font-size="10.5" font-family="var(--mono)" fill="var(--dg-gray-800)" dominant-baseline="central">test_suggest.py</text>
+  <rect x="205" y="148" width="200" height="20" rx="5" fill="var(--dg-gray-400)"/>
+  <text x="413" y="158" font-size="10.5" fill="var(--dg-gray-800)" dominant-baseline="central">75</text>
+
+  <text x="40" y="186" font-size="10.5" font-family="var(--mono)" fill="var(--dg-gray-800)" dominant-baseline="central">test_debuglog.py</text>
+  <rect x="205" y="176" width="117" height="20" rx="5" fill="var(--dg-teal-600)"/>
+  <text x="330" y="186" font-size="10.5" fill="var(--dg-gray-800)" dominant-baseline="central">44</text>
+
+  <text x="40" y="214" font-size="10.5" font-family="var(--mono)" fill="var(--dg-gray-800)" dominant-baseline="central">test_azure_di.py</text>
+  <rect x="205" y="204" width="75" height="20" rx="5" fill="var(--dg-amber-600)"/>
+  <text x="288" y="214" font-size="10.5" fill="var(--dg-gray-800)" dominant-baseline="central">28</text>
+
+  <text x="40" y="242" font-size="10.5" font-family="var(--mono)" fill="var(--dg-gray-800)" dominant-baseline="central">test_backend.py</text>
+  <rect x="205" y="232" width="67" height="20" rx="5" fill="var(--dg-amber-600)"/>
+  <text x="280" y="242" font-size="10.5" fill="var(--dg-gray-800)" dominant-baseline="central">25</text>
+
+  <rect x="40" y="262" width="10" height="10" rx="3" fill="var(--dg-blue-600)"/>
+  <text x="56" y="267" font-size="10" fill="var(--dg-gray-600)" dominant-baseline="central">registry / routing</text>
+  <rect x="176" y="262" width="10" height="10" rx="3" fill="var(--dg-teal-600)"/>
+  <text x="192" y="267" font-size="10" fill="var(--dg-gray-600)" dominant-baseline="central">LLM behaviour</text>
+  <rect x="300" y="262" width="10" height="10" rx="3" fill="var(--dg-gray-400)"/>
+  <text x="316" y="267" font-size="10" fill="var(--dg-gray-600)" dominant-baseline="central">suggestions</text>
+  <rect x="410" y="262" width="10" height="10" rx="3" fill="var(--dg-amber-600)"/>
+  <text x="426" y="267" font-size="10" fill="var(--dg-gray-600)" dominant-baseline="central">extraction</text>
+
+  <text x="40" y="292" font-size="11" font-weight="600" fill="var(--dg-gray-800)">520 assertions &#183; 0 failures &#183; no network, no credentials, no test framework</text>
 </svg>
-<figcaption>Figure 5 — <code>node_id</code> plus the page range is what makes an answer citable.</figcaption>
+<figcaption><b>Figure 19</b> — Every file is a plain script with its own pass/fail counter, so the suite runs anywhere and has no framework version to drift.</figcaption>
 </figure>
 
-<p>This split is worth copying. This project's own navigator uses the same shape — a small always-loaded <code>manifest.json</code> for routing, and large per-document trees fetched by key.</p>
-
-<h2 id="details">7. Implementation details worth knowing</h2>
-
-<h3>Configuration lives in <code>pageindex/config.yaml</code></h3>
-
-<pre><code>toc_check_page_num: 20          # how many leading pages to scan for a TOC
-max_page_num_each_node: 10      # cap on pages per node
-max_token_num_each_node: 20000
-if_add_node_id: "yes"
-if_add_node_summary: "yes"
-if_add_doc_description: "no"
-if_add_node_text: "no"          # &lt;-- why the tree has no body text by default</code></pre>
-
-<p>That last line is the single most common surprise. With <code>if_add_node_text: "no"</code> the body text is stripped after summaries are generated, so the tree carries titles and summaries but nothing you can quote. Retrieval has to go back to <code>pages.json</code> — which is by design, but it means a caller who only reads the tree will find no content in it.</p>
-
-<h3>Five things that will cost you an afternoon</h3>
-
 <table>
-  <tr><th>#</th><th>Issue</th><th>What to do</th></tr>
-  <tr>
-    <td>1</td>
-    <td><code>md_to_tree()</code> has a real bug: <code>summary_token_threshold</code> defaults to <code>None</code>, and <code>get_node_summary()</code> compares <code>num_tokens &lt; summary_token_threshold</code> — a <code>TypeError</code>.</td>
-    <td>Pass it explicitly. The CLI defaults to 200. The Markdown path is simply less tested than the PDF path.</td>
-  </tr>
-  <tr>
-    <td>2</td>
-    <td>The local client accepts <strong>PDF only</strong> (<code>local_api.py</code> rejects anything else), so Markdown cannot enter the normal retrieval path.</td>
-    <td>Either pre-convert to PDF, or build your own layer — which is what <code>nav/</code> in this project does.</td>
-  </tr>
-  <tr>
-    <td>3</td>
-    <td>PDF parsing uses <code>ProcessPoolExecutor(mp_context=spawn)</code>.</td>
-    <td>The calling script must be a real file with an <code>if __name__ == "__main__":</code> guard. Running via heredoc hangs with no network traffic — check <code>lsof -nP -iTCP</code> to confirm it is stuck in spawn rather than waiting on an API.</td>
-  </tr>
-  <tr>
-    <td>4</td>
-    <td>Node summaries average ~1,167 characters and dominate the tree — <strong>89% of its size</strong> on the AIA corpus.</td>
-    <td>Shorten summaries before blaming retrieval cost. Cutting them to ~300 characters took the same tree from ~113K tokens to ~35K, and from 9 pagination parts to 1–2.</td>
-  </tr>
-  <tr>
-    <td>5</td>
-    <td><code>litellm.success_callback</code> does not fire on the <code>openai-agents</code> path.</td>
-    <td>To measure token usage you must wrap <code>litellm.acompletion</code> directly.</td>
-  </tr>
+  <thead><tr><th>File</th><th>Assertions</th><th>What it pins down</th></tr></thead>
+  <tbody>
+    <tr><td class="k"><code>test_registry.py</code></td><td>135</td><td>Registry, change detection, the watcher, the drop zone, and <code>display_path</code> — including that a bare internal id is translated too</td></tr>
+    <tr><td class="k"><code>test_policy.py</code></td><td>135</td><td>Routing policy, including the invariant that an empty policy reproduces built-in behaviour exactly</td></tr>
+    <tr><td class="k"><code>test_llm_retry.py</code></td><td>78</td><td>Token-budget escalation, streaming fallback, separating thinking from body, and the per-attempt call record</td></tr>
+    <tr><td class="k"><code>test_suggest.py</code></td><td>75</td><td>Sample-question generation per corpus</td></tr>
+    <tr><td class="k"><code>test_debuglog.py</code></td><td>44</td><td>Query logging, filtering, rotation, and that a logging failure never breaks the main path</td></tr>
+    <tr><td class="k"><code>test_azure_di.py</code></td><td>28</td><td>Azure DI configuration, page markers, and error mapping</td></tr>
+    <tr><td class="k"><code>test_backend.py</code></td><td>25</td><td>Backend parsing and per-page splitting (27 when sample PDFs are present)</td></tr>
+  </tbody>
 </table>
 
-<h3>Where the time actually goes</h3>
-<p>Local I/O is not the bottleneck. Measured on this corpus: <code>tree.json</code> read and parse <strong>0.8 ms</strong>, <code>pages.json</code> <strong>1.8 ms</strong>, <code>get_page_content</code> for three pages <strong>3 ms</strong>. Everything else is LLM round trips — which is why the levers that matter are reasoning effort, summary length, and the number of pagination parts.</p>
+<p>Two properties of the suite are deliberate. It runs <strong>entirely offline</strong>, so it can be run on a laptop with no keys and no corpus; and it has <strong>zero dependencies</strong> — each file is a plain script with its own <code>check()</code> counter, so there is no framework version to drift.</p>
 
-<h2 id="part2" style="margin-top:72px;padding-top:24px;border-top:2px solid var(--border)">Part II — SuperIndex</h2>
+<h3 id="s41"><span class="n">4.1</span>Measured performance</h3>
 
-<h2 id="why">8. Why a layer above PageIndex was needed</h2>
-
-<p>PageIndex's tree models <strong>one document</strong>. That is the right unit for the question it was designed to answer — "where in this report is the figure?" — and it answers it well.</p>
-
-<p>But the real corpus is not one report. It is thousands of files spread across a directory tree several levels deep, and the first question a user asks is not "where in this report" but <strong>"which report?"</strong>. PageIndex's <code>browse_documents</code> tool lists documents, but listing is not navigating: hand a model 1,000 file names in one flat list and it is guessing.</p>
-
-<table>
-  <tr><th></th><th>PageIndex alone</th><th>The problem at corpus scale</th></tr>
-  <tr>
-    <td><strong>Unit of addressing</strong></td>
-    <td>One document, addressed by page range</td>
-    <td>Need to pick <em>which</em> document before any page range is meaningful</td>
-  </tr>
-  <tr>
-    <td><strong>Document discovery</strong></td>
-    <td><code>browse_documents</code> returns a flat list</td>
-    <td>A flat list of 1,000 names does not fit a prompt, and gives no basis for choosing</td>
-  </tr>
-  <tr>
-    <td><strong>Directory structure</strong></td>
-    <td>Not modelled — folders are a cloud-side grouping</td>
-    <td>The directory tree <em>is</em> the strongest routing signal available (year, entity, report type)</td>
-  </tr>
-  <tr>
-    <td><strong>Extraction</strong></td>
-    <td>PDF text layer via PyPDF2</td>
-    <td>Mangles tables; refuses scanned PDFs</td>
-  </tr>
-</table>
-
-<div class="key">
-  <strong>SuperIndex adds one level above PageIndex and one layer underneath it.</strong> Above: a corpus tree so the model can narrow from thousands of files down to a handful. Underneath: a pluggable extraction backend so the text going into the tree is worth indexing.
-</div>
-
-<h2 id="compose">9. How SuperIndex composes with PageIndex</h2>
-
-<p>SuperIndex is a layer, not a fork. <strong>Not a single file inside <code>PageIndex/</code> is modified</strong> — everything is either a wrapper or a monkeypatch applied at runtime.</p>
+<p>Indexing figures are from a 144-file / 229-directory / 2,304-node corpus. Question timings are from 21 recorded queries.</p>
 
 <figure>
-<svg viewBox="0 0 680 360" role="img" xmlns="http://www.w3.org/2000/svg">
-  <title>How SuperIndex composes with PageIndex</title>
-  <desc>SuperIndex adds an application layer, an extraction backend and a corpus navigator above and below the unmodified PageIndex engine.</desc>
+<svg viewBox="0 0 680 300" role="img" xmlns="http://www.w3.org/2000/svg">
+  <title>Where the time goes</title>
+  <desc>Mean wall clock per stage of a question, showing answer generation dominating at 77 percent, alongside the index-side costs.</desc>
 
-  <rect x="40" y="20" width="600" height="46" rx="12" fill="var(--dg-gray-50)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
-  <text x="52" y="43" font-size="12" font-weight="500" fill="var(--dg-gray-800)" dominant-baseline="central">Application</text>
-  <rect x="160" y="26" width="228" height="34" rx="8" fill="var(--dg-card)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
-  <text x="274" y="43" font-size="12" fill="var(--dg-gray-800)" text-anchor="middle" dominant-baseline="central">webapp/ — chat UI (SSE)</text>
-  <rect x="400" y="26" width="228" height="34" rx="8" fill="var(--dg-card)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
-  <text x="514" y="43" font-size="12" fill="var(--dg-gray-800)" text-anchor="middle" dominant-baseline="central">scripts/ — CLI + diagnostics</text>
+  <text x="40" y="30" font-size="11.5" font-weight="600" fill="var(--dg-gray-800)">One question, end to end &#8212; mean of 21 recorded queries</text>
+  <line x1="210" y1="46" x2="210" y2="162" stroke="var(--dg-gray-400)" stroke-width="0.5"/>
 
-  <rect x="40" y="84" width="600" height="74" rx="12" fill="var(--dg-blue-50)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
-  <text x="52" y="108" font-size="12" font-weight="500" fill="var(--dg-blue-800)" dominant-baseline="central">Added by</text>
-  <text x="52" y="126" font-size="12" font-weight="500" fill="var(--dg-blue-800)" dominant-baseline="central">SuperIndex</text>
-  <rect x="160" y="96" width="148" height="50" rx="8" fill="var(--dg-card)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
-  <text x="234" y="113" font-size="11" fill="var(--dg-blue-800)" text-anchor="middle" dominant-baseline="central">extractors/</text>
-  <text x="234" y="130" font-size="11" fill="var(--dg-blue-600)" text-anchor="middle" dominant-baseline="central">where text comes from</text>
-  <rect x="318" y="96" width="148" height="50" rx="8" fill="var(--dg-card)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
-  <text x="392" y="113" font-size="11" fill="var(--dg-blue-800)" text-anchor="middle" dominant-baseline="central">nav/</text>
-  <text x="392" y="130" font-size="11" fill="var(--dg-blue-600)" text-anchor="middle" dominant-baseline="central">corpus → file → section</text>
-  <rect x="476" y="96" width="152" height="50" rx="8" fill="var(--dg-card)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
-  <text x="552" y="113" font-size="11" fill="var(--dg-blue-800)" text-anchor="middle" dominant-baseline="central">tests/ + docs/</text>
-  <text x="552" y="130" font-size="11" fill="var(--dg-blue-600)" text-anchor="middle" dominant-baseline="central">120 offline assertions</text>
+  <text x="40" y="69" font-size="11" fill="var(--dg-gray-800)" dominant-baseline="central">Answer generation</text>
+  <rect x="210" y="56" width="358" height="26" rx="6" fill="var(--dg-violet-600)"/>
+  <text x="576" y="69" font-size="10.5" fill="var(--dg-gray-800)" dominant-baseline="central">17.9 s &#183; 77%</text>
 
-  <line x1="40" y1="174" x2="640" y2="174" stroke="var(--dg-amber-600)" stroke-width="1" stroke-dasharray="5 4"/>
-  <text x="340" y="174" font-size="11" fill="var(--dg-amber-800)" text-anchor="middle" dominant-baseline="central" style="paint-order:stroke;stroke:var(--bg);stroke-width:6px">PageIndex/ — vendored, never edited</text>
+  <text x="40" y="109" font-size="11" fill="var(--dg-gray-800)" dominant-baseline="central">Routing &#8212; dirs, then files</text>
+  <rect x="210" y="96" width="84" height="26" rx="6" fill="var(--dg-blue-600)"/>
+  <text x="302" y="109" font-size="10.5" fill="var(--dg-gray-800)" dominant-baseline="central">4.2 s &#183; 18%</text>
 
-  <rect x="40" y="190" width="600" height="74" rx="12" fill="var(--dg-gray-50)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
-  <text x="52" y="214" font-size="12" font-weight="500" fill="var(--dg-gray-800)" dominant-baseline="central">Upstream</text>
-  <text x="52" y="232" font-size="12" font-weight="500" fill="var(--dg-gray-800)" dominant-baseline="central">engine</text>
-  <rect x="160" y="202" width="148" height="50" rx="8" fill="var(--dg-card)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
-  <text x="234" y="219" font-size="11" fill="var(--dg-gray-800)" text-anchor="middle" dominant-baseline="central">flash / classic</text>
-  <text x="234" y="236" font-size="11" fill="var(--dg-gray-600)" text-anchor="middle" dominant-baseline="central">tree building</text>
-  <rect x="318" y="202" width="148" height="50" rx="8" fill="var(--dg-card)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
-  <text x="392" y="219" font-size="11" fill="var(--dg-gray-800)" text-anchor="middle" dominant-baseline="central">agent loop</text>
-  <text x="392" y="236" font-size="11" fill="var(--dg-gray-600)" text-anchor="middle" dominant-baseline="central">retrieval</text>
-  <rect x="476" y="202" width="152" height="50" rx="8" fill="var(--dg-card)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
-  <text x="552" y="219" font-size="11" fill="var(--dg-gray-800)" text-anchor="middle" dominant-baseline="central">4 read tools</text>
-  <text x="552" y="236" font-size="11" fill="var(--dg-gray-600)" text-anchor="middle" dominant-baseline="central">tree + pages</text>
+  <text x="40" y="149" font-size="11" fill="var(--dg-gray-800)" dominant-baseline="central">Section selection</text>
+  <rect x="210" y="136" width="24" height="26" rx="6" fill="var(--dg-blue-600)"/>
+  <text x="242" y="149" font-size="10.5" fill="var(--dg-gray-800)" dominant-baseline="central">1.2 s &#183; 5%</text>
 
-  <rect x="40" y="282" width="600" height="58" rx="12" fill="var(--dg-gray-50)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
-  <text x="52" y="311" font-size="12" font-weight="500" fill="var(--dg-gray-800)" dominant-baseline="central">Storage</text>
-  <rect x="160" y="294" width="228" height="34" rx="8" fill="var(--dg-card)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
-  <text x="274" y="311" font-size="11" fill="var(--dg-gray-800)" text-anchor="middle" dominant-baseline="central">PageIndex store (tree + pages)</text>
-  <rect x="400" y="294" width="228" height="34" rx="8" fill="var(--dg-card)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
-  <text x="514" y="311" font-size="11" fill="var(--dg-gray-800)" text-anchor="middle" dominant-baseline="central">nav index (manifest + trees)</text>
+  <text x="40" y="184" font-size="10.5" fill="var(--dg-gray-600)">Answer generation dominates, so the context it reads is the only change with real leverage.</text>
+
+  <rect x="40" y="200" width="190" height="68" rx="12" fill="var(--dg-gray-50)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
+  <text x="56" y="230" font-size="18" font-weight="700" fill="var(--dg-gray-800)">0.09 s</text>
+  <text x="56" y="252" font-size="10" fill="var(--dg-gray-600)">index 144 files, no LLM</text>
+
+  <rect x="245" y="200" width="190" height="68" rx="12" fill="var(--dg-gray-50)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
+  <text x="261" y="230" font-size="18" font-weight="700" fill="var(--dg-gray-800)">125 KB</text>
+  <text x="261" y="252" font-size="10" fill="var(--dg-gray-600)">manifest, resident in memory</text>
+
+  <rect x="450" y="200" width="190" height="68" rx="12" fill="var(--dg-gray-50)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
+  <text x="466" y="230" font-size="18" font-weight="700" fill="var(--dg-gray-800)">~2K tok</text>
+  <text x="466" y="252" font-size="10" fill="var(--dg-gray-600)">full directory tree, one prompt</text>
 </svg>
-<figcaption>Figure 6 — SuperIndex adds a layer above (which file?) and underneath (where does text come from?). The engine in between is untouched.</figcaption>
+<figcaption><b>Figure 20</b> — Measured, not estimated. The index side is cheap enough to re-derive; the query side is dominated by the model reading the context it was handed.</figcaption>
 </figure>
 
-<h3>The two extension points, and why they are shaped that way</h3>
-
 <table>
-  <tr><th>Extension</th><th>Mechanism</th><th>Why not edit upstream</th></tr>
-  <tr>
-    <td><strong>Extraction backend</strong><br><code>extractors/backend.py</code></td>
-    <td>Monkeypatches <code>LocalAPI._extract_page_texts</code>. That method is a <code>staticmethod</code> returning one string per page, so a drop-in replacement is sufficient.</td>
-    <td>Upstream stays <code>git pull</code>-able, and the diff against it stays empty. Two runtime knobs (<code>SUMMARY_CONCURRENCY</code>, <code>reasoning_effort</code>) are applied the same way.</td>
-  </tr>
-  <tr>
-    <td><strong>Corpus navigator</strong><br><code>nav/</code></td>
-    <td>Sits entirely beside upstream. It builds its own index and never calls into <code>PageIndex/</code> for retrieval.</td>
-    <td>The navigator answers a different question (which file?) than upstream does (where in the file?). Keeping them separate means either can be replaced alone.</td>
-  </tr>
+  <thead><tr><th>Stage of a question</th><th>Mean</th><th>Max</th><th>Share</th></tr></thead>
+  <tbody>
+    <tr><td class="k">Answer generation</td><td>17.9 s</td><td>93.3 s</td><td><strong>77%</strong></td></tr>
+    <tr><td>Routing — pick directories, then files</td><td>4.2 s</td><td>12.7 s</td><td>18%</td></tr>
+    <tr><td>Section selection — one call per candidate file</td><td>1.2 s</td><td>2.8 s</td><td>5%</td></tr>
+    <tr><td class="k">End to end</td><td><strong>23.3 s</strong></td><td>114.0 s</td><td>—</td></tr>
+  </tbody>
 </table>
 
-<p>The reason both are possible is the property noted in Part I: <strong>the indexing engines emit the same tree shape, so nothing downstream depends on how a tree was built.</strong> SuperIndex changes where text comes from and how many documents are addressed — not how a tree is shaped or traversed.</p>
+<p>The dominant cost is neither retrieval nor context size. The slowest query on record spent <strong>93 seconds answering from a 3 KB context</strong> — that is the model thinking. Section selection was the one stage that was purely wasteful: the per-file calls are independent, so they now run concurrently (four files × 0.25 s measured at 0.26 s, not 1.0 s).</p>
 
-<h2 id="addressing">10. Three-level addressing and the index split</h2>
+<div class="card key"><span class="t">Where the lever actually is</span>
+Answer generation is 77% of the wall clock, so <b>reducing the number of sources and the context length is the only change with real leverage</b>. Local I/O is not a bottleneck: reading and parsing <code>tree.json</code> takes 0.8 ms and <code>pages.json</code> 1.8 ms.</div>
 
-<p>SuperIndex addresses a corpus at three levels. Each level has its own index file, sized so that the cheap level stays resident and the expensive one is fetched only when needed.</p>
+<h3 id="s42"><span class="n">4.2</span>What the tests do not cover</h3>
 
-<figure>
-<svg viewBox="0 0 680 308" role="img" xmlns="http://www.w3.org/2000/svg">
-  <title>Three-level addressing and the index split</title>
-  <desc>Corpus tree, document tree and section content are stored in separate files, from small and always loaded to large and on demand.</desc>
-  <defs>
-    <marker id="a3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-    </marker>
-  </defs>
-
-  <rect x="40" y="40" width="380" height="72" rx="12" fill="var(--dg-blue-50)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
-  <text x="58" y="62" font-size="13" font-weight="500" fill="var(--dg-blue-800)" dominant-baseline="central">L0 · Corpus tree — which file?</text>
-  <text x="58" y="82" font-size="11" fill="var(--dg-blue-600)" dominant-baseline="central">directories, each with a one-line summary</text>
-  <text x="58" y="100" font-size="11" fill="var(--dg-blue-800)" font-family="var(--mono)" dominant-baseline="central">manifest.json — 125 KB / 144 files</text>
-  <text x="440" y="76" font-size="11" fill="var(--dg-blue-600)" dominant-baseline="central">always resident</text>
-
-  <line x1="230" y1="112" x2="230" y2="124" stroke="var(--dg-blue-600)" stroke-width="1.5" marker-end="url(#a3)"/>
-
-  <rect x="40" y="128" width="380" height="72" rx="12" fill="var(--dg-blue-50)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
-  <text x="58" y="150" font-size="13" font-weight="500" fill="var(--dg-blue-800)" dominant-baseline="central">L1 · Document tree — which section?</text>
-  <text x="58" y="170" font-size="11" fill="var(--dg-blue-600)" dominant-baseline="central">chapters, with line or page ranges</text>
-  <text x="58" y="188" font-size="11" fill="var(--dg-blue-800)" font-family="var(--mono)" dominant-baseline="central">trees/&lt;key&gt;.json — one per document</text>
-  <text x="440" y="164" font-size="11" fill="var(--dg-blue-600)" dominant-baseline="central">loaded on demand</text>
-
-  <line x1="230" y1="200" x2="230" y2="212" stroke="var(--dg-blue-600)" stroke-width="1.5" marker-end="url(#a3)"/>
-
-  <rect x="40" y="216" width="380" height="72" rx="12" fill="var(--dg-gray-50)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
-  <text x="58" y="238" font-size="13" font-weight="500" fill="var(--dg-gray-800)" dominant-baseline="central">L2 · Section content — the text</text>
-  <text x="58" y="258" font-size="11" fill="var(--dg-gray-600)" dominant-baseline="central">sliced by the node's start / end</text>
-  <text x="58" y="276" font-size="11" fill="var(--dg-gray-800)" font-family="var(--mono)" dominant-baseline="central">source lines or page text</text>
-  <text x="440" y="252" font-size="11" fill="var(--dg-gray-600)" dominant-baseline="central">no LLM — direct slice</text>
-</svg>
-<figcaption>Figure 7 — Each level is an index into the next. L0 is small enough to read whole; L1 and L2 are fetched per candidate.</figcaption>
-</figure>
-
-<h3>Measured on a 144-file / 229-directory corpus</h3>
+<p>Worth being explicit about, because these are the questions a new owner hits.</p>
 
 <table>
-  <tr><th>Quantity</th><th>Value</th><th>Why it matters</th></tr>
-  <tr><td>Structural index build (no LLM)</td><td><strong>0.09 s</strong></td><td>You can index a corpus before deciding whether it is worth summarising</td></tr>
-  <tr><td><code>manifest.json</code></td><td><strong>125 KB</strong></td><td>Small enough to hold in memory and re-read per query</td></tr>
-  <tr><td>Full directory tree listing</td><td><strong>8,904 characters</strong></td><td>≈2K tokens — fits one prompt, which is what makes level 1 cheap</td></tr>
-  <tr><td>Chapter nodes</td><td>2,304</td><td>Spread across per-document files, so never all loaded at once</td></tr>
+  <thead><tr><th>Limit</th><th>Detail</th></tr></thead>
+  <tbody>
+    <tr><td class="k">Validated on synthetic corpora</td><td>16-file and 144-file corpora with a known structure. The scale numbers above are real; routing accuracy on a genuinely messy production corpus is <strong>not yet measured</strong>.</td></tr>
+    <tr><td class="k">Locating is not computing</td><td>The navigator finds the right section. If the answer needs arithmetic across sections, the model still does it by reading text. Numbers ultimately need a structured path.</td></tr>
+    <tr><td class="k">Chapter summaries need a model</td><td>A one-time cost per corpus. Without them, section selection degrades to token matching.</td></tr>
+    <tr><td class="k">Directory quality sets the ceiling</td><td>Thousands of files flattened into one folder degrade the first level to listing thousands of names. That is a corpus-organisation problem, not a navigator one.</td></tr>
+    <tr><td class="k">Fallbacks match tokens, not synonyms</td><td>"Life insurance" will not match a folder named <code>人身险</code>. The aliases block fixes the cases you can name; an embedding pre-filter would generalise — at the cost of reintroducing the similarity problem the design exists to avoid.</td></tr>
+    <tr><td class="k">Navigation costs round trips</td><td>Several model calls before the answer even starts. This is not a design for sub-second latency budgets.</td></tr>
+  </tbody>
 </table>
 
-<div class="key">
-  <strong>The load-bearing observation: the directory tree is far smaller than the file count.</strong> 144 files live in 229 directories — and directories are what level 1 reads. That is why level 1 can show the whole tree in a single call, and why its cost does not grow with directory depth.
-</div>
-
-<p>This mirrors upstream's own split (<code>tree.json</code> small and resident, <code>pages.json</code> large and on demand), extended one level up.</p>
-
-<h2 id="navigator">11. The two-level navigator</h2>
-
-<p>Retrieval walks the two levels in sequence. Every step is a model decision — there is no similarity ranking anywhere in it.</p>
-
-<figure>
-<svg viewBox="0 0 680 408" role="img" xmlns="http://www.w3.org/2000/svg">
-  <title>The two-level navigation flow</title>
-  <desc>The model picks directories from the corpus tree, then files, then sections, with a deterministic fallback at each step.</desc>
-  <defs>
-    <marker id="a4" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-    </marker>
-  </defs>
-
-  <rect x="60" y="20" width="380" height="48" rx="10" fill="var(--dg-gray-50)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
-  <text x="250" y="44" font-size="13" font-weight="500" fill="var(--dg-gray-800)" text-anchor="middle" dominant-baseline="central">Question</text>
-  <line x1="250" y1="68" x2="250" y2="84" stroke="var(--dg-blue-600)" stroke-width="1.5" marker-end="url(#a4)"/>
-
-  <rect x="60" y="88" width="380" height="64" rx="10" fill="var(--dg-blue-50)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
-  <text x="76" y="110" font-size="12" font-weight="500" fill="var(--dg-blue-800)" dominant-baseline="central">L0 — read the whole directory tree</text>
-  <text x="76" y="130" font-size="11" fill="var(--dg-blue-600)" dominant-baseline="central">model picks 1–4 directories</text>
-  <text x="456" y="120" font-size="11" fill="var(--dg-amber-800)" dominant-baseline="central">abstains → year + keyword match</text>
-  <line x1="250" y1="152" x2="250" y2="168" stroke="var(--dg-blue-600)" stroke-width="1.5" marker-end="url(#a4)"/>
-
-  <rect x="60" y="172" width="380" height="64" rx="10" fill="var(--dg-blue-50)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
-  <text x="76" y="194" font-size="12" font-weight="500" fill="var(--dg-blue-800)" dominant-baseline="central">L1 — list files under those directories</text>
-  <text x="76" y="214" font-size="11" fill="var(--dg-blue-600)" dominant-baseline="central">model picks 1–5 files</text>
-  <text x="456" y="204" font-size="11" fill="var(--dg-amber-800)" dominant-baseline="central">abstains → same fallback</text>
-  <line x1="250" y1="236" x2="250" y2="252" stroke="var(--dg-blue-600)" stroke-width="1.5" marker-end="url(#a4)"/>
-
-  <rect x="60" y="256" width="380" height="64" rx="10" fill="var(--dg-blue-50)" stroke="var(--dg-blue-600)" stroke-width="0.5"/>
-  <text x="76" y="278" font-size="12" font-weight="500" fill="var(--dg-blue-800)" dominant-baseline="central">L1 — read each candidate's chapter tree</text>
-  <text x="76" y="298" font-size="11" fill="var(--dg-blue-600)" dominant-baseline="central">model picks 1–6 sections</text>
-  <text x="456" y="288" font-size="11" fill="var(--dg-amber-800)" dominant-baseline="central">abstains → title token match</text>
-  <line x1="250" y1="320" x2="250" y2="336" stroke="var(--dg-gray-600)" stroke-width="1.5" marker-end="url(#a4)"/>
-
-  <rect x="60" y="340" width="380" height="48" rx="10" fill="var(--dg-gray-50)" stroke="var(--dg-gray-600)" stroke-width="0.5"/>
-  <text x="250" y="364" font-size="13" font-weight="500" fill="var(--dg-gray-800)" text-anchor="middle" dominant-baseline="central">Section text + provenance</text>
-</svg>
-<figcaption>Figure 8 — Three model decisions, each with a deterministic fallback. <code>--extractor</code> and <code>--max-files</code> tune the budgets.</figcaption>
-</figure>
-
-<h3>Why level 0 shows the entire tree instead of descending</h3>
-
-<p>The first implementation descended one directory level at a time. It was slower and less reliable, for a reason worth recording:</p>
-
-<table>
-  <tr><th></th><th>Level-by-level descent</th><th>Whole tree in one call</th></tr>
-  <tr><td>LLM calls</td><td>One per level, so it grows with depth</td><td>Two, regardless of depth</td></tr>
-  <tr><td>Model context</td><td>Sees one level at a time — cannot compare across branches</td><td>Sees the whole shape, including which branch is deeper</td></tr>
-  <tr><td>Failure mode</td><td>An early wrong turn is unrecoverable</td><td>A wrong branch is still visible in context</td></tr>
-</table>
-
-<p>Descent is still implemented and used as a fallback when the directory count exceeds a budget (240 by default) — but it is the exception, not the default path.</p>
-
-<h3>The extraction backend underneath</h3>
-
-<p>Level 0 answers <em>which file</em>. The extraction backend answers <em>what text goes into the tree in the first place</em> — and it matters more than it sounds, because a tree built from mangled text is wrong no matter how good the navigation is.</p>
-
-<table>
-  <tr><th></th><th>Text layer (default fallback)</th><th>Azure Document Intelligence</th></tr>
-  <tr><td>Cost</td><td>free</td><td>per page</td></tr>
-  <tr><td>Tables</td><td>mangled — a chart page flattens to <code>175230</code>, two numbers fused, label-to-value association gone</td><td>real Markdown tables</td></tr>
-  <tr><td>Scanned / image-only PDFs</td><td>refused outright</td><td>OCR'd</td></tr>
-  <tr><td>Page anchors</td><td>synthesised as <code>&lt;!-- page: N --&gt;</code></td><td>injected at real page boundaries, read from <code>analyzeResult.pages[].spans[].offset</code></td></tr>
-</table>
-
-<div class="note">
-  <strong>Configured means default.</strong> Set <code>AZURE_DI_ENDPOINT</code> and <code>AZURE_DI_KEY</code> in <code>.env</code> and every entry point takes it up automatically — no flag to remember. With nothing configured you get the text layer, exactly as before. The backend never switches silently: each run prints which one it used and why.
-</div>
-
-<div class="note">
-  <strong>A configured-but-failing backend aborts the run.</strong> Degrading quietly to the text layer would hide a wrong key or endpoint and change index quality without anyone noticing. <code>AZURE_DI_FALLBACK=1</code> opts into the soft behaviour.
-</div>
-
-<h2 id="loadbearing">12. Design decisions that are load-bearing</h2>
-
-<p>These were each arrived at by getting them wrong first. They are recorded here so they are not "tidied up" later.</p>
-
-<table>
-  <tr><th>Decision</th><th>Why</th></tr>
-  <tr>
-    <td><strong>Prompts say "select at least one", never "leave blank if nothing is relevant".</strong></td>
-    <td>The first version offered an escape hatch. The model took it unpredictably — the same question would navigate correctly on one run and abort on the next. Models default to caution; do not give them a reason to abstain. Relevance is better judged downstream.</td>
-  </tr>
-  <tr>
-    <td><strong>Year is the highest-weighted routing signal.</strong></td>
-    <td>Cross-period confusion is the dominant error in financial QA. Years appear in directory paths, so extracting them from the question serves double duty: a hint in the prompt and a scoring term in the fallback.</td>
-  </tr>
-  <tr>
-    <td><strong>Fallbacks resolve at the current level, not globally.</strong></td>
-    <td>Falling back to the whole corpus is a blunt instrument that gets worse as the corpus grows. If the model abstains at a level that already has candidate files, use those files — not all 144.</td>
-  </tr>
-  <tr>
-    <td><strong>The manifest and the trees are separate files.</strong></td>
-    <td>Routing must stay cheap. Keeping chapter trees out of the always-loaded file is what lets <code>manifest.json</code> stay at 125 KB for a corpus of 144 files.</td>
-  </tr>
-  <tr>
-    <td><strong>Extraction failures are loud.</strong></td>
-    <td>Silent degradation changes index quality without changing any observable behaviour — the worst kind of bug in a retrieval system.</td>
-  </tr>
-  <tr>
-    <td><strong>Nothing inside <code>PageIndex/</code> is edited.</strong></td>
-    <td>Keeps upstream <code>git pull</code>-able and the diff empty. All three runtime customisations (<code>_extract_page_texts</code>, <code>SUMMARY_CONCURRENCY</code>, <code>reasoning_effort</code>) are applied from outside.</td>
-  </tr>
-</table>
-
-<h2 id="limits">13. What SuperIndex does not solve</h2>
-
-<p>Worth being explicit about, because these are the questions a new owner will hit.</p>
-
-<table>
-  <tr><th>Limit</th><th>Detail</th></tr>
-  <tr>
-    <td><strong>Locating is not the same as computing.</strong></td>
-    <td>The navigator finds the right section. If the answer requires arithmetic across sections, the model still does it by reading text. Numbers ultimately need a structured path — see <code>docs/dify-improvement-plan.md</code> for the proposal.</td>
-  </tr>
-  <tr>
-    <td><strong>Chapter summaries need an LLM.</strong></td>
-    <td>A one-time cost per corpus. Without them, section selection degrades to token matching.</td>
-  </tr>
-  <tr>
-    <td><strong>PDFs depend on bookmarks or Azure DI.</strong></td>
-    <td>With neither, a PDF falls back to one node per page — coarse but navigable. It is never silently dropped.</td>
-  </tr>
-  <tr>
-    <td><strong>Directory quality sets the ceiling.</strong></td>
-    <td>If a corpus is thousands of files flattened into one directory, level 0 degrades to listing thousands of names. That is a corpus-organisation problem, not a navigator one.</td>
-  </tr>
-  <tr>
-    <td><strong>Fallbacks match tokens, not synonyms.</strong></td>
-    <td>Asking about "life insurance" will not match a directory named "人身险". Swapping in an embedding pre-filter would fix it — at the cost of reintroducing the similarity problem the whole design avoids.</td>
-  </tr>
-  <tr>
-    <td><strong>Validated on synthetic corpora, not production ones.</strong></td>
-    <td>16-file and 144-file corpora with a known structure. The scale numbers above are real; the routing accuracy on a messy real corpus is not yet measured.</td>
-  </tr>
-</table>
-
-<div class="key">
-  <strong>The honest summary.</strong> SuperIndex makes the <em>which file, which section</em> problem cheap and traceable at corpus scale. It does not make numeric answers exact, and it has not been tested against a genuinely messy production corpus. Both are known and recorded rather than papered over.
-</div>
+<div class="card win"><span class="t">The honest summary</span>
+SuperIndex makes the <em>which file, which section</em> problem cheap and traceable at corpus scale, and it is well covered by tests on that path. It does not make numeric answers exact, and it has not been run against a genuinely messy production corpus. Both are known and recorded rather than papered over.</div>
+</section>
 
 <footer>
-  <p><strong>Part I</strong> was written from the vendored source at commit <code>71714e8</code> (pageindex 0.2.10, MIT). File paths, tool names and configuration keys were read from that checkout, not from the published docs.</p>
-  <p><strong>Part II</strong> describes this repository's own additions. The measured figures (index size, build time, listing length) come from running <code>nav.build</code> over the 16-file and 144-file test corpora under <code>samples/</code> and <code>/tmp</code>.</p>
-  <p>Related reading: <code>nav/README.md</code> for the navigator's full API and limitations, <code>docs/HANDOVER.md</code> for project state and the five gotchas, <code>PageIndex/UPSTREAM.md</code> for what was vendored and how to update it, <code>docs/dify-improvement-plan.md</code> for the structured-table proposal.</p>
+  <p><strong>Part 1 and the upstream engine</strong> were written from the vendored source at commit <code>71714e8</code> (pageindex 0.2.10, MIT). File paths, tool names and configuration keys were read from that checkout, not from the published documentation.</p>
+  <p><strong>Everything about SuperIndex</strong> describes this repository's own additions. The measured figures — index size, build time, listing length, per-stage timings — come from running <code>nav.build</code> over the 16-file and 144-file test corpora and from 21 recorded queries, not from estimates.</p>
+  <p>Related reading: <a href="../README.md">README.md</a> for quick start and configuration · <a href="../nav/README.md">nav/README.md</a> for the navigator's API and failure modes · <a href="HANDOVER.md">docs/HANDOVER.md</a> for project state and the gotchas · <a href="dify-improvement-plan.md">docs/dify-improvement-plan.md</a> for the structured-table proposal · <a href="../PageIndex/UPSTREAM.md">PageIndex/UPSTREAM.md</a> for what was vendored and how to update it.</p>
+  <p>SuperIndex is built on <a href="https://github.com/VectifyAI/PageIndex">PageIndex</a> by Vectify AI, vendored at a pinned commit. This page is self-contained — no server, no network, no fonts to fetch. Open it directly in a browser, or print it.</p>
 </footer>
 
 </div>

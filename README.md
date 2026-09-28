@@ -7,6 +7,12 @@ question that comes first: **"which report?"** — across thousands of files spr
 over a deep directory tree, with no vector store and no embedding model anywhere
 in the stack.
 
+> **New to this?** Open
+> **[`docs/ArchitectureIntro.html`](docs/ArchitectureIntro.html)** — 20 diagrams
+> covering the problem, how the index is built, how a question is answered, and
+> what the tests prove. Self-contained, no server needed, no prior knowledge of
+> the project assumed.
+
 ---
 
 ## The problem
@@ -287,10 +293,12 @@ directories, so they never touch `results/logs/`.
         └──────────────────────────────────────────────┘
 ```
 
-**[`docs/ArchitectureIntro.html`](docs/ArchitectureIntro.html) has the full
-picture** — 8 diagrams covering both the upstream engine and SuperIndex, the
-storage model, and the design decisions that turned out to be load-bearing.
-It is self-contained: open it in a browser, no server needed.
+**[`docs/ArchitectureIntro.html`](docs/ArchitectureIntro.html) is the place to
+start** — 20 diagrams organised as *problem statement → how SuperIndex solves it
+(build index, query) → software architecture → testing results*. It covers both
+the upstream engine and SuperIndex, and is written for someone who knows software
+but has not met structure-navigation retrieval before. Self-contained: open it in
+a browser, no server needed.
 
 ---
 
@@ -592,7 +600,7 @@ Stated plainly, because they are the questions a new user hits first.
 
 | | |
 |---|---|
-| **Architecture** | [`docs/ArchitectureIntro.html`](docs/ArchitectureIntro.html) — 8 diagrams, upstream + SuperIndex |
+| **Architecture** | [`docs/ArchitectureIntro.html`](docs/ArchitectureIntro.html) — 20 diagrams: problem → design → architecture → test results |
 | Navigator API and limits | [`nav/README.md`](nav/README.md) |
 | Project state, decisions, gotchas | [`docs/HANDOVER.md`](docs/HANDOVER.md) |
 | Structured-table proposal | [`docs/dify-improvement-plan.md`](docs/dify-improvement-plan.md) |
