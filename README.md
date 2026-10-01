@@ -132,15 +132,40 @@ superindex batch questions.jsonl --retrieval-only --match passage
 
 ```bash
 uv sync --group notebook                  # ipykernel / pandas / openpyxl（不在主依赖里）
-# 用 Jupyter 或 VS Code 打开 notebooks/batch_qa.ipynb，改第一个配置 cell（题集、PDF 目录、字段映射等）后依次运行；或命令行：
-uv run --group notebook jupyter nbconvert --to notebook --execute notebooks/batch_qa.ipynb --output-dir results/notebook
+# 用 Jupyter 或 VS Code 打开 notebooks/batch_qa.ipynb，改配置 cell（题集、PDF 目录、字段映射等）后依次运行（不要运行带 databricks-setup 标签的「环境安装」两个 cell）；或命令行：
+uv run --group notebook jupyter nbconvert --to notebook --execute notebooks/batch_qa.ipynb \
+  --TagRemovePreprocessor.enabled=True --TagRemovePreprocessor.remove_cell_tags databricks-setup \
+  --output-dir results/notebook
 ```
 
+命令行执行**必须带** `--TagRemovePreprocessor...` 这两个参数：Notebook 开头的「环境安装」cell（`%pip install superindex==0.1.2 ...`）只给 Databricks 用，不跳过的话它会把 PyPI 上的 `superindex` 装进当前环境，覆盖本地的可编辑安装。
+
 问答需要在 `.env` 配好支持 tool calling 的 `SUPERINDEX_CHAT_MODEL`；配置项也可用 `SI_NB_DATASET` / `SI_NB_PDF_DIR` / `SI_NB_LIMIT` 等环境变量覆盖。
+
+#### 在 Databricks 上运行
+
+同一个 Notebook 可以导入 Databricks 直接运行（Python 3.11+，按 Databricks 官方的 Runtime 与 Python 版本对应关系，对应 Runtime 15.x 及以上）。步骤：
+
+1. 导入 `notebooks/batch_qa.ipynb`，从上到下运行：先运行「环境安装」两个 cell（`%pip install superindex==0.1.2 pandas openpyxl pycryptodome`，随后重启 Python）。默认从 PyPI 装；公司内部 PyPI 镜像 / Git URL / Repos 路径 / Volumes 里的 wheel 的写法见 Notebook 里「环境安装」的说明，用其中一行替换该 cell 的内容。
+2. 在「模型配置」cell 的 `LLM_CONFIG` 里填模型（密钥用 `dbutils.secrets.get(scope=..., key=...)`，不要明文写进 Notebook）：
+   - OpenAI 兼容端点：`SUPERINDEX_CHAT_MODEL="openai/<模型名>"` + `SUPERINDEX_BASE_URL="https://<网关>/v1"` + `SUPERINDEX_API_KEY_OVERRIDE`
+   - Databricks Model Serving：`"databricks/<endpoint 名>"` + `SUPERINDEX_BASE_URL="https://<workspace>/serving-endpoints"` + token
+   - Azure OpenAI：`"azure/<deployment>"` + `AZURE_API_BASE` / `AZURE_API_KEY` / `AZURE_API_VERSION`
+   - 公司网关要求自定义请求头：填 `LLM_EXTRA_HEADERS`（只加在问答请求上，建库摘要 `INDEX_SUMMARY=True` 不带）。
+   - 公司只提供非 OpenAI 协议的 Python SDK：把「公司 SDK 适配器」cell 里的 `USE_CUSTOM_LLM` 改 `True`，在 `company_chat(messages, tools)` 里调用 SDK（返回 `{"text", "tool_calls"}`，约定见函数文档），模型名写 `company/<任意名>`。适配器是 litellm 的 `CustomLLM`，问答和建库摘要都能走；流式是整段一次性吐出的假流式。
+3. 在配置 cell 填 `DATASET_PATH`、`PDF_DIR`（如 `/Volumes/<catalog>/<schema>/<volume>/...`）和 `PERSIST_DIR`，其余默认即可。
+
+**工作目录与 `PERSIST_DIR`。** 检测到 Databricks 时，`WORK_DIR`（`md/`、`store/`、`runs/`）默认放本地盘 `/local_disk0/tmp/superindex_nb/<题集名>`（该目录不可用时退回系统临时目录），因为存储层用 `fcntl.flock`、`os.replace` 和逐行追加，`/Workspace`、`/dbfs`、`/Volumes` 这类 FUSE 路径对它们的支持不确定。本地盘随集群消失，所以设 `PERSIST_DIR`（如 `/Volumes/<catalog>/<schema>/<volume>/superindex_nb/<题集名>`）：开始时若里面有上次的 `md/`、`store/`、`runs/`、`skipped_pdfs.json` 而本地没有，就复制回来（集群重启后不必重抽取、重建库，已答的题可续跑）；建库后、全部完成后再把 `WORK_DIR` 复制回去，复制失败只警告不中断。不设则全部跳过。
+
+**本机用 nbconvert 执行时**，带上面的跳过参数即可，不会触发 `%pip`。
+
+> Databricks 专属的部分（`%pip` 安装、`restartPython`、`dbutils.secrets`、Volumes 读写、Model Serving 端点）没有在真实 Databricks 环境测过，首次使用请先用 `LIMIT=1` 跑一题确认。
 
 #### 配置 LLM
 
 **哪些步骤用到模型。** PDF 抽取（文字层或 Azure DI）、补标题（`ADD_HEADINGS`，离线版面分析）、默认建库（`INDEX_SUMMARY=False`）都**不调模型**；只有步骤 4 问答一定调用 `SUPERINDEX_CHAT_MODEL`，`INDEX_SUMMARY=True` 时建库摘要还会用 `SUPERINDEX_INDEX_MODEL`（没设则报错提示）。所以没配模型也能先跑完前几步，检查 `md/`、`store/` 等中间产物。
+
+**这个项目怎么调用大模型。** 问答是 openai-agents 的工具循环（模型调用 `get_document_structure` / `get_page_content` / `search_pages` / `calculate`，直到给出回答），模型调用由 litellm 路由到具体厂商。模型名带 `openai/` 前缀时，发的是 OpenAI **Chat Completions** 流式请求（`POST {base}/chat/completions`，`stream=true`，带 `tools` 和 `stream_options.include_usage`）；**不走 Responses API**。`databricks/<endpoint>`、`azure/<deployment>` 等前缀由 litellm 按各自协议发。走代理或自定义 CA 靠标准环境变量：`HTTPS_PROXY`、`NO_PROXY`、`SSL_CERT_FILE`、`REQUESTS_CA_BUNDLE`。
 
 **在哪里配。** 在**仓库根目录**放 `.env`；Notebook 启动时会自动切到仓库根并加载它（第一个 cell 的输出里会打印读到的 `.env` 路径）。已存在的系统环境变量优先于 `.env`（`.env` 不覆盖它们）。`.env` 只在 Notebook 内核启动时读一次，改完后要**重启内核**再运行。
 
@@ -222,7 +247,7 @@ uv run superindex ask "2021 年的全年股息是多少？" --store results/chec
 | `CONCURRENCY` | `SI_NB_CONCURRENCY` | `1` | 并发题数 |
 | `RESUME` | `SI_NB_RESUME` | `True` | 续跑最近一次运行目录，跳过已成功的题 |
 
-另有 `RECORDS_KEY`、`FORCE_EXTRACT`、`WORK_DIR`、`PREFETCH`、`PREFETCH_K`，同样可用 `SI_NB_*` 覆盖，见 Notebook 配置 cell。
+另有 `RECORDS_KEY`、`FORCE_EXTRACT`、`WORK_DIR`、`PERSIST_DIR`（Databricks 持久目录，见上）、`PREFETCH`、`PREFETCH_K`，同样可用 `SI_NB_*` 覆盖，见 Notebook 配置 cell。
 
 **`FIELD_MAP` 的嵌套路径。** 值除了顶层字段名，还可以写点号路径（`meta.source`）和 `[]` 列表展开（`evidence[].file` 取每个元素的 `file`，去重保序）。另有可选键 `pages`（如 `evidence[].page`），用于按页码判定检索命中。例如题集顶层是 `{"questions": [...]}`，每题有 `question`、`ground_truth`、`evidence: [{file, page, quote}]`：
 
