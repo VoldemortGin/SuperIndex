@@ -138,6 +138,105 @@ uv run --group notebook jupyter nbconvert --to notebook --execute notebooks/batc
 
 问答需要在 `.env` 配好支持 tool calling 的 `SUPERINDEX_CHAT_MODEL`；配置项也可用 `SI_NB_DATASET` / `SI_NB_PDF_DIR` / `SI_NB_LIMIT` 等环境变量覆盖。
 
+#### 配置 LLM
+
+**哪些步骤用到模型。** PDF 抽取（文字层或 Azure DI）、补标题（`ADD_HEADINGS`，离线版面分析）、默认建库（`INDEX_SUMMARY=False`）都**不调模型**；只有步骤 4 问答一定调用 `SUPERINDEX_CHAT_MODEL`，`INDEX_SUMMARY=True` 时建库摘要还会用 `SUPERINDEX_INDEX_MODEL`（没设则报错提示）。所以没配模型也能先跑完前几步，检查 `md/`、`store/` 等中间产物。
+
+**在哪里配。** 在**仓库根目录**放 `.env`；Notebook 启动时会自动切到仓库根并加载它（第一个 cell 的输出里会打印读到的 `.env` 路径）。已存在的系统环境变量优先于 `.env`（`.env` 不覆盖它们）。`.env` 只在 Notebook 内核启动时读一次，改完后要**重启内核**再运行。
+
+```bash
+cp .env.example .env              # macOS / Linux
+# Windows PowerShell：Copy-Item .env.example .env
+```
+
+`.env.example` 里默认就是本机 Ollama 的那一组；保持**一组**配置生效，其余留注释。变量含义见上文「最小配置」和「配置变量」，下面是三种常用写法（`SUPERINDEX_INDEX_MODEL` 只在 `INDEX_SUMMARY=True` 时才用到，不开摘要可不写）。
+
+本机 Ollama（离线）：先 `ollama pull qwen2.5:7b`，并保持 Ollama 服务在运行；上下文建议调大（`OLLAMA_CONTEXT_LENGTH=32768`，见上文）。
+
+```ini
+SUPERINDEX_CHAT_MODEL=ollama_chat/qwen2.5:7b
+SUPERINDEX_INDEX_MODEL=ollama_chat/qwen2.5:7b
+SUPERINDEX_BASE_URL=http://localhost:11434
+SUPERINDEX_API_KEY_OVERRIDE=ollama
+SUPERINDEX_REASONING_EFFORT=
+```
+
+OpenAI 兼容的自建 / 内网端点（vLLM、LM Studio、公司网关等）：模型名用 `openai/` 前缀加端点上的模型名，地址带 `/v1`。
+
+```ini
+SUPERINDEX_CHAT_MODEL=openai/your-model-name
+SUPERINDEX_INDEX_MODEL=openai/your-model-name
+SUPERINDEX_BASE_URL=https://your-gateway.example.com/v1
+SUPERINDEX_API_KEY_OVERRIDE=your-gateway-key
+SUPERINDEX_REASONING_EFFORT=
+```
+
+云端（以 DeepSeek / OpenAI 为例）：key 用 LiteLLM 约定的变量名，不必设 `SUPERINDEX_BASE_URL`。
+
+```ini
+# DeepSeek
+DEEPSEEK_API_KEY=sk-...
+SUPERINDEX_CHAT_MODEL=deepseek/deepseek-chat
+# OpenAI
+# OPENAI_API_KEY=sk-...
+# SUPERINDEX_CHAT_MODEL=gpt-5
+```
+
+Azure OpenAI、Anthropic 等写法见 `.env.example`。使用云端模型时，题目和检索到的文档片段会发送给模型服务商；要求数据不出本机，请用 Ollama 或内网端点。
+
+**对模型的要求。** 必须支持 tool calling（function calling），问答 agent 靠它调用 `get_document_structure` / `get_page_content` / `search_pages` / `calculate`。仓库里实际用 `ollama_chat/qwen2.5:7b` 在本机 Ollama 上验证过；qwen3、llama3.1 等是 Ollama 里带工具支持的模型，未在本仓库逐一验证。7B 级小模型常不主动调用 `search_pages`，只靠目录树导航（默认开启的检索预取会把候选页放在题目前面，缓解这一点）。
+
+**`SUPERINDEX_REASONING_EFFORT`。** 非推理模型和 Ollama 必须**留空**（或不写），否则报 `does not support thinking`（`ollama_chat`）/ `UnsupportedParamsError`（Ollama 的 `/v1` 路由）。只有确定会推理的云端模型才设，如 `low`。
+
+**确认配好了。** 最快的自检：用仓库自带样例建一个不调模型的库，再问一题（命令从仓库根目录运行；`.env` 已配好时不需要前缀）。
+
+```bash
+uv run superindex index samples/aia_ar2021_excerpt.md --no-summary --store results/check_store
+uv run superindex ask "2021 年的全年股息是多少？" --store results/check_store
+# 不想写 .env、只想临时试一下云端模型：
+#   macOS / Linux：SUPERINDEX_CHAT_MODEL=deepseek/deepseek-chat uv run superindex ask "..." --store results/check_store
+#   Windows PowerShell：$env:SUPERINDEX_CHAT_MODEL="deepseek/deepseek-chat"; uv run superindex ask "..." --store results/check_store
+```
+
+能流式输出带 `146.00` 的回答就说明模型、地址和 tool calling 都通了。也可以在 Notebook 里设 `LIMIT=1`（或环境变量 `SI_NB_LIMIT=1`）只跑一题。
+
+**常见报错。**
+
+- Notebook 步骤 4 报 `RuntimeError: 未配置可用的问答模型：No chat model configured. Set SUPERINDEX_CHAT_MODEL in .env (looked in the working directory …) …`：没读到 `SUPERINDEX_CHAT_MODEL`。检查 `.env` 是否在仓库根、变量名是否拼对，改完重启内核。
+- `INDEX_SUMMARY=True` 时步骤 2 报 `No index model configured. Set SUPERINDEX_INDEX_MODEL …`：补上 `SUPERINDEX_INDEX_MODEL`，或把 `INDEX_SUMMARY` 改回 `False`。
+- `does not support thinking` / `UnsupportedParamsError`：`SUPERINDEX_REASONING_EFFORT` 留空。
+- Ollama 回答很怪、像没看到文档：先用 `ollama ps` 看 CONTEXT 列，默认上下文过小时长提示会被截断，只在 Ollama 服务端日志里有警告。
+
+**Notebook 配置项速查**（都在第一个配置 cell，也可用 `SI_NB_<名字>` 环境变量覆盖，布尔值写 `1/true/yes/on`）：
+
+| 配置项 | 环境变量 | 默认 | 含义 |
+|---|---|---|---|
+| `DATASET_PATH` | `SI_NB_DATASET` | `data/questions.jsonl` | 题集（`.json` / `.jsonl`） |
+| `PDF_DIR` | `SI_NB_PDF_DIR` | `data/pdfs` | 原始 PDF 目录（递归） |
+| `FIELD_MAP` | `SI_NB_FIELD_MAP` | `id/question/expected/doc` 同名 | 数据集字段名映射，值为 JSON 对象；支持嵌套路径，见下 |
+| `PDF_EXTRACTOR` | `SI_NB_PDF_EXTRACTOR` | `text-layer` | `text-layer`（离线）或 `azure-di` |
+| `ADD_HEADINGS` | `SI_NB_ADD_HEADINGS` | `True` | 仅 `text-layer`：离线补 `#` 章节标题，不调 LLM |
+| `INDEX_SUMMARY` | `SI_NB_INDEX_SUMMARY` | `False` | `True`：建库时用 `SUPERINDEX_INDEX_MODEL` 写摘要 |
+| `LIMIT` | `SI_NB_LIMIT` | 全部 | 只跑前 N 题 |
+| `TIMEOUT` | `SI_NB_TIMEOUT` | `300` | 每题超时（秒） |
+| `CONCURRENCY` | `SI_NB_CONCURRENCY` | `1` | 并发题数 |
+| `RESUME` | `SI_NB_RESUME` | `True` | 续跑最近一次运行目录，跳过已成功的题 |
+
+另有 `RECORDS_KEY`、`FORCE_EXTRACT`、`WORK_DIR`、`PREFETCH`、`PREFETCH_K`，同样可用 `SI_NB_*` 覆盖，见 Notebook 配置 cell。
+
+**`FIELD_MAP` 的嵌套路径。** 值除了顶层字段名，还可以写点号路径（`meta.source`）和 `[]` 列表展开（`evidence[].file` 取每个元素的 `file`，去重保序）。另有可选键 `pages`（如 `evidence[].page`），用于按页码判定检索命中。例如题集顶层是 `{"questions": [...]}`，每题有 `question`、`ground_truth`、`evidence: [{file, page, quote}]`：
+
+```python
+FIELD_MAP = {"id": "id", "question": "question", "expected": "ground_truth",
+             "doc": "evidence[].file", "pages": "evidence[].page"}
+```
+
+命令行执行时用环境变量传 JSON 字符串，如 `SI_NB_FIELD_MAP='{"id": "id", "question": "question", "doc": null}'`（PowerShell 里用 `$env:SI_NB_FIELD_MAP='{"id": "id", "question": "question", "doc": null}'`）。注意：把 `doc` 映射到标准证据文档，会把检索限定在正确文档内，评测成绩偏乐观；想评估全库检索，就把 `doc` 设为 `None`（JSON 里写 `null`）。
+
+**加密 PDF。** 部分 PDF 是 AES 加密的，PyPDF2 需要 `pycryptodome` 才能读文字层；`uv sync --group notebook` 已包含它。缺失时这些 PDF 会在抽取汇总表里标为 failed 并提示安装。
+
+**已知局限（文字层方式）。** 读不到扫描页（如年报附件里的审计报告扫描件，会记为空页并给出警告）；页眉页脚会混入正文；补标题有噪声（表头、脚注序号可能被当成标题）。需要更高质量时把 `PDF_EXTRACTOR` 改成 `azure-di`。
+
 ### 回答指令（ask / serve / batch 通用）
 
 三个命令使用同一套"常驻指令"，**替换**内置默认。优先级从高到低：
