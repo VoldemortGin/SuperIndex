@@ -4,6 +4,7 @@
     superindex ask "What was the 2021 final dividend?" [--doc NAME_OR_ID ...]
     superindex search "final dividend 2021" [--doc NAME_OR_ID ...] [--top-k 5]
     superindex serve [--port 8787] [--store DIR]
+    superindex nav-serve [--port 8787] [--no-watch]
     superindex batch questions.jsonl [--out DIR] [--concurrency 1] [--resume]
     superindex batch questions.jsonl --retrieval-only [--top-k 5]
 
@@ -287,6 +288,17 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return server.run(args.host, args.port)
 
 
+# ───────────────────────────────────────────────────────────── nav-serve
+def cmd_nav_serve(args: argparse.Namespace) -> int:
+    from superindex.webapp import nav_server
+
+    argv = ["--host", args.host, "--port", str(args.port),
+            "--watch-interval", str(args.watch_interval)]
+    if args.no_watch:
+        argv.append("--no-watch")
+    return nav_server.main(argv)
+
+
 # ───────────────────────────────────────────────────────────── batch
 def cmd_batch(args: argparse.Namespace) -> int:
     from superindex import batch
@@ -348,6 +360,16 @@ def build_parser() -> argparse.ArgumentParser:
     _add_page_image_flag(p)
     _add_llm_flags(p)
     p.set_defaults(func=cmd_serve)
+
+    p = sub.add_parser("nav-serve",
+                       help="start the directory-driven web UI (superindex.nav)")
+    p.add_argument("--port", type=int, default=8787, help="(default 8787)")
+    p.add_argument("--host", default="127.0.0.1", help="(default 127.0.0.1)")
+    p.add_argument("--no-watch", action="store_true",
+                   help="do not poll registered directories for changes")
+    p.add_argument("--watch-interval", type=float, default=30.0,
+                   help="seconds between polls (default 30)")
+    p.set_defaults(func=cmd_nav_serve)
 
     p = sub.add_parser("batch", help="answer a question set and write results + summary")
     p.add_argument("questions", help="question file: .json (scripts/questions.json layout), "

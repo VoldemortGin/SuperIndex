@@ -24,7 +24,7 @@ uv tool install superindex
 
 ```bash
 superindex --help
-superindex index|search|ask|serve|batch --help
+superindex index|search|ask|serve|batch|nav-serve --help
 ```
 
 ## 最小配置（`.env`）
@@ -100,6 +100,8 @@ superindex serve --host 0.0.0.0 --port 8787    # 局域网访问（注意防火�
 ```
 
 「SuperIndex 财报问答」网页：勾选可用文档范围、流式输出答案，每条答案可展开查看模型的思考过程与全部工具调用（读了哪棵树、哪几页）。`serve` 与 `ask` 接受相同的 `--instructions` / `--match` / `--prefetch` / `--page-image` / 模型参数。
+
+另有一个面向"整目录语料"的网页 `superindex nav-serve`（注册目录、自动建索引、按目录提问），见文末「目录驱动 Web UI：`nav-serve`」。
 
 ### 批量问答：`batch`
 
@@ -205,10 +207,12 @@ uv run pytest tests -q
 │   ├── engine/               # 树索引 + agent 检索引擎（衍生自 PageIndex）
 │   ├── extractors/           # PDF 抽取后端：Azure DI（REST）/ 文本层
 │   ├── nav/                  # 两级导航：语料目录 → 文档 → 章节
-│   ├── webapp/               # serve 的网页服务与 static/
+│   │   └── registry.py, policy.py, debuglog.py, suggest.py   # 目录注册/监视、路由策略、调试日志、示例问题
+│   ├── webapp/               # 网页服务与 static/：server.py（serve）、nav_server.py（nav-serve）
 │   └── bm25.py, prefetch.py, calc.py, page_images.py, batch.py, ...
-├── scripts/                  # 实验与辅助脚本（si.py 源码入口、06_azure_extract.py 等；一律 uv run python scripts/<name>.py 运行）
-├── samples/                  # 样例 Markdown 与题集
+├── config/routing_policy.yaml  # nav 路由策略（业务知识：目录排除/权重/别名等）
+├── scripts/                  # 实验与辅助脚本（si.py 源码入口、06_azure_extract.py、07_logs.py 等；一律 uv run python scripts/<name>.py 运行）
+├── samples/                  # 样例 Markdown 与题集（test_corpus/ 为 nav-serve 默认投放区）
 ├── tests/                    # 离线测试
 ├── packaging/                # PyInstaller 打包脚本
 └── docs/                     # quickstart、交接文档、engine 来源说明
@@ -261,6 +265,77 @@ uv run python -m superindex.nav.build ./corpus_md --out ./corpus_index --summari
 uv run python -m superindex.nav.route ./corpus_index "港湾人寿 2022 年的每股股息是多少？" --show-content
 ```
 
-`superindex.nav.build` 也可直接吃 PDF（启动时打印所用抽取器，`--extractor {auto,azure-di,text-layer}` 可强制指定）：配置了 Azure DI 时得到带标题的章节树，否则用 PDF 文本层（PyPDF2）每页一个节点。
+`superindex.nav.build` 也可直接吃 PDF（启动时打印所用抽取器，`--extractor {auto,azure-di,text-layer}` 可强制指定）：配置了 Azure DI 时得到带标题的章节树；否则读 PDF 文本层，用 `superindex.engine.flash`（按字号、位置等版面统计离线识别标题，不调 LLM）建章节树，失败再退到每页一个节点（PyInstaller 打包版不含 flash，直接走每页一节点）。
 
 模型：nav 有自己的一套取值，只借用 `SUPERINDEX_CHAT_MODEL`。模型取 `--model` > `NAV_MODEL` > `SUPERINDEX_CHAT_MODEL` > 兜底 `deepseek/deepseek-flash`；推理强度取 `route --effort` > `NAV_REASONING_EFFORT` > 默认 `none`（`build` 没有 `--effort`，只读环境变量）；用网关 / Ollama 上的非推理模型时要设 `NAV_REASONING_EFFORT=`（空值即不发送），否则 LiteLLM 会报 `UnsupportedParamsError`。它**不读** `SUPERINDEX_BASE_URL` / `SUPERINDEX_API_KEY_OVERRIDE`，网关地址与 key 要用 LiteLLM 自己的变量（如 `OPENAI_API_BASE` / `OPENAI_API_KEY`）。详见 [superindex/nav/README.md](https://github.com/VoldemortGin/SuperIndex/blob/main/superindex/nav/README.md)。
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/VoldemortGin/SuperIndex/main/docs/diagrams/addressing-funnel-dark.png">
+  <img alt="一个问题逐级下降：L0 在一个提示词里从整棵目录树中选 1–4 个目录；L1 在这些目录下选 1–5 个文件；L2 对每个候选文件并行选 1–6 个章节；最后按相关度拼接章节原文与出处，上限 20,000 字符。" src="https://raw.githubusercontent.com/VoldemortGin/SuperIndex/main/docs/diagrams/addressing-funnel.png">
+</picture>
+
+更完整的图解（问题背景、建库、问答流程、测试）见 [docs/ArchitectureIntro.html](https://github.com/VoldemortGin/SuperIndex/blob/main/docs/ArchitectureIntro.html)（单文件 HTML，克隆仓库后用浏览器本地打开）。
+
+### 目录驱动 Web UI：`nav-serve`
+
+基于两级导航的浏览器界面：注册一个或多个目录，后台建索引，然后按目录提问。标准库 HTTP 服务 + 单个 HTML，无需前端构建。与 `serve`（基于 `superindex_store/` 文档库的 agent 问答）相互独立。
+
+```bash
+superindex nav-serve                          # http://127.0.0.1:8787
+superindex nav-serve --port 9000 --no-watch   # 换端口、不轮询文件变化
+superindex nav-serve --watch-interval 10      # 每 10 秒检查一次（默认 30）
+uv run python scripts/si.py nav-serve         # 源码仓库里（或 uv run python -m superindex.webapp.nav_server）
+```
+
+**目录与默认位置**
+
+| 内容 | 默认位置 | 覆盖 |
+|---|---|---|
+| 投放区：每个直接子目录自动注册为一个语料 | 源码仓库的 `samples/test_corpus/`（中国太保 / 中国平安 / 友邦保险 / 行业汇总，开箱即可演示）；pip / 打包环境下不存在则不自动发现 | `SUPERINDEX_DATA_DIR` |
+| 注册表与索引 | `<store>/nav/registry.json`、`<store>/nav/corpora/<id>/`（`<store>` 即 `SUPERINDEX_STORE`，默认工作目录下 `superindex_store/`，打包版为 exe 所在目录） | `SUPERINDEX_INDEX_DIR` |
+| 调试日志 | `results/logs/queries.jsonl`、`errors.jsonl`（相对工作目录 / exe 目录） | `SUPERINDEX_LOG_DIR` |
+
+- 投放区以外的目录用界面上的「添加目录」注册（只读目录浏览器）；源目录只读，索引只写到上表位置，注册表记录源目录的绝对路径。项目代码树内、投放区之外的目录不允许注册。
+- **增量建索引 + 自动跟进**：每个语料独立的索引目录；大小与 mtime 未变的文件不重新抽取，只给缺描述的文件补摘要；watcher 轮询目录，增删改文件后只重做变化的部分。目录消失时语料标为 `error`。
+- **按目录提问**：默认在所有已建好的语料中提问，也可勾选子集；多语料合并为一棵树一次路由。支持 `?q=<问题>` 深链接。
+- **问答过程可见、可取消**：SSE 流式推送路由策略、各阶段进度、导航路径（选了哪些目录/文件/章节、是否走了兜底）、本次 LLM 调用统计、出处（按文档分组）、模型思考过程与答案；生成中「发送」变为「停止」，取消记为 cancel 而非错误。
+- **示例问题与历史问题**：输入框上方的示例问题由语料本身（描述、目录主题、文件摘要、章节标题）生成并缓存；聚焦输入框时下拉显示最近问过的问题。
+- **性能与健壮性**：章节选择按候选文件并行；启动时预热 litellm（本地价格表 + `llm.warmup()`），避免首个问题多等数秒；LLM 回复被截断（`finish_reason=length`）或为空时自动加大 token 预算重试、流式失败退回非流式；路由兜底支持别名扩展，并可利用语料级摘要。
+- 回答参数：`SUPERINDEX_REASONING_EFFORT`（默认 `low`）、`SUPERINDEX_ANSWER_MAX_TOKENS`（默认 4096）；后台建索引并发 `SUPERINDEX_INDEX_WORKERS`（默认 6）。路由/摘要模型同上文 nav 的取值（`NAV_MODEL` > `SUPERINDEX_CHAT_MODEL` > `deepseek/deepseek-flash`）。
+
+接口（界面能做的都可以脚本化）：`GET /api/state`、`/api/browse?path=`、`/api/logs?kind=queries|errors&limit=N&failed=1`、`/api/recent-questions`、`/api/corpora/<id>/tree`、`/api/health`；`POST /api/corpora`（`{path, name?, deep_index?}`）、`/api/corpora/<id>/reindex`（`{deep_index?, force?}`）、`/api/ask`（`{question, corpus_ids?}` → SSE 事件 `policy` / `stage` / `nav` / `llmstats` / `sources` / `thinking` / `answer` / `error` / `done`）；`PATCH /api/corpora/<id>`（`{name}` 改名）、`DELETE /api/corpora/<id>`（注销并删除索引）。
+
+### 路由策略：`config/routing_policy.yaml`
+
+"年报在 `annual/` 下""`_drafts/` 永远不搜""太保 = 中国太保"这类业务知识不写进代码，而写进 `config/routing_policy.yaml`：`directories.exclude`（唯一的硬过滤，按目录名整段匹配）、`weights`（加分并在提示词中标注）、`scopes`（纯提示）、`periods`（如 `FY24` → 2024）、`aliases`（兜底匹配时的同义词扩展）。
+
+- **空策略 = 内置默认行为**；写错（如 YAML 语法错误）不会中断服务，退回默认并记到 `errors.jsonl`（`where: policy.load`）。
+- **每次提问重新读取**，改完无需重启。每条查询日志都记录当时生效的策略。
+- 查找顺序：`SUPERINDEX_ROUTING_POLICY` → 工作目录 `config/routing_policy.yaml` → exe 所在目录 `config/` → 随代码发布的那份（源码仓库根 / PyInstaller 包内）。
+- 命令行调试：`uv run python -m superindex.nav.route <index_dir> "问题" --policy ./my_policy.yaml --corpus <语料名> --show-policy`（`--show-policy` 打印生效策略后退出）。
+
+### 调试日志
+
+每个问题都会记录，答错之后可以事后排查而不是猜：
+
+| 文件 | 内容 |
+|---|---|
+| `queries.jsonl` | 每题一条：范围、每一步路由决策、读了哪些出处、答案、各阶段耗时、每次 LLM 调用明细（`llm_calls`：阶段、耗时、每次尝试耗时、是否重试、提示词大小；汇总 `llm_n_calls` / `llm_n_retried` / `llm_ms`） |
+| `errors.jsonl` | 每个异常一条：类型、消息、完整 traceback、当时的上下文，与查询共用 id |
+
+`llm_n_retried` 非零说明部分耗时花在了恢复而不是干活上；`llm_ms` 是各调用耗时之和（章节选择并行），应与 `stages` 对照而不是与总耗时对照。
+
+```bash
+uv run python scripts/07_logs.py                  # 最近的查询，每条一行
+uv run python scripts/07_logs.py --failed         # 只看失败或没找到内容的
+uv run python scripts/07_logs.py --id q-1a2b3c4d  # 单个查询全貌及其异常
+uv run python scripts/07_logs.py --kind errors    # 最近的异常
+uv run python scripts/07_logs.py --stats
+```
+
+`SUPERINDEX_DEBUG_LOG=0` 关闭记录，`SUPERINDEX_LOG_MAX_BYTES` 控制轮转大小。写日志失败只在 stderr 打一行，不影响服务。
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/VoldemortGin/SuperIndex/main/docs/diagrams/retrieval-sequence-dark.png">
+  <img alt="检索流程：读取 config/routing_policy.yaml；L0 选目录、L1 选文件（各一次模型调用，失败时按路径/名称与摘要关键词打分兜底）；L2 每个候选文件一次调用并行选章节（兜底为章节标题关键词打分）；本地拼接上下文；流式生成答案（含思考过程）。每一步都追加记录到 results/logs/queries.jsonl。" src="https://raw.githubusercontent.com/VoldemortGin/SuperIndex/main/docs/diagrams/retrieval-sequence.png">
+</picture>

@@ -69,7 +69,10 @@ superindex.exe ask "..." --instructions-file D:\superindex\instructions.txt   # 
 superindex.exe search "末期股息 2023" --top-k 5       # 关键词(BM25)检索，不调 LLM，便于排查
 superindex.exe serve --port 8787                      # 浏览器打开 http://127.0.0.1:8787
 superindex.exe serve --host 0.0.0.0 --port 8787       # 局域网访问（注意防火墙）
+superindex.exe nav-serve --port 8787                  # 目录驱动网页（注册目录 → 后台索引 → 按目录提问）
 ```
+
+`nav-serve` 的路由策略：包内自带一份 `config\routing_policy.yaml`；在 exe 同目录（或当前目录）放 `config\routing_policy.yaml` 即覆盖，或用 `SUPERINDEX_ROUTING_POLICY` 指定。索引写到 `superindex_store\nav\`，调试日志写到 `results\logs\`（均相对 exe 所在目录）。
 
 ## 4. 已知限制
 

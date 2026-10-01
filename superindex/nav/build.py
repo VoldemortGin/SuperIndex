@@ -18,6 +18,7 @@ therefore cheap and safe.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -30,11 +31,97 @@ from superindex.extractors.azure_di import AzureDIError
 from superindex.nav import llm
 from superindex.nav.store import Chapter, DirEntry, FileEntry, Manifest, file_key
 
+# Bump whenever tree extraction changes shape (new extractor, new heading
+# detection, different fallback order). Without this, `scan(previous=...)`
+# would keep serving trees built by the old logic, because it only compares
+# file size and mtime — a logic change looks like "nothing changed".
+#
+# A bump also re-generates summaries, because a summary is a function of
+# (content, tree): it is written from the chapter outline, so a new tree means
+# the old summary describes a structure that no longer exists. That costs one
+# call per file plus one per directory, once.
+#
+#   2 — PDFs now use PageIndex flash for the chapter tree instead of falling
+#       straight to one node per page.
+BUILDER_VERSION = 2
+
 TEXT_EXT = {".md", ".markdown", ".txt"}
 PDF_EXT = {".pdf"}
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 BOLD_ONLY_RE = re.compile(r"^\*\*(.+?)\*\*\s*$")
 PAGE_MARK_RE = re.compile(r"^<!--\s*page:\s*(\d+)\s*-->\s*$")
+
+
+def _page_line_spans(lines: list[str]) -> dict[int, tuple[int, int]]:
+    """page number -> (first_line, last_line), 1-based inclusive.
+
+    PageIndex's flash engine reports page ranges; everything downstream in nav
+    addresses lines. This is the bridge between the two.
+    """
+    marks: list[tuple[int, int]] = []
+    for i, raw in enumerate(lines, start=1):
+        m = PAGE_MARK_RE.match(raw.strip())
+        if m:
+            marks.append((i, int(m.group(1))))
+    spans: dict[int, tuple[int, int]] = {}
+    for idx, (line_no, page_no) in enumerate(marks):
+        end = marks[idx + 1][0] - 1 if idx + 1 < len(marks) else len(lines)
+        spans[page_no] = (line_no, max(line_no, end))
+    return spans
+
+
+def _flash_chapters(pdf: Path, lines: list[str]) -> list[Chapter]:
+    """Chapter tree from PageIndex's offline layout analysis.
+
+    `flash` derives headings from font size, position and layout statistics —
+    **no LLM and no Azure Document Intelligence needed**. For a PDF that has
+    neither a usable text layer nor bookmarks, this is dramatically better than
+    the one-node-per-page fallback: on a 312-page annual report it yields 469 nodes
+    across 5 levels with real titles (CHAIRMAN'S STATEMENT, FINANCIAL
+    HIGHLIGHTS…), where the fallback yields 312 nodes all called "Page N".
+
+    Returns [] on any failure so the caller can fall back.
+    """
+    try:
+        from superindex.engine.flash import page_index_flash
+    except Exception as exc:  # noqa: BLE001 - optional dependency chain
+        print(f"    ! flash 不可用: {exc}")
+        return []
+    try:
+        tree = page_index_flash(str(pdf), summary=False, optimize=False)
+    except Exception as exc:  # noqa: BLE001
+        print(f"    ! flash 建树失败 {pdf.name}: {exc}")
+        return []
+
+    spans = _page_line_spans(lines)
+
+    def line_of(page: int, *, last: bool) -> int:
+        span = spans.get(page)
+        if span:
+            return span[1 if last else 0]
+        return len(lines) if last else 1     # no markers: clamp to the ends
+
+    def build(nodes, level: int) -> list[Chapter]:
+        out: list[Chapter] = []
+        for n in nodes or []:
+            title = str(n.get("title") or "").strip()
+            if not title:
+                continue
+            start_page = int(n.get("start_index") or 1)
+            end_page = int(n.get("end_index") or start_page)
+            out.append(Chapter(
+                title=title, level=level,
+                start=line_of(start_page, last=False),
+                end=line_of(end_page, last=True),
+                children=build(n.get("nodes"), level + 1),
+            ))
+        return out
+
+    chapters = build(tree.get("structure"), 1)
+    if chapters:
+        print(f"      flash: {sum(1 for c in chapters for _ in c.flatten())} 节点, "
+              f"最深 {max((c.level for c in chapters for c in c.flatten()), default=0)} 层")
+    return chapters
 
 
 def page_marker_chapters(lines: list[str]) -> list[Chapter]:
@@ -161,6 +248,19 @@ def pdf_chapters(path: Path) -> list[Chapter]:
         doc.close()
 
 
+def _pdf_text(extractor, path: Path) -> str:
+    """Extracted text, honouring the extractor's strict/fail-loud policy."""
+    try:
+        return extractor.document_text(path)
+    except Exception as exc:  # noqa: BLE001
+        # A configured-but-broken Azure backend must stop the build: carrying
+        # on would silently index the weaker text layer instead.
+        if getattr(extractor, "strict", False):
+            raise
+        print(f"    ! {path.name}: {exc}")
+        return ""
+
+
 def read_document(path: Path, extractor=None) -> tuple[list[Chapter], list[str]]:
     """Return (chapter tree, source lines) for one file.
 
@@ -174,21 +274,35 @@ def read_document(path: Path, extractor=None) -> tuple[list[Chapter], list[str]]
     3. **Neither** (no backend text at all) — the PDF's own bookmarks, if any.
     """
     if path.suffix.lower() in PDF_EXT:
-        if extractor is not None:
-            try:
-                text = extractor.document_text(path)
-            except Exception as exc:  # noqa: BLE001
-                # When Azure is configured but broken, stop the whole build:
-                # continuing would silently index the weaker text layer.
-                if getattr(extractor, "strict", False):
-                    raise
-                print(f"    ! {path.name}: {exc}")
-                text = ""
+        if extractor is None:
+            from superindex.extractors.backend import Extractor
+            extractor = Extractor()
+
+        # 1) Azure Document Intelligence — real Markdown, so headings *and*
+        #    tables survive. Only this path can produce markdown_chapters.
+        if getattr(extractor, "uses_azure", False):
+            text = _pdf_text(extractor, path)
             if text.strip():
                 lines = text.split("\n")
-                chapters = markdown_chapters(lines) or page_marker_chapters(lines)
+                chapters = markdown_chapters(lines)
                 if chapters:
                     return chapters, lines
+
+        # 2) Plain text layer, which flash's page numbers are resolved against.
+        lines = _pdf_text(extractor, path).split("\n")
+        if lines:
+            # 3) flash — a real hierarchy from layout statistics. Free: no LLM,
+            #    no Azure. This is what turns "one node per page" into an actual
+            #    table of contents.
+            chapters = _flash_chapters(path, lines)
+            if chapters:
+                return chapters, lines
+            # 4) One node per page, so nothing is unreachable.
+            chapters = page_marker_chapters(lines)
+            if chapters:
+                return chapters, lines
+
+        # 5) No usable text at all: fall back to the PDF's own bookmarks.
         return pdf_chapters(path), []
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -200,11 +314,26 @@ def read_document(path: Path, extractor=None) -> tuple[list[Chapter], list[str]]
 
 # ------------------------------------------------------------------- scan
 def scan(root: Path, includes: set[str], excludes: set[str],
-         max_files: Optional[int] = None, extractor=None
+         max_files: Optional[int] = None, extractor=None,
+         previous: Optional[Manifest] = None, stats_only: bool = False
          ) -> tuple[Manifest, dict[str, tuple[list[Chapter], list[str]]]]:
+    """Walk the corpus and build a manifest.
+
+    `previous` enables incremental scanning: a file whose size and mtime match
+    the previous manifest is carried over untouched and its tree is **not**
+    re-extracted. That matters a lot for the watcher — without it, every poll
+    would re-send every PDF to Azure Document Intelligence.
+
+    `stats_only` skips extraction entirely and just records file metadata, so a
+    caller can cheaply ask "did anything change?".
+    """
     root = root.resolve()
-    m = Manifest(root=str(root), built_at=__import__("time").time())
+    m = Manifest(root=str(root), built_at=__import__("time").time(),
+                 builder_version=BUILDER_VERSION)
     trees: dict[str, tuple[list[Chapter], list[str]]] = {}
+    # A version change invalidates every cached tree, so the new logic runs.
+    rebuild_all = (previous is None
+                   or previous.builder_version != BUILDER_VERSION)
 
     def rel(p: Path) -> str:
         r = p.relative_to(root).as_posix()
@@ -213,6 +342,25 @@ def scan(root: Path, includes: set[str], excludes: set[str],
     def skip(p: Path) -> bool:
         parts = set(p.relative_to(root).parts)
         return bool(parts & excludes)
+
+    prev_dirs = previous.dirs if previous is not None else {}
+
+    def _dir(rp: str, name: str, parent: Optional[str]) -> DirEntry:
+        """Build a DirEntry, carrying over everything derived from contents.
+
+        Both `summary` and `topic` cost an LLM call each, so they are carried
+        over exactly like file summaries. Whether the carried-over values are
+        still *accurate* is decided later, in summarize_files() — see the
+        staleness propagation there.
+
+        Every derived field must be listed here. Adding one to DirEntry and
+        forgetting this line makes it look "never generated" on every scan,
+        which silently re-spends the call each time.
+        """
+        old = prev_dirs.get(rp)
+        return DirEntry(rel_path=rp, name=name, parent=parent,
+                        summary=old.summary if old else "",
+                        topic=old.topic if old else "")
 
     m.dirs[""] = DirEntry(rel_path="", name=root.name or "/", parent=None)
 
@@ -223,12 +371,12 @@ def scan(root: Path, includes: set[str], excludes: set[str],
         if skip(here):
             continue
         rp = rel(here) if here != root else ""
-        entry = m.dirs.setdefault(rp, DirEntry(rel_path=rp, name=here.name,
-                                               parent=None if rp == "" else rel(here.parent)))
+        entry = m.dirs.setdefault(
+            rp, _dir(rp, here.name, None if rp == "" else rel(here.parent)))
         entry.parent = None if rp == "" else rel(here.parent)
         for d in dirnames:
             crp = rel(here / d)
-            m.dirs.setdefault(crp, DirEntry(rel_path=crp, name=d, parent=rp))
+            m.dirs.setdefault(crp, _dir(crp, d, rp))
             entry.child_dirs.append(crp)
         for fn in sorted(filenames):
             fpath = here / fn
@@ -241,6 +389,23 @@ def scan(root: Path, includes: set[str], excludes: set[str],
                 st = fpath.stat()
             except OSError:
                 continue
+
+            prev = previous.files.get(frp) if previous is not None else None
+            if (not rebuild_all and prev is not None
+                    and prev.size == st.st_size and prev.mtime == st.st_mtime):
+                m.files[frp] = prev          # unchanged: keep entry and its tree
+                entry.files.append(frp)
+                count += 1
+                continue
+            if stats_only:
+                m.files[frp] = FileEntry(
+                    rel_path=frp, name=fn, parent=rp, ext=fpath.suffix.lower(),
+                    size=st.st_size, mtime=st.st_mtime,
+                    tree_key=file_key(frp))
+                entry.files.append(frp)
+                count += 1
+                continue
+
             chapters, lines = read_document(fpath, extractor)
             flat = [c for ch in chapters for c in ch.flatten()]
             fe = FileEntry(
@@ -274,10 +439,86 @@ def _chapter_outline(chapters: list[Chapter], limit: int = 40) -> str:
     return "\n".join(out)
 
 
+def _spread(items: list, limit: int) -> list:
+    """Evenly spread sample instead of the first `limit` items.
+
+    Children are ordered by name, so `[:limit]` would describe only whatever
+    starts with "A" — on a 500-file directory that is not a summary of the
+    directory, it is a summary of one letter.
+    """
+    if len(items) <= limit:
+        return items
+    step = len(items) / limit
+    return [items[int(i * step)] for i in range(limit)]
+
+
+def _child_listing(m: Manifest, node, limit: int) -> str:
+    """`- topic-or-name: summary` lines, used as the prompt's evidence."""
+    kids = [m.dirs[c] for c in node.child_dirs] + [m.files[f] for f in node.files]
+    # Only directories carry a `topic`; files are labelled by name.
+    return "\n".join(
+        f"- {getattr(k, 'topic', '') or k.name}: {k.summary or '(无摘要)'}"
+        for k in _spread(kids, limit))
+
+
+def corpus_summary(m: Manifest, model: str) -> str:
+    """One description of the whole corpus, built from its top-level contents.
+
+    When several corpora are in scope the corpus name is the only semantic
+    signal the router gets, so it has to describe contents rather than repeat
+    a name somebody chose.
+    """
+    root = m.dirs.get("")
+    if root is None:
+        return ""
+    kids = [m.dirs[c] for c in root.child_dirs] + [m.files[f] for f in root.files]
+    if not kids:
+        return ""
+    prompt = (
+        "下面是一个文档库的顶层内容。用一句中文说明这个库**实际**包含什么，"
+        "便于判断某个问题该不该查它。只输出这句话，不要复述目录名。\n\n"
+        f"{_child_listing(m, root, 40)}"
+    )
+    try:
+        return llm.chat(prompt, model=model, max_tokens=400).strip()
+    except Exception as exc:  # noqa: BLE001
+        print(f"    ! 语料摘要失败: {exc}")
+        return ""
+
+
+def corpus_fingerprint(m: Manifest) -> str:
+    """Hash of everything `corpus_summary` is derived from.
+
+    Lets the caller regenerate the corpus summary only when its inputs moved,
+    the same way directory summaries are invalidated by their children.
+    """
+    root = m.dirs.get("")
+    if root is None:
+        return ""
+    h = hashlib.sha1()
+    for rp in sorted(root.child_dirs):
+        d = m.dirs[rp]
+        h.update(f"{rp}|{d.topic}|{d.summary}\n".encode("utf-8"))
+    for rp in sorted(root.files):
+        h.update(f"{rp}|{m.files[rp].summary}\n".encode("utf-8"))
+    return h.hexdigest()[:16]
+
+
+def _ancestor_dirs(rel_path: str) -> list[str]:
+    """`2024/annual/A.md` -> `["2024", "2024/annual"]`.
+
+    Used to propagate staleness: a directory's summary is derived from its
+    children's summaries, so any changed descendant makes it stale.
+    """
+    parts = rel_path.split("/")[:-1]
+    return ["/".join(parts[:i + 1]) for i in range(len(parts))]
+
+
 def summarize_files(m: Manifest, index_dir: Path, model: str, workers: int,
                     force: bool = False) -> int:
     """One line per file, then one per directory (bottom-up)."""
     todo = [f for f in m.files.values() if force or not f.summary]
+    before = {f.rel_path: f.summary for f in todo}
     print(f"  文件摘要: {len(todo)} 待生成 / {len(m.files)} 总数")
 
     def one(fe: FileEntry) -> tuple[str, str]:
@@ -293,37 +534,66 @@ def summarize_files(m: Manifest, index_dir: Path, model: str, workers: int,
             f"开头内容:\n{head}"
         )
         try:
-            return fe.rel_path, llm.chat(prompt, model=model, max_tokens=200).strip()
+            return fe.rel_path, llm.chat(prompt, model=model, max_tokens=400).strip()
         except Exception as exc:  # noqa: BLE001
             print(f"    ! {fe.rel_path}: {exc}")
             return fe.rel_path, ""
 
+    changed_files: set[str] = set()
     if todo:
+        done: list[tuple[str, str]] = []
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futs = {pool.submit(one, fe): fe for fe in todo}
             for i, fut in enumerate(as_completed(futs), 1):
                 rp, s = fut.result()
+                done.append((rp, s))
                 if s:
                     m.files[rp].summary = s
                 if i % 25 == 0 or i == len(todo):
                     print(f"    {i}/{len(todo)}")
+        # Only an actually-different summary invalidates the parents; a
+        # regeneration that produced the same text changes nothing upstream.
+        changed_files = {rp for rp, s in done if s and s != before.get(rp, "")}
 
-    # directories: deepest first so children are ready
+    # A directory with a summary is still stale when something underneath it
+    # changed — otherwise editing a file leaves every ancestor describing the
+    # previous version, silently.
+    stale_dirs: set[str] = set()
+    for rp in changed_files:
+        stale_dirs.update(_ancestor_dirs(rp))
+
+    # `not d.topic` covers the migration from before topics existed: a directory
+    # with a summary but no label gets one on the next pass, then stops matching.
     dirs_todo = [d for d in m.dirs.values()
-                 if d.rel_path != "" and (force or not d.summary)]
+                 if d.rel_path != "" and (force or not d.summary
+                                          or not d.topic
+                                          or d.rel_path in stale_dirs)]
     dirs_todo.sort(key=lambda d: -d.rel_path.count("/"))
-    print(f"  目录摘要: {len(dirs_todo)} 待生成")
+    stale_count = sum(1 for d in dirs_todo if d.summary)
+    extra = f"，其中 {stale_count} 个因内容变化重建" if stale_count else ""
+    print(f"  目录摘要: {len(dirs_todo)} 待生成{extra}")
     for i, d in enumerate(dirs_todo, 1):
-        kids = [m.dirs[c] for c in d.child_dirs] + [m.files[f] for f in d.files]
-        listing = "\n".join(f"- {k.name}: {k.summary or '(无摘要)'}" for k in kids[:60])
+        listing = _child_listing(m, d, 60)
+        # Content first, name last and marked as unreliable: folder names are
+        # chosen for the org chart, not for what ended up inside, and a name
+        # placed first anchors the model into repeating its framing.
         prompt = (
-            "用一句中文概括这个目录里都有什么内容，便于检索时判断是否相关。"
-            "只输出这句话。\n\n"
-            f"目录名: {d.name}\n共 {d.n_files} 个文件、{d.n_dirs} 个子目录\n"
-            f"直接内容:\n{listing}"
+            "下面是一个目录的直接内容。输出 JSON：\n"
+            '{"topic": "…", "summary": "…"}\n'
+            "- topic：不超过 18 字的检索标签，说明这个目录**实际**装的是什么\n"
+            "- summary：一句话（40 字内）概括内容，便于判断相关性\n"
+            "目录名可能不准确，一律以内容为准。只输出 JSON。\n\n"
+            f"直接内容（共 {d.n_files} 个文件、{d.n_dirs} 个子目录）:\n{listing}\n\n"
+            f"（仅供参考的目录名: {d.name}）"
         )
         try:
-            d.summary = llm.chat(prompt, model=model, max_tokens=200).strip()
+            ans = llm.chat_json(prompt, model=model, max_tokens=400)
+            if isinstance(ans, dict):
+                d.summary = str(ans.get("summary") or "").strip()
+                topic = str(ans.get("topic") or "").strip()[:24]
+                # Never leave it empty: an empty topic would look like "never
+                # generated" and be rebuilt on every pass.
+                d.topic = topic or d.summary[:24]
         except Exception as exc:  # noqa: BLE001
             print(f"    ! {d.rel_path}: {exc}")
         if i % 25 == 0 or i == len(dirs_todo):
@@ -365,7 +635,7 @@ def summarize_chapters(m: Manifest, index_dir: Path, model: str, workers: int,
             f"文件: {fe.name}\n章节: {ch.title}\n\n内容:\n{body[:2400]}"
         )
         try:
-            return ch, llm.chat(prompt, model=model, max_tokens=180).strip()
+            return ch, llm.chat(prompt, model=model, max_tokens=400).strip()
         except Exception as exc:  # noqa: BLE001
             return ch, ""
 
@@ -472,25 +742,25 @@ def _build(root: Path, out: Path, includes: set[str], excludes: set[str],
     if existing.is_file() and (args.summarize_files or args.summarize_chapters):
         print(f"载入已有索引 {existing}")
         m = Manifest.load(out)
-        fresh, trees = scan(root, includes, excludes, args.max_files, extractor)
+        fresh, trees = scan(root, includes, excludes, args.max_files, extractor,
+                            previous=m)
         added, removed = [], []
         for rp, fe in fresh.files.items():
-            if rp in m.files:
-                old = m.files[rp]
-                fe.summary = old.summary
-                fe.meta = old.meta
-                changed = (fe.size != old.size or fe.mtime != old.mtime)
-                if changed:
-                    # content changed: rebuild this tree (its chapter
-                    # summaries are stale, so they are dropped with it)
-                    chs, lines = trees[rp]
-                    m.save_tree(out, fe.tree_key, chs,
-                                lines or None)
-                    added.append(rp + " (changed)")
+            old = m.files.get(rp)
+            if old is not None and rp not in trees:
+                # unchanged: scan already carried the old entry over, summary
+                # and all, and its tree is still on disk. Nothing to do.
+                pass
+            elif old is not None:
+                # content changed. The old summary describes text that no
+                # longer exists, so it must NOT be carried over — otherwise
+                # routing reasons over a description of the previous version.
+                chs, lines = trees[rp]
+                m.save_tree(out, fe.tree_key, chs, lines or None)
+                added.append(rp + " (changed)")
             else:
                 chs, lines = trees[rp]
-                m.save_tree(out, fe.tree_key, chs,
-                            lines or None)
+                m.save_tree(out, fe.tree_key, chs, lines or None)
                 added.append(rp)
             m.files[rp] = fe
         for rp, d in fresh.dirs.items():

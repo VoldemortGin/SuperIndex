@@ -736,3 +736,59 @@ uvx twine upload dist/*      # 需要 PyPI token（TWINE_USERNAME=__token__ / TW
 
 - 源码入口薄壳 `scripts/superindex.py` 改名为 `scripts/si.py`：原名与包同名，运行 `scripts/` 下其他脚本时会遮蔽 `superindex` 包（报 `'superindex' is not a package`）。上文各段里的 `uv run scripts/superindex.py ...` 现在一律写作 `uv run python scripts/si.py ...`（依赖 `uv sync` 以 editable 方式安装的包）；其余脚本同样用 `uv run python scripts/<name>.py` 运行。
 - 文档与帮助文字修正：README / `.env.example` 写明 `superindex.nav` 与部分实验脚本有各自的默认模型（nav 兜底 `deepseek/deepseek-flash`，不读 `SUPERINDEX_BASE_URL`）；nav 的 PDF 抽取说明改为 Azure DI → 文本层；quickstart 的样例批量题集补索引第二份样例；打包体积按实测更新；`docs/engine/naming-rules.md` 标注为上游参考；CLI `--help` 补默认值；网页文档计数文字修正。
+
+## 2026-10-01 合入上游（yongsoft/SuperIndex，merge-base `5863f86` 之后 29 个提交）
+
+上游这段时间把 `nav/` 做成了一个目录驱动的 Web UI，并补了日志、路由策略、重试等基础设施。我方按 `superindex.*` 包结构合入代码，**沿用我方的目录布局与品牌约定**。下文命令一律是我方写法（`uv run python scripts/si.py <子命令>`，或 pip 安装后的 `superindex <子命令>`）。
+
+### 新增内容与落点
+
+| 能力 | 我方位置 | 说明 |
+|---|---|---|
+| 目录驱动 Web UI | `superindex/webapp/nav_server.py` + `static/nav.html`；`superindex nav-serve [--host] [--port 8787] [--no-watch] [--watch-interval 30]`（或 `uv run python -m superindex.webapp.nav_server`） | 注册目录、看索引状态、按目录提问、watcher 自动跟进。与 `superindex serve`（`superindex_store/` 文档库上的 agent 问答，`server.py` + `index.html`）并存、互不影响 |
+| 多语料注册表 + watcher | `superindex/nav/registry.py` | 增量扫描（size+mtime 未变不重抽，避免每轮把 PDF 重发 Azure DI）；改过的文件丢弃旧摘要；watcher 沿用语料自身的「是否生成描述」设置；目录消失标 `error`；清理孤儿章节树 |
+| 多语料路由 | `superindex/nav/route.py` | `merge_manifests()` 把 N 个语料合成一棵树（每个语料一个顶层伪目录），第 1 级仍是一次调用；`MultiNavigator`；上下文按相关度截断 |
+| 结构化调试日志 | `superindex/nav/debuglog.py`、`scripts/07_logs.py` | `queries.jsonl` / `errors.jsonl` 共享 id；三种终态 `finish` / `abort`（没找到，只写 queries）/ `fail`（写两边）；客户端断开记为 abort（cancel），不写 errors |
+| 业务路由策略 | `superindex/nav/policy.py`、`config/routing_policy.yaml` | exclude（唯一硬过滤，按路径整段匹配）/ weights / scopes / periods / aliases / 按语料覆盖；**空策略 = 原行为**；坏配置退回默认并记 `errors.jsonl`（`where: policy.load`）；每次提问重新读取 |
+| 示例问题 + 历史问题 | `superindex/nav/suggest.py`；`GET /api/recent-questions` | 示例问题由语料描述/目录主题/文件摘要/章节标题生成，缓存在注册表、随内容失效；输入框聚焦时下拉历史问题 |
+| 思考过程流式 + 可取消 | `nav_server.py` 的 `/api/ask`（SSE `thinking` 事件） | 检索路径与思考同框、定高、答案开始即收起；「发送」→「停止」 |
+| 章节选择并行 | `route.py` 的 `sections_for_all()` | 每个任务单独 `contextvars.copy_context()`（线程池不继承 contextvars，否则并行调用不进埋点） |
+| 每次 LLM 调用埋点 | `superindex/nav/llm.py` | `llm_calls`（label/tag/ms/attempt_ms/attempts/retried/prompt_chars）+ `llm_n_calls` / `llm_n_retried` / `llm_ms`；界面 `llmstats` 事件。`llm_ms` 是和不是墙钟 |
+| LLM 截断重试 | `superindex/nav/llm.py` | `finish_reason=length` 或空内容时 `max_tokens` 翻倍（上限 `NAV_MAX_TOKEN_CEILING`，默认 16384）并去掉 reasoning；传输错误原样重试；流式失败的非流式回退也用翻倍后的预算 |
+| litellm 冷启动 | `superindex/nav/llm.py` | import 前设 `LITELLM_LOCAL_MODEL_COST_MAP=true`（否则 import 时联网拉价格表，代理环境超时数秒），并在 nav-serve 启动时 `llm.warmup()` 预付 import 开销 |
+| 检索别名与语料级摘要 | `superindex/nav/build.py` / `store.py` / `route.py` | 目录 `topic` 作检索别名，语料级内容摘要；回退打分纳入摘要，中文用二元组匹配 |
+| PDF 建树 | `superindex/nav/build.py` | Azure DI → 文本层 + `superindex.engine.flash` → 每页一节点兜底。PyInstaller 包不含 flash，会自动退到兜底 |
+
+nav-serve 接口：GET `/api/state`、`/api/browse`、`/api/logs?kind=queries|errors&limit=N&failed=1`、`/api/recent-questions`、`/api/corpora/<id>/tree`、`/api/health`；POST `/api/corpora`、`/api/corpora/<id>/reindex`、`/api/ask`（SSE：`policy` / `stage` / `nav` / `llmstats` / `sources` / `thinking` / `answer` / `error` / `done`）；PATCH / DELETE `/api/corpora/<id>`。
+
+相关环境变量：`SUPERINDEX_REASONING_EFFORT`（nav-serve 回答，默认 `low`）、`SUPERINDEX_ANSWER_MAX_TOKENS`（4096）、`SUPERINDEX_INDEX_WORKERS`（6）；nav 模型 `NAV_MODEL` > `SUPERINDEX_CHAT_MODEL` > `deepseek/deepseek-flash`，`NAV_REASONING_EFFORT` 默认 none。
+
+### 布局（与上游不同，以此为准）
+
+- **样例语料仍在 `samples/test_corpus/`**（中国太保 / 中国平安 / 友邦保险 / 行业汇总）；上游把它搬到 `data/` 的改名已撤销。
+- **投放区**（每个直接子目录自动注册为语料）默认就是源码仓库里的 `samples/test_corpus/`，源码 checkout 开箱可演示；pip / 打包环境下该目录不存在，就不自动发现任何东西。用 `SUPERINDEX_DATA_DIR` 指向自己的目录。项目代码树内、投放区之外的目录不允许注册。
+- **注册表与索引在 `<store>/nav/`**：`superindex_store/nav/registry.json`、`superindex_store/nav/corpora/<id>/{manifest.json,trees/}`（`<store>` = `SUPERINDEX_STORE`，默认工作目录下 `superindex_store/`，打包版为 exe 所在目录）；`SUPERINDEX_INDEX_DIR` 可单独改。没有上游的 `index/` 目录与 `index/README.md`、`data/README.md`。
+- **调试日志** `results/logs/queries.jsonl`、`errors.jsonl`（相对工作目录 / exe 目录）；`SUPERINDEX_LOG_DIR` 改位置、`SUPERINDEX_DEBUG_LOG=0` 关闭、`SUPERINDEX_LOG_MAX_BYTES` 轮转（默认 16MB）。
+- **路由策略**查找顺序：`SUPERINDEX_ROUTING_POLICY` → 工作目录 `config/routing_policy.yaml` → exe 所在目录 `config/` → 随代码发布的那份（源码仓库根 / PyInstaller 包内，`packaging/superindex.spec` 已把它打进 `config/`）。
+- 实验脚本产物沿用原位置（如 `scripts/02_qa_test.py` 的 `results/pageindex_store`、`results/qa_results.json`）。
+
+### 验证
+
+```bash
+uv run pytest tests -q                                   # 187 passed
+uv run python tests/test_policy.py                       # 上游的 5 个脚本式测试也可单独跑：
+                                                         # test_registry / test_debuglog / test_llm_retry / test_policy / test_suggest
+uv run python -m superindex.nav.route samples/test_index "x" --show-policy   # 看生效的路由策略
+uv run python -m superindex.nav.route samples/test_index "友邦保险 2024 年全年的每股股息是多少？"
+uv run python scripts/si.py nav-serve                    # http://127.0.0.1:8787
+uv run python scripts/07_logs.py --stats                 # 问过几题后看日志
+```
+
+新增 `tests/conftest.py`：让上游脚本式测试里的 `check()` 失败在 pytest 下也算失败。依赖无新增（PyYAML 早已在 `pyproject.toml`）。
+
+### 有意不采纳的上游内容
+
+- README 重写为「基于 PageIndex 的增强项目」的定位，以及 vendored `PageIndex/` 目录、`requirements.txt` + `pip install -e PageIndex --no-deps` 的安装方式（我方引擎已并入 `superindex.engine`，云端功能已删除，用 uv / pip 安装 `superindex`）。
+- 上游界面的企业品牌化改版（品牌名、logo、品牌配色）：`nav.html` 未带入品牌元素。
+- `data/` 投放区默认值、`index/` 产品索引目录、`results/trees` 等布局调整（见上一小节）。
+- `docs/ArchitectureIntro.html` 与 `docs/diagrams/` 采纳，只把路径/包名改成我方写法、去掉与我方不符的表述（vendored `PageIndex/`、`data/` / `index/` 布局等）；PNG 由旧版页面渲染、未重新生成（`layer-not-a-fork` 仍画着 vendored `PageIndex/` 分层，部分图用的是上游的示例目录名），README 只引用了与我方相符的两张。

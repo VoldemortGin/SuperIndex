@@ -5,15 +5,20 @@
 # ─── source PDFs ───────────────────────────────────────────────────────────
 # Source PDFs under data/ are fetched by the download script next to them.
 data/**/*.pdf
+data/*.pdf
 
 # ─── generated outputs ─────────────────────────────────────────────────────
-# Everything under results/ is reproducible from the scripts. The PageIndex
-# doc store and the offline trees cost a little API spend to rebuild, but they
-# are build output and do not belong in git.
+# Everything under results/ is reproducible from the scripts: logs and QA
+# result files. Build output, does not belong in git.
 results/*
 !results/.gitkeep
 # Default store of `superindex` run from the repository root.
 superindex_store/
+
+# ─── local development tooling ─────────────────────────────────────────────
+# Local development-tooling state. Not part of the library: it stays on disk
+# but out of the repository.
+.workbuddy-ai/
 
 # ─── python ────────────────────────────────────────────────────────────────
 __pycache__/
@@ -26,6 +31,7 @@ dist/
 .venv/
 venv/
 env/
+.python-version
 
 # ─── macOS ─────────────────────────────────────────────────────────────────
 .DS_Store

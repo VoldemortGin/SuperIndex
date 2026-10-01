@@ -35,6 +35,9 @@ def _keep_litellm(name: str) -> bool:
 datas = [
     (str(PKG / "webapp" / "static"), "superindex/webapp/static"),
     (str(PKG / "engine" / "config.yaml"), "superindex/engine"),
+    # The shipped routing policy; superindex.nav.policy finds it under
+    # sys._MEIPASS/config/ when no copy sits next to the executable.
+    (str(ROOT / "config" / "routing_policy.yaml"), "config"),
 ]
 # Tokenizer files (tiktoken cl100k/o200k encodings, keyed by their URL hash —
 # litellm points TIKTOKEN_CACHE_DIR at them, so no download) and the offline
@@ -55,6 +58,7 @@ hiddenimports = [
     "tiktoken_ext.openai_public",
     "agents.extensions.models.litellm_model",
     "superindex.webapp.server",
+    "superindex.webapp.nav_server",
     "superindex.cli",
     "superindex.md_ingest",
     "superindex.bm25",
@@ -70,6 +74,12 @@ hiddenimports = [
     "superindex.nav.build",
     "superindex.nav.store",
     "superindex.nav.llm",
+    "superindex.nav.route",
+    "superindex.nav.policy",
+    "superindex.nav.registry",
+    "superindex.nav.suggest",
+    "superindex.nav.debuglog",
+    "yaml",
 ]
 # superindex.engine/__init__ and litellm load most modules lazily (module __getattr__,
 # string imports), which static analysis cannot follow.

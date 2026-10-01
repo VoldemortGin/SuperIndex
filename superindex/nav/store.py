@@ -36,6 +36,10 @@ class DirEntry:
     child_dirs: list[str] = field(default_factory=list)
     files: list[str] = field(default_factory=list)
     summary: str = ""
+    # A short retrieval label generated from the contents. Folder names are
+    # often chosen for the organisation chart rather than for the documents
+    # inside, so routing shows this instead when it is available.
+    topic: str = ""
     n_files: int = 0          # recursive
     n_dirs: int = 0           # recursive
 
@@ -101,6 +105,10 @@ class Chapter:
 class Manifest:
     root: str = ""
     built_at: float = 0.0
+    # Which tree-building logic produced these trees. Bumping it invalidates
+    # every cached tree, so improving extraction cannot silently leave old
+    # shapes in place just because the source files did not change.
+    builder_version: int = 0
     dirs: dict[str, DirEntry] = field(default_factory=dict)
     files: dict[str, FileEntry] = field(default_factory=dict)
 
@@ -112,6 +120,7 @@ class Manifest:
             "version": 1,
             "root": self.root,
             "built_at": self.built_at,
+            "builder_version": self.builder_version,
             "dirs": {k: asdict(v) for k, v in self.dirs.items()},
             "files": {k: asdict(v) for k, v in self.files.items()},
         }
@@ -120,7 +129,9 @@ class Manifest:
     @staticmethod
     def load(index_dir: Path) -> "Manifest":
         raw = json.loads((Path(index_dir) / "manifest.json").read_text(encoding="utf-8"))
-        m = Manifest(root=raw.get("root", ""), built_at=raw.get("built_at", 0.0))
+        m = Manifest(root=raw.get("root", ""),
+                     built_at=raw.get("built_at", 0.0),
+                     builder_version=int(raw.get("builder_version", 0)))
         for k, v in (raw.get("dirs") or {}).items():
             m.dirs[k] = DirEntry(**v)
         for k, v in (raw.get("files") or {}).items():

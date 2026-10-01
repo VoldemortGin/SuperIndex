@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SuperIndex 目录问答</title>
+<style>
+/* Neutral palette: one accent colour (--accent*) reserved for the brand dot,
+   the active corpus, the primary action and one accent rule. */
+:root{
+  --accent:#C8102E; --accent-600:#A30D25; --accent-700:#800A1D;
+  --accent-50:#FDF2F4; --accent-100:#F9DDE1;
+  --ink:#333D47; --ink-800:#232A32; --ink-600:#5A6672; --ink-400:#8892A0;
+  --ink-300:#B6BEC7; --ink-200:#D2D6DA; --ink-100:#E8EAEC; --ink-50:#F5F6F7;
+  --surface:#FFFFFF;
+  --ok:#1F7A4D; --ok-soft:#E9F5EF;
+  --warn:#9A6206; --warn-soft:#FDF3E2;
+  --err:#A30D25; --err-soft:#FDF2F4;
+  --r:12px;
+  --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root{
+  --accent:#E8455F; --accent-600:#C8102E; --accent-700:#A30D25;
+  --accent-50:#3A1B22; --accent-100:#4A222B;
+  --ink:#E8EAEC; --ink-800:#F5F6F7; --ink-600:#B6BEC7; --ink-400:#8892A0;
+  --ink-300:#5A6672; --ink-200:#3D4650; --ink-100:#2C343D; --ink-50:#232A32;
+  --surface:#1A2027;
+  --ok:#5DCAA5; --ok-soft:#1B332A;
+  --warn:#E5A860; --warn-soft:#33281A;
+  --err:#F09595; --err-soft:#3A1F26;
+}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--ink-50);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased}
+.app{display:flex;flex-direction:column;height:100%}
+
+.banner{
+  position:relative;flex:none;overflow:hidden;
+  background:linear-gradient(115deg,var(--ink) 0%,var(--ink-800) 100%);
+  color:#fff;padding:22px 26px 20px;
+}
+.banner::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--accent)}
+.banner::after{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(620px 200px at 82% -40%,rgba(200,16,46,.22),transparent 70%);
+}
+.banner-in{position:relative;display:flex;align-items:center;gap:22px;flex-wrap:wrap}
+.logo{width:12px;height:12px;flex:none;border-radius:50%;background:var(--accent);box-shadow:0 0 0 4px rgba(200,16,46,.28)}
+.brand h1{margin:0;font-size:20px;font-weight:600;letter-spacing:.2px}
+.brand p{margin:3px 0 0;font-size:13px;color:rgba(255,255,255,.68)}
+.chips{display:flex;gap:9px;margin-left:auto;flex-wrap:wrap}
+.chip{
+  background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.18);
+  border-radius:99px;padding:5px 13px;font-size:12.5px;color:rgba(255,255,255,.9);
+  display:flex;align-items:center;gap:7px;white-space:nowrap;
+}
+.chip b{font-weight:600;color:#fff}
+.dot{width:7px;height:7px;border-radius:50%;background:#5DCAA5;flex:none}
+.dot.off{background:rgba(255,255,255,.4)}
+
+.body{flex:1;display:grid;grid-template-columns:348px 1fr;min-height:0}
+aside{background:var(--surface);border-right:1px solid var(--ink-100);display:flex;flex-direction:column;min-height:0}
+.aside-hd{
+  flex:none;padding:14px 16px;border-bottom:1px solid var(--ink-100);
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+}
+.aside-hd h2{margin:0;font-size:12.5px;font-weight:600;color:var(--ink-600);letter-spacing:.7px;text-transform:uppercase}
+.list{flex:1;overflow-y:auto;padding:10px}
+main{display:flex;flex-direction:column;min-width:0;min-height:0}
+
+.card{border:1px solid var(--ink-100);border-radius:var(--r);margin-bottom:10px;background:var(--surface);overflow:hidden;transition:border-color .12s,box-shadow .12s}
+.card.on{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-50)}
+.card.bad{border-color:var(--err)}
+.row{display:flex;align-items:center;gap:10px;padding:12px 13px}
+.row:hover{background:var(--ink-50)}
+.cb{width:17px;height:17px;flex:none;cursor:pointer;accent-color:var(--accent)}
+.cb:disabled{opacity:.35;cursor:not-allowed}
+.nm{flex:1;min-width:0;font-size:15px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nm .path{display:block;font-weight:400;font-size:12.5px;color:var(--ink-400);font-family:var(--mono);margin-top:2px}
+.tag{font-size:11.5px;padding:2px 9px;border-radius:99px;font-weight:600;flex:none;white-space:nowrap;letter-spacing:.2px}
+.tag.ready{background:var(--ok-soft);color:var(--ok)}
+.tag.indexing,.tag.pending{background:var(--warn-soft);color:var(--warn)}
+.tag.error{background:var(--err-soft);color:var(--err)}
+.caret{
+  flex:none;width:22px;height:22px;border-radius:6px;cursor:pointer;border:0;background:transparent;
+  color:var(--ink-400);font-size:11px;display:grid;place-items:center;transition:transform .12s,background .12s;
+}
+.caret:hover{background:var(--ink-100);color:var(--ink)}
+.caret.open{transform:rotate(90deg);color:var(--accent)}
+.meta{padding:0 13px 11px;font-size:12.5px;color:var(--ink-400);display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+/* 侧栏卡片的索引进度。类名原先和对话区的 .stage 撞车，结果这里的琥珀色被
+   覆盖成灰色、还凭空多出 7px 外边距 —— 各归各的名字。 */
+.cstage{padding:0 13px 11px;font-size:12.5px;color:var(--warn)}
+.errmsg{margin:0 13px 11px;padding:8px 11px;border-radius:8px;background:var(--err-soft);color:var(--err);font-size:12.5px}
+/* 卡片操作常驻在首行，收成图标按钮。原先靠 :hover 展开一整行，那会把下方
+   所有卡片一起顶下去 —— 这就是「hover 就跳」的来源。常驻则零位移。 */
+.acts{display:flex;gap:2px;flex:none;align-items:center}
+.ib{
+  flex:none;width:24px;height:24px;padding:0;border-radius:6px;border:1px solid transparent;
+  background:transparent;color:var(--ink-400);font-family:var(--sans);font-size:13px;line-height:1;
+  display:grid;place-items:center;cursor:pointer;transition:background .12s,color .12s,border-color .12s;
+}
+.ib:hover{background:var(--ink-100);color:var(--ink)}
+.ib svg{width:14px;height:14px;display:block}
+.ib:disabled{opacity:.35;cursor:not-allowed}
+/* 索引进行中时让重建图标脉动 —— 否则禁用态只是一个「变灰了」的图标，
+   看不出是在跑还是坏了。复用过程框圆点的 pulse。 */
+.ib:disabled svg{animation:pulse 1.4s ease-in-out infinite}
+.ib.danger:hover{background:var(--err-soft);color:var(--err);border-color:var(--err)}
+
+.tree{border-top:1px solid var(--ink-100);background:var(--ink-50);padding:8px 0;max-height:360px;overflow-y:auto}
+.tn{display:flex;align-items:center;gap:7px;padding:3px 13px;font-size:13px;color:var(--ink-600);cursor:default}
+.tn.dir{cursor:pointer;font-weight:500}
+.tn.dir:hover{background:var(--surface);color:var(--ink)}
+.tn .k{width:13px;flex:none;color:var(--ink-400);font-size:10px}
+.tn .t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tn .c{margin-left:auto;font-size:11.5px;color:var(--ink-400);font-family:var(--mono);flex:none;padding-left:8px}
+.tn .no{width:5px;height:5px;border-radius:50%;background:var(--ink-300);flex:none}
+.tempty{padding:10px 14px;font-size:13px;color:var(--ink-400)}
+
+.chat{flex:1;overflow-y:auto;padding:26px 32px}
+.msg{margin-bottom:24px;max-width:860px}
+.who{font-size:12px;color:var(--ink-400);margin-bottom:7px;letter-spacing:.4px;text-transform:uppercase;font-weight:600}
+.msg.user .bubble{
+  background:var(--ink);color:#fff;border-radius:14px 14px 4px 14px;
+  padding:11px 16px;display:inline-block;max-width:100%;white-space:pre-wrap;font-size:15px;
+}
+.msg.bot .bubble{white-space:pre-wrap;word-wrap:break-word;font-size:15px;line-height:1.75}
+/* 思考过程：检索路径框里的一个分区。等宽小字、灰、可滚动 ——
+   它是过程，答案才是结果。 */
+.think{
+  flex:0 0 46%;min-height:0;display:flex;flex-direction:column;overflow:hidden;
+  border-top:1px dashed var(--ink-100);
+}
+.think[hidden]{display:none}
+.think-hd{flex:none;font-size:12px;color:var(--ink-400);font-weight:600;letter-spacing:.3px;padding:9px 14px 4px}
+.think-body{
+  flex:1;min-height:0;
+  font-family:var(--mono);font-size:12.5px;color:var(--ink-400);line-height:1.7;
+  padding:0 14px 12px;overflow-y:auto;white-space:pre-wrap;word-break:break-word;
+}
+/* 过程框的高度是写死的，内容在内部各自滚动。以前它是「内容多高就多高」，
+   于是每来一条 nav 事件、思考区从隐藏变显示，整页就被往下顶一次 ——
+   答案还在流式输出，页面却一直在动。高度恒定 = 零位移。
+   思考区未出现时 .steps 自动占满，所以不会留一块空白。 */
+.trace-body{height:clamp(210px,30vh,300px);display:flex;flex-direction:column;overflow:hidden}
+.trace{border:1px solid var(--ink-100);border-radius:var(--r);margin:0 0 14px;overflow:hidden;background:var(--surface)}
+.trace summary{
+  cursor:pointer;font-size:13px;color:var(--ink-600);padding:10px 14px;user-select:none;
+  display:flex;align-items:center;gap:9px;background:var(--ink-50);font-weight:600;
+}
+.trace summary::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--accent);flex:none}
+/* 还在跑的时候让圆点脉动，一眼看出没卡住 */
+.trace.live summary::before{animation:pulse 1.1s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.25;transform:scale(.8)}50%{opacity:1;transform:scale(1.15)}}
+.steps{flex:1 1 auto;min-height:0;overflow-y:auto;padding:8px 14px 12px}
+.step{font-size:13px;color:var(--ink-600);font-family:var(--mono);padding:4px 0;line-height:1.65}
+.step b{color:var(--ink);font-weight:600}
+.step .fb{color:var(--warn)}
+.step.pol{color:var(--ink-400);border-bottom:1px dashed var(--ink-100);margin-bottom:4px;padding-bottom:7px}
+/* 引用来源：同一份文档常被命中好几个章节。以前每处来源各占一行，把长路径
+   重复四五遍；现在按文档合并 —— 一份文档一行，章节并排成小标签，路径只留
+   「语料 / 文件名」，中间的目录层级进 tooltip。行高也从 1.9 收到 1.55。 */
+.srcs{margin-top:14px;border-top:1px solid var(--ink-100);padding-top:10px;font-size:12.5px;color:var(--ink-400);font-family:var(--mono);line-height:1.55}
+.srcs:empty{display:none}
+.src-hd{margin-bottom:5px;letter-spacing:.2px}
+.src-row{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;padding:2px 0}
+.src-f{flex:none;color:var(--ink-600);font-weight:600}
+.src-f b{font-weight:600;color:var(--ink-400);font-size:11px;margin-left:5px}
+.src-secs{display:flex;gap:5px;flex-wrap:wrap;min-width:0}
+.src-s{background:var(--ink-50);border:1px solid var(--ink-100);border-radius:6px;padding:1px 7px;white-space:nowrap}
+.src-s i{font-style:normal;color:var(--ink-300);margin-left:4px}
+.src-s.more{background:transparent;border-style:dashed}
+.stage{font-size:12.5px;color:var(--ink-400);font-family:var(--mono);margin:7px 0}
+.empty{color:var(--ink-400);font-size:14px;text-align:center;padding:44px 20px;line-height:2}
+.composer{flex:none;border-top:1px solid var(--ink-100);padding:15px 32px 18px;background:var(--surface)}
+.crow{display:flex;gap:10px;align-items:flex-end;max-width:860px}
+textarea{
+  flex:1;min-width:0;font:inherit;font-size:15px;padding:11px 14px;border-radius:11px;border:1px solid var(--ink-200);
+  background:var(--surface);color:var(--ink);resize:none;min-height:46px;max-height:180px;line-height:1.55;
+}
+textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-50)}
+textarea::placeholder{color:var(--ink-300)}
+.scope{font-size:12.5px;color:var(--ink-400);margin-top:9px;max-width:860px}
+.sugg{display:flex;gap:8px;flex-wrap:wrap;max-width:860px;margin-bottom:10px}
+.sugg:empty{display:none}
+.sugg-btn{
+  font:inherit;font-size:13px;line-height:1.4;padding:6px 13px;border-radius:999px;cursor:pointer;
+  border:1px solid var(--ink-200);background:var(--surface);color:var(--ink-600);
+  text-align:left;transition:background .12s,border-color .12s,color .12s;
+}
+.sugg-btn:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-50)}
+.sugg-btn:focus-visible{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-50)}
+.btn{
+  font:inherit;font-size:13.5px;font-weight:600;padding:8px 16px;border-radius:10px;border:1px solid var(--ink-200);
+  background:var(--surface);color:var(--ink);cursor:pointer;white-space:nowrap;transition:background .12s,border-color .12s;
+}
+.btn:hover{background:var(--ink-50);border-color:var(--ink-300)}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.pri:hover{background:var(--accent-600);border-color:var(--accent-600)}
+.btn.stop{background:var(--ink);border-color:var(--ink);color:#fff}
+.btn.stop:hover{background:var(--ink-800);border-color:var(--ink-800)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn.sm{font-size:12.5px;padding:5px 11px;border-radius:8px}
+
+dialog{border:1px solid var(--ink-100);border-radius:14px;padding:0;background:var(--surface);color:var(--ink);width:min(660px,92vw);max-height:80vh}
+dialog::backdrop{background:rgba(35,42,50,.5)}
+.dhd{padding:15px 20px;border-bottom:1px solid var(--ink-100);display:flex;justify-content:space-between;align-items:center}
+.dhd h3{margin:0;font-size:16px;font-weight:600}
+.dbd{padding:16px 20px;max-height:52vh;overflow-y:auto}
+.dft{padding:13px 20px;border-top:1px solid var(--ink-100);display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.hint{font-size:13px;color:var(--ink-600);background:var(--ink-50);border-left:3px solid var(--accent);border-radius:0 8px 8px 0;padding:11px 13px;line-height:1.7}
+.hint code{font-family:var(--mono);font-size:12px;background:var(--surface);padding:2px 6px;border-radius:5px;border:1px solid var(--ink-100)}
+.hint strong{font-weight:600;color:var(--ink)}
+.crumb{font-family:var(--mono);font-size:13px;color:var(--ink-600);word-break:break-all;flex:1}
+.dirs{list-style:none;margin:12px 0 0;padding:0}
+.dirs li{padding:9px 12px;border-radius:9px;cursor:pointer;font-size:14px;display:flex;gap:9px;align-items:center}
+.dirs li:hover{background:var(--ink-50)}
+.dirs li .i{color:var(--ink-400);font-family:var(--mono);font-size:12px}
+label.chk{display:flex;gap:8px;align-items:center;font-size:13px;color:var(--ink-600);cursor:pointer}
+#alias{font:inherit;font-size:13px;padding:7px 11px;border-radius:9px;border:1px solid var(--ink-200);background:var(--surface);color:var(--ink);width:160px}
+#alias:focus{outline:none;border-color:var(--accent)}
+.err{color:var(--err);font-size:13px;margin-top:8px}
+.stopped{color:var(--ink-400);font-size:13px;margin-top:8px}
+/* 历史问题下拉 — 聚焦输入框时弹出，点击填入 */
+.q-wrap{position:relative;flex:1;display:flex;min-width:0}
+.q-dropdown{
+  position:absolute;bottom:calc(100% + 4px);left:0;right:0;
+  background:var(--surface);border:1px solid var(--ink-200);border-radius:10px;
+  box-shadow:0 4px 16px rgba(0,0,0,.12);max-height:200px;overflow-y:auto;z-index:10;
+}
+.q-dropdown[hidden]{display:none}
+.q-dropdown button{
+  display:block;width:100%;text-align:left;padding:9px 14px;
+  border:0;background:transparent;color:var(--ink);font:inherit;font-size:14px;
+  cursor:pointer;border-bottom:1px solid var(--ink-50);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.q-dropdown button:last-child{border-bottom:0}
+.q-dropdown button:hover{background:var(--accent-50);color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="banner">
+      <div class="banner-in">
+        <div class="logo"></div>
+        <div class="brand">
+          <h1>SuperIndex</h1>
+          <p>Structure-based retrieval across your document directories</p>
+        </div>
+        <div class="chips" id="chips"></div>
+      </div>
+    </header>
+
+  <div class="body">
+    <aside>
+      <div class="aside-hd">
+        <h2>Corpora</h2>
+        <button class="btn sm" id="addBtn">+ Add</button>
+      </div>
+      <div class="list" id="list"></div>
+    </aside>
+
+    <main>
+      <div class="chat" id="chat">
+        <div class="empty">
+          Put documents in the drop zone and they are indexed automatically.<br>
+          Tick a corpus to search it, or click ▸ to see what it contains.
+        </div>
+      </div>
+      <div class="composer">
+        <div class="sugg" id="sugg"></div>
+        <div class="crow">
+          <div class="q-wrap">
+            <textarea id="q" rows="1" placeholder="Ask across the selected corpora…  (Enter to send, Shift+Enter for a new line)"></textarea>
+            <div class="q-dropdown" id="qDropdown" hidden></div>
+          </div>
+          <button class="btn pri" id="send" disabled>Send</button>
+        </div>
+        <div class="scope" id="scope">No scope selected</div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<dialog id="dlg">
+  <div class="dhd"><h3>Register a directory</h3><button class="btn sm" id="dlgClose">Close</button></div>
+  <div class="dbd">
+    <div class="hint">
+      Drop a folder into the drop zone <code id="drLabel">(drop zone)</code> and it is indexed automatically — no need
+      to register it. Use this browser for directories <strong>outside the drop zone</strong>.
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;margin-top:12px">
+      <button class="btn sm" id="upBtn">↑ Up</button>
+      <span class="crumb" id="crumb">/</span>
+    </div>
+    <ul class="dirs" id="dirs"></ul>
+    <div class="err" id="dlgErr"></div>
+  </div>
+  <div class="dft">
+    <label class="chk"><input type="checkbox" id="deep"> Deep index (chapter summaries, slower)</label>
+    <div style="display:flex;gap:8px">
+      <input id="alias" placeholder="Display name (optional)">
+      <button class="btn pri" id="useBtn">Index this folder</button>
+    </div>
+  </div>
+</dialog>
+
+<script>
+const $ = s => document.querySelector(s);
+let S = {corpora:[]};
+const OPEN = new Set();          // corpus ids with the tree expanded
+const TREE = {};                 // cached trees
+let CUR = null;
+let BUSY = false;                // a question is streaming right now
+let ABORT = null;                // AbortController for it — the Stop button
+
+// While streaming the Send button becomes Stop. A model that spirals can run
+// for minutes; without an exit the only option is to reload the page.
+function setBusy(on){
+  BUSY = on;
+  const b = $('#send');
+  b.textContent = on ? '停止' : 'Send';
+  b.classList.toggle('stop', on);
+  b.disabled = false;            // must stay clickable — that is the whole point
+}
+
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const md = s => esc(s)
+  .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+  .replace(/`([^`\n]+)`/g, '<code>$1</code>');
+
+// 卡片操作的图标。用内联 SVG 而不是 ✎ 这类字符：字符的实际字形由系统字体
+// 决定，粗细和大小参差不齐（✎ 明显比其他几个细一截），换个系统还可能缺字。
+// 这里统一成和 logo 一样的描边风格，颜色跟着 currentColor 走。
+const ICON = {
+  reindex: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 12a8.5 8.5 0 1 1-2.5-6"/><path d="M20.5 4.5V10H15"/></svg>',
+  rename: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4.5L19.6 8.9a2.2 2.2 0 0 0-3.1-3.1L5.4 16.9z"/><path d="M15 7.5l2.6 2.6"/></svg>',
+  remove: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg>',
+};
+
+// Paths inside the navigator are namespaced with the corpus id so several
+// corpora can share one tree. Show the corpus *name* instead — nobody wants to
+// read "610b3c99/2024/annual/…".
+const nameOf = id => (S.corpora.find(c => c.id === id) || {}).name || '';
+
+// A registered directory is often deep (/Users/x/Projects/.../中国太保).
+// Showing the tail is what identifies it; the head is noise that just pushes
+// the meaningful part out of view. Full path stays in the tooltip.
+function shortPath(p){
+  const parts = String(p || '').split('/').filter(Boolean);
+  return parts.length <= 2 ? String(p || '') : '…/' + parts.slice(-2).join('/');
+}
+function pretty(rel){
+  if (!rel) return rel;
+  const i = rel.indexOf('/');
+  // The whole string may be a bare corpus id — routing picks the corpus level
+  // before anything inside it, so "a9e87d72" must render as the corpus name.
+  const cid = i < 0 ? rel : rel.slice(0, i);
+  const nm = nameOf(cid);
+  if (!nm) return rel;                   // "全树 29 个目录" 之类，原样返回
+  return i < 0 ? nm : nm + ' / ' + rel.slice(i + 1);
+}
+
+// 引用来源渲染。一份文档通常被命中好几个章节，逐条列会把
+// 「中国平安 / 2024/annual/PingAn_AR2024.md」这样的长路径重复四五遍，
+// 所以按文档合并：一份文档一行，章节并排成小标签。
+// 路径只留「语料 / 文件名」—— 认一份文档用不到中间的目录层级，它进 tooltip。
+function shortDoc(key){
+  // display 是「语料名 / 目录 / 文件」，切出来的分段自带空格（"中国平安 "），
+  // 不 trim 的话拼回去会多出一个空格。
+  const parts = String(key || '').split('/').map(p => p.trim()).filter(Boolean);
+  return parts.length <= 2 ? parts.join(' / ') : parts[0] + ' / ' + parts[parts.length - 1];
+}
+function srcHTML(list){
+  const items = list || [];
+  if (!items.length) return '';
+  const byDoc = new Map();
+  for (const s of items){
+    const key = s.display || s.file || '';
+    if (!byDoc.has(key)) byDoc.set(key, []);
+    byDoc.get(key).push(s);
+  }
+  const rows = [...byDoc].map(([key, secs]) => {
+    const shown = secs.slice(0, 6);        // 再多就只是噪声，折成 +N
+    const chips = shown.map(s =>
+      `<span class="src-s">${esc(s.title || '')}<i>${s.start}-${s.end}</i></span>`).join('');
+    const more = secs.length > shown.length
+      ? `<span class="src-s more">+${secs.length - shown.length}</span>` : '';
+    return `<div class="src-row"><span class="src-f" title="${esc(key)}">`
+         + `${esc(shortDoc(key))}<b>${secs.length} 处</b></span>`
+         + `<span class="src-secs">${chips}${more}</span></div>`;
+  }).join('');
+  return `<div class="src-hd">引用 ${items.length} 处 · ${byDoc.size} 个文档</div>${rows}`;
+}
+
+// 检索阶段的模型调用汇总。这是「为什么这次慢」的第一手答案：阶段耗时只给
+// 一个总数，看不出里面是一次调用还是三次。重试单独用琥珀色点出来 —— 一次
+// 调用内部重试两次，耗时翻倍，而阶段耗时上没有任何异常迹象，最容易被当成
+// 「模型就是慢」放过去。最慢的那次也点名，否则只知道总时长还是无从下手。
+function llmLine(s){
+  if (!s || !s.llm_n_calls) return '';
+  const slow = (s.llm_calls || []).reduce(
+    (a, b) => ((b.ms || 0) > ((a && a.ms) || 0) ? b : a), null);
+  const retry = s.llm_n_retried
+    ? ` <span class="fb">· 重试 ${s.llm_n_retried} 次</span>` : '';
+  const worst = (slow && slow.ms)
+    ? ` · 最慢 ${(slow.ms / 1000).toFixed(1)}s ${esc(slow.label || '')}`
+      + (slow.tag ? ` ${esc(shortDoc(slow.tag))}` : '')
+    : '';
+  return `<div class="step">模型调用 <b>${s.llm_n_calls}</b> 次`
+       + ` · ${(s.llm_ms / 1000).toFixed(1)}s${retry}${worst}</div>`;
+}
+
+// ── state ───────────────────────────────────────────────────────────────
+async function load(){
+  try{ S = await (await fetch('/api/state')).json(); }catch(e){ return; }
+  chips(); renderList(); renderScope();
+  loadRecentQ();
+}
+
+function chips(){
+  const ready = S.corpora.filter(c => c.ready).length;
+  $('#chips').innerHTML = [
+    `<span class="chip">Corpora <b>${ready}/${S.corpora.length||0}</b></span>`,
+    `<span class="chip"><i class="dot ${S.watching?'':'off'}"></i>${S.watching?'Watching':'Idle'}</span>`,
+    `<span class="chip">${esc(S.chat_model||'')}</span>`,
+  ].join('');
+  if (S.data_root){
+    const p = S.data_root.split('/').filter(Boolean);
+    $('#drLabel').textContent = (p[p.length-1]||'drop zone') + '/';
+  }
+}
+
+function renderList(){
+  const box = $('#list');
+  if (!S.corpora.length){
+    box.innerHTML = '<div class="tempty">No corpora yet. Add a directory.</div>';
+    return;
+  }
+  box.innerHTML = S.corpora.map(c => {
+    const open = OPEN.has(c.id);
+    const busy = c.status === 'indexing' || (S.busy||[]).includes(c.id);
+    return `<div class="card ${c.ready?'on':''} ${c.status==='error'||c.missing?'bad':''} ${open?'open':''}" data-id="${c.id}">
+      <div class="row">
+        <input type="checkbox" class="cb" data-sel="${c.id}" ${c.ready?'checked':'disabled'}>
+        <div class="nm">${esc(c.name)}<span class="path" title="${esc(c.path)}">${esc(shortPath(c.path))}</span></div>
+        <div class="acts">
+          <button class="ib" data-act="reindex" data-id="${c.id}" title="${busy?'Indexing…':'Rebuild index'}" ${busy?'disabled':''}>${ICON.reindex}</button>
+          <button class="ib" data-act="rename" data-id="${c.id}" title="Rename">${ICON.rename}</button>
+          <button class="ib danger" data-act="remove" data-id="${c.id}" title="Remove corpus">${ICON.remove}</button>
+        </div>
+        <button class="caret ${open?'open':''}" data-tog="${c.id}" title="${open?'Collapse':'Expand'}">▶</button>
+      </div>
+      <div class="meta">
+        <span class="tag ${c.status}">${c.status}</span>
+        ${c.ready ? `<span>${c.n_files} files</span><span>${c.n_chapters} sections</span><span>${c.n_summarized} described</span>` : ''}
+      </div>
+      ${c.stage ? `<div class="cstage">${esc(c.stage)}</div>` : ''}
+      ${c.error ? `<div class="errmsg">${esc(c.error)}</div>` : ''}
+      ${open ? `<div class="tree" id="tr-${c.id}">${treeHTML(TREE[c.id], 0)}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function treeHTML(tree, depth){
+  if (!tree) return '<div class="tempty">Loading…</div>';
+  if (tree.error) return `<div class="tempty">${esc(tree.error)}</div>`;
+  const nodes = tree.nodes || [];
+  if (!nodes.length) return '<div class="tempty">Nothing indexed yet</div>';
+  const walk = (ns, d) => ns.map(n => n.type === 'dir'
+    ? `<div class="tn dir" data-dir="${esc(n.path)}" style="padding-left:${8+d*13}px">
+         <span class="k">▶</span><span class="t">${esc(n.name)}</span><span class="c">${n.n_files}</span>
+       </div><div class="kids" data-of="${esc(n.path)}" ${d===0?'':'hidden'}>${walk(n.children||[], d+1)}</div>`
+    : `<div class="tn file" title="${esc(n.path)}" style="padding-left:${20+d*13}px">
+         <i class="no"></i><span class="t">${esc(n.name)}</span><span class="c">${n.n_chapters}</span>
+       </div>`
+  ).join('');
+  return walk(nodes, depth) + (tree.truncated ? '<div class="tempty">…truncated</div>' : '');
+}
+
+async function toggleTree(id){
+  if (OPEN.has(id)){ OPEN.delete(id); renderList(); return; }
+  if (!TREE[id]){
+    try{ TREE[id] = await (await fetch(`/api/corpora/${id}/tree`)).json(); }
+    catch(e){ TREE[id] = {error:'failed to load'}; }
+    delete TREE[id].__open;
+  }
+  OPEN.add(id); renderList();
+}
+
+$('#list').addEventListener('click', async e => {
+  const tog = e.target.closest('[data-tog]');
+  if (tog){ toggleTree(tog.dataset.tog); return; }
+  const dir = e.target.closest('.tn.dir');
+  if (dir){
+    const kids = document.querySelector(`.kids[data-of="${CSS.escape(dir.dataset.dir)}"]`);
+    if (kids){ kids.hidden = !kids.hidden; dir.querySelector('.k').textContent = kids.hidden ? '▶' : '▼'; }
+    return;
+  }
+  const b = e.target.closest('button[data-act]');
+  if (!b) return;
+  const {act, id} = b.dataset;
+  if (act === 'remove'){
+    if (!confirm('Remove this corpus and delete its index?')) return;
+    await fetch(`/api/corpora/${id}`, {method:'DELETE'});
+    OPEN.delete(id); delete TREE[id];
+  } else if (act === 'reindex'){
+    await fetch(`/api/corpora/${id}/reindex`, {method:'POST',
+      headers:{'Content-Type':'application/json'}, body:'{}'});
+  } else if (act === 'rename'){
+    const n = prompt('New display name', (S.corpora.find(c => c.id===id)||{}).name || '');
+    if (!n) return;
+    await fetch(`/api/corpora/${id}`, {method:'PATCH',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({name:n})});
+  }
+  load();
+});
+
+$('#list').addEventListener('change', e => { if (e.target.dataset.sel) renderScope(); });
+
+function renderScope(){
+  const sel = [...document.querySelectorAll('[data-sel]:checked')].map(e => e.dataset.sel);
+  const ready = S.corpora.filter(c => c.ready);
+  if (!ready.length){
+    $('#scope').textContent = 'No indexed corpora yet';
+    // 别在问答进行中把「停止」按钮禁用掉 —— 那会让用户卡在无法中断的请求里。
+    if (!BUSY) $('#send').disabled = true;
+    renderSuggestions(); return;
+  }
+  $('#scope').textContent = sel.length
+    ? `Scope: ${sel.map(id => (S.corpora.find(c=>c.id===id)||{}).name||id).join(', ')}  (${sel.length}/${ready.length})`
+    : `Scope: all ${ready.length} indexed corpora`;
+  if (!BUSY) $('#send').disabled = false;
+  renderSuggestions();
+}
+const picked = () => [...document.querySelectorAll('[data-sel]:checked')].map(e => e.dataset.sel);
+
+// ── 历史问题下拉 ──────────────────────────────────────────────────────
+// 从 /api/recent-questions 拉取去重后的历史问题，聚焦输入框时弹出 3 条，
+// 点击填入。与 per-corpus 的 suggestion chips 互不干扰。
+let RECENT_Q = [];
+async function loadRecentQ(){
+  try{ RECENT_Q = (await (await fetch('/api/recent-questions')).json()).questions || []; }
+  catch(e){ RECENT_Q = []; }
+}
+function showQDropdown(){
+  const dd = $('#qDropdown');
+  const items = RECENT_Q.slice(0, 3);
+  if (!items.length){ dd.hidden = true; return; }
+  dd.innerHTML = items.map(q => `<button type="button">${esc(q)}</button>`).join('');
+  dd.hidden = false;
+}
+function hideQDropdown(){ $('#qDropdown').hidden = true; }
+
+$('#q').addEventListener('focus', showQDropdown);
+$('#q').addEventListener('blur', () => setTimeout(hideQDropdown, 150));
+$('#qDropdown').addEventListener('mousedown', e => e.preventDefault()); // 防止 blur 抢断 click
+$('#qDropdown').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  const t = $('#q');
+  t.value = b.textContent;
+  hideQDropdown();
+  t.focus();
+  t.dispatchEvent(new Event('input'));
+});
+
+// Example questions, generated per corpus and cached server-side. Round-robin
+// across the corpora in scope so three chips are three different topics rather
+// than three questions about the same report. Clicking one fills the box — it
+// does not send, so a stray click costs nothing and the text stays editable.
+function renderSuggestions(){
+  const sel = picked();
+  const pool = S.corpora.filter(c => c.ready && (c.suggestions||[]).length
+                                  && (!sel.length || sel.includes(c.id)));
+  const out = [];
+  for (let round = 0; out.length < 3; round++){
+    let added = false;
+    for (const c of pool){
+      const q = c.suggestions[round];
+      if (q && out.length < 3 && !out.includes(q)){ out.push(q); added = true; }
+    }
+    if (!added) break;
+  }
+  const box = $('#sugg');
+  box.innerHTML = out.map(q => `<button class="sugg-btn" type="button">${esc(q)}</button>`).join('');
+  box.title = out.length ? 'Example questions from the corpora in scope' : '';
+}
+
+$('#sugg').addEventListener('click', e => {
+  const b = e.target.closest('.sugg-btn');
+  if (!b) return;
+  const t = $('#q');
+  t.value = b.textContent;
+  t.focus();
+  t.dispatchEvent(new Event('input'));   // reuse the auto-grow handler
+});
+
+// ── directory browser ───────────────────────────────────────────────────
+$('#addBtn').onclick = () => { $('#dlg').showModal(); browse(CUR?.path || S.data_root || '/'); };
+$('#dlgClose').onclick = () => $('#dlg').close();
+$('#upBtn').onclick = () => { if (CUR?.parent) browse(CUR.parent); };
+async function browse(p){
+  $('#dlgErr').textContent = '';
+  CUR = await (await fetch('/api/browse?path=' + encodeURIComponent(p))).json();
+  $('#crumb').textContent = CUR.path || p;
+  $('#upBtn').disabled = !CUR.parent;
+  $('#dirs').innerHTML = (CUR.dirs||[]).map(d =>
+    `<li data-path="${esc(d.path)}"><span class="i">▸</span>${esc(d.name)}</li>`).join('')
+    || '<li style="cursor:default;color:var(--ink-400)">(no sub-directories)</li>';
+}
+$('#dirs').addEventListener('click', e => {
+  const li = e.target.closest('li[data-path]');
+  if (li) browse(li.dataset.path);
+});
+$('#useBtn').onclick = async () => {
+  if (!CUR?.path) return;
+  const r = await fetch('/api/corpora', {method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({path: CUR.path, name: $('#alias').value.trim(), deep_index: $('#deep').checked})});
+  const d = await r.json();
+  if (d.error){ $('#dlgErr').textContent = d.error; return; }
+  $('#dlg').close(); $('#alias').value = ''; load();
+};
+
+// ── ask ─────────────────────────────────────────────────────────────────
+function addMsg(cls, html){
+  const d = document.createElement('div'); d.className = 'msg ' + cls; d.innerHTML = html;
+  $('#chat').appendChild(d); $('#chat').scrollTop = $('#chat').scrollHeight; return d;
+}
+async function ask(){
+  if (BUSY) return;                       // 一次只跑一个；进行中请按「停止」
+  const q = $('#q').value.trim();
+  if (!q) return;
+  $('#q').value = ''; $('#q').style.height = 'auto';
+  $('#chat').querySelector('.empty')?.remove();
+  addMsg('user', `<div class="who">You</div><div class="bubble">${esc(q)}</div>`);
+  const bot = addMsg('bot', `<div class="who">SuperIndex</div>
+    <details class="trace" open>
+      <summary><span class="sum">Retrieval path</span></summary>
+      <div class="trace-body">
+        <div class="steps"></div>
+        <div class="think" hidden>
+          <div class="think-hd">思考过程</div>
+          <div class="think-body"></div>
+        </div>
+      </div>
+    </details>
+    <div class="stage">Starting…</div><div class="bubble"></div><div class="srcs"></div>`);
+  const trace = bot.querySelector('.trace'), sum = bot.querySelector('.trace .sum'),
+        steps = bot.querySelector('.steps'), stg = bot.querySelector('.stage'),
+        bub = bot.querySelector('.bubble'), srcs = bot.querySelector('.srcs'),
+        think = bot.querySelector('.think'), thinkBody = bot.querySelector('.think-body'),
+        thinkHd = bot.querySelector('.think-hd');
+  // 检索路径和思考过程放在同一个框里 —— 它们是同一次「模型怎么找到并想出答案」
+  // 的前后两段，分成两个折叠框只是在逼用户开两次。
+  // 思考区默认隐藏，收到第一个 thinking 事件才出现，不留空壳；框的整体高度
+  // 由 CSS 固定（.trace-body），所以它出现/内容变长都只在框内滚动，不顶页面。
+  let thinkChars = 0, answered = false, thinkText = '', thinkRaf = 0;
+  const showThinking = () => {
+    think.hidden = false; trace.classList.add('live');
+    // 思考区一出现就从固定高度里分走一半，.steps 的可视区随之变矮 —— 之前
+    // 「滚到底」的那个位置于是不再到底，刚写进去的「模型调用 N 次」正好被顶
+    // 出可视区。这里再贴一次底，否则那行最该被看到的诊断信息反而是看不到的。
+    steps.scrollTop = steps.scrollHeight;
+  };
+  // 思考可以长到几千字；每帧写一次 DOM，避免每个 chunk 都触发一次回流。
+  const flushThink = () => {
+    thinkRaf = 0;
+    thinkBody.textContent = thinkText;
+    thinkBody.scrollTop = thinkBody.scrollHeight;
+    thinkHd.textContent = `思考过程 · ${thinkChars} 字`;
+  };
+  // 收起时 summary 上留下这一轮的总结：看过什么 + 想了多少。
+  const settleThink = () => {
+    trace.classList.remove('live');
+    sum.textContent = thinkChars ? `检索过程 · 思考 ${thinkChars} 字` : '检索过程';
+  };
+
+  setBusy(true);
+  ABORT = new AbortController();
+  try{
+    const r = await fetch('/api/ask', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({question:q, corpus_ids: picked()}), signal: ABORT.signal});
+    if (!r.ok){ const e = await r.json(); throw new Error(e.error || r.statusText); }
+    const rd = r.body.getReader(), dec = new TextDecoder();
+    let buf = '', acc = '';
+    for(;;){
+      const {value, done} = await rd.read();
+      if (done) break;
+      buf += dec.decode(value, {stream:true});
+      const parts = buf.split('\n\n'); buf = parts.pop();
+      for (const raw of parts){
+        const ev = (raw.match(/^event: (.+)$/m)||[])[1];
+        const dt = (raw.match(/^data: (.+)$/m)||[])[1];
+        if (!ev || dt === undefined) continue;
+        let d; try{ d = JSON.parse(dt); }catch{ continue; }
+        if (ev === 'stage') stg.textContent = d.text;
+        else if (ev === 'policy'){ if (!d.empty) steps.insertAdjacentHTML('afterbegin',
+          `<div class="step pol">策略 ${esc(d.describe)}</div>`); }
+        else if (ev === 'nav'){
+          steps.insertAdjacentHTML('beforeend',
+            `<div class="step">[${d.level==='dir'?'dir':'section'}] ${esc(pretty(d.where))}
+             <br>→ <b>${esc((d.picked||[]).map(pretty).join('、'))}</b>${d.note?` <span class="fb">(${esc(d.note)})</span>`:''}</div>`);
+          // 框是固定高度的，新步骤会落在可视区外 —— 跟着滚到底，
+          // 否则用户只能看到第一条。
+          steps.scrollTop = steps.scrollHeight;
+        }
+        else if (ev === 'sources') srcs.innerHTML = srcHTML(d);
+        else if (ev === 'llmstats'){
+          const html = llmLine(d);
+          if (html){
+            steps.insertAdjacentHTML('beforeend', html);
+            steps.scrollTop = steps.scrollHeight;
+          }
+        }
+        else if (ev === 'thinking'){
+          if (think.hidden) showThinking();
+          thinkText += d.delta; thinkChars = thinkText.length;
+          if (!thinkRaf) thinkRaf = requestAnimationFrame(flushThink);
+        }
+        else if (ev === 'answer'){
+          stg.textContent='';
+          if (!answered){          // 答案开始 → 收起整个过程框，把版面让给结果
+            answered = true;
+            settleThink();
+            trace.open = false;
+          }
+          acc += d.delta; bub.innerHTML = md(acc);
+        }
+        else if (ev === 'error'){ stg.textContent=''; bub.innerHTML += `<div class="err">${esc(d.message)}</div>`; }
+        else if (ev === 'done'){ stg.textContent = d.ok ? `Done · ${d.ms} ms` : 'Incomplete'; settleThink(); }
+      }
+      $('#chat').scrollTop = $('#chat').scrollHeight;
+    }
+  }catch(e){
+    stg.textContent=''; settleThink();
+    if (e.name === 'AbortError') bub.insertAdjacentHTML('beforeend', '<div class="stopped">已停止</div>');
+    else bub.innerHTML += `<div class="err">${esc(e.message)}</div>`;
+  }
+  setBusy(false);
+}
+$('#send').onclick = () => { if (BUSY) ABORT?.abort(); else ask(); };
+$('#q').addEventListener('keydown', e => { if (e.key==='Enter' && !e.shiftKey){ e.preventDefault(); ask(); } });
+$('#q').addEventListener('input', e => {
+  e.target.style.height='auto'; e.target.style.height = Math.min(e.target.scrollHeight,170)+'px';
+});
+
+load();
+setInterval(load, 3000);
+const iq = new URLSearchParams(location.search).get('q');
+if (iq){ $('#q').value = iq; setTimeout(ask, 500); }
+</script>
+</body>
+</html>

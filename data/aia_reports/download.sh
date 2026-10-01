@@ -1,6 +1,10 @@
 #!/bin/bash
 UA="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
 
+# Write next to this script, so the PDFs always land in data/aia_reports/
+# regardless of where the script is invoked from.
+cd "$(dirname "$0")" || exit 1
+
 dl () {
   url="$1"; out="$2"
   echo "--> $out"
