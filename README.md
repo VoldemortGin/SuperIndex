@@ -126,6 +126,18 @@ superindex batch questions.jsonl --retrieval-only --match passage
 结果默认写到 `<当前目录>/results/batch/<时间戳>/`（`--out` 可改）：`summary.md`（总览表 + 逐题问答与工具调用）和 `results.jsonl`（逐题完整记录）。"命中"是**粗评分**（期望答案里的数字全部出现在回答中），需要人工复核。
 `--retrieval-only` 只跑每题的 BM25 检索，按 top-k（默认 5）页是否含期望答案计算 recall@k、MRR，秒级完成，适合比较 `--match page|passage`。
 
+### Notebook：从原始 PDF 一路跑到答案表
+
+`notebooks/batch_qa.ipynb` 把"一批原始 PDF → Markdown（文字层 + flash 补标题，或 Azure DI）→ 建库 → 用同一条 agent 链路回答 JSON/JSONL 题集 → `summary.md` / `answers.csv` / `answers.xlsx`"串成一次运行；中间产物（`md/`、`store/`、`runs/<时间戳>/`）落在 `results/notebook/<题集名>/`，重跑时已转换的 PDF、已建好的库、已成功的题都会跳过，`results.jsonl` 与 `superindex batch` 兼容。默认只读 PDF 文字层（绝不调用 Azure，需显式设 `PDF_EXTRACTOR="azure-di"`）；无文字层的扫描件会被标记跳过（`skipped_pdfs.json`），指向它的题不问模型、在结果里标 `skipped_no_text_layer`。
+
+```bash
+uv sync --group notebook                  # ipykernel / pandas / openpyxl（不在主依赖里）
+# 用 Jupyter 或 VS Code 打开 notebooks/batch_qa.ipynb，改第一个配置 cell（题集、PDF 目录、字段映射等）后依次运行；或命令行：
+uv run --group notebook jupyter nbconvert --to notebook --execute notebooks/batch_qa.ipynb --output-dir results/notebook
+```
+
+问答需要在 `.env` 配好支持 tool calling 的 `SUPERINDEX_CHAT_MODEL`；配置项也可用 `SI_NB_DATASET` / `SI_NB_PDF_DIR` / `SI_NB_LIMIT` 等环境变量覆盖。
+
 ### 回答指令（ask / serve / batch 通用）
 
 三个命令使用同一套"常驻指令"，**替换**内置默认。优先级从高到低：

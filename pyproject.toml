@@ -68,6 +68,12 @@ build = [
     "pyinstaller==6.22.3",
     "pyinstaller-hooks-contrib==2026.7",
 ]
+notebook = [
+    "ipykernel>=7.4.0",
+    "nbconvert>=7.17.1",
+    "openpyxl>=3.1.5",
+    "pandas>=3.0.6",
+]
 
 [tool.uv]
 # `uv sync` / `uv run` install every dependency group (dev, build); the
