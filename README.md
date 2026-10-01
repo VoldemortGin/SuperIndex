@@ -241,11 +241,14 @@ uv run superindex ask "2021 年的全年股息是多少？" --store results/chec
 | `FIELD_MAP` | `SI_NB_FIELD_MAP` | `id/question/expected/doc` 同名 | 数据集字段名映射，值为 JSON 对象；支持嵌套路径，见下 |
 | `PDF_EXTRACTOR` | `SI_NB_PDF_EXTRACTOR` | `text-layer` | `text-layer`（离线）或 `azure-di` |
 | `ADD_HEADINGS` | `SI_NB_ADD_HEADINGS` | `True` | 仅 `text-layer`：离线补 `#` 章节标题，不调 LLM |
+| `PDF_PASSWORDS` | `SI_NB_PDF_PASSWORDS` | `[]` | 需要密码才能打开的 PDF 的候选密码（按顺序尝试）；环境变量值写 JSON 数组 `'["pw1", "pw,2"]'`，非 JSON 时整串当单个密码 |
 | `INDEX_SUMMARY` | `SI_NB_INDEX_SUMMARY` | `False` | `True`：建库时用 `SUPERINDEX_INDEX_MODEL` 写摘要 |
 | `LIMIT` | `SI_NB_LIMIT` | 全部 | 只跑前 N 题 |
 | `TIMEOUT` | `SI_NB_TIMEOUT` | `300` | 每题超时（秒） |
 | `CONCURRENCY` | `SI_NB_CONCURRENCY` | `1` | 并发题数 |
 | `RESUME` | `SI_NB_RESUME` | `True` | 续跑最近一次运行目录，跳过已成功的题 |
+
+**带密码的 PDF。** 在 `PDF_PASSWORDS` 里配候选密码（最常用的放第一个）：不加密、或打开密码为空的 PDF 照常处理，需要密码的 PDF 按顺序逐个尝试，密码都不对（或没配密码）的、以及没有文字层的 PDF 会**跳过并标记**（`skipped_wrong_password` / `skipped_no_text_layer`，登记在 `skipped_pdfs.json`），不中断其它文档；指向它们的题不会去问模型。`skipped_wrong_password` 每次运行都会重新尝试，改对密码后直接重跑即可。密码不要写进 Notebook：Databricks 上用 `PDF_PASSWORDS = [dbutils.secrets.get(scope="<scope>", key="<key>")]`，命令行用 `SI_NB_PDF_PASSWORDS`。解密只在内存里进行、不生成解密副本，落盘的只有抽取出的 Markdown（明文，目录权限要按原 PDF 的密级管理）；需要密码的 PDF 不支持页面截图。
 
 另有 `RECORDS_KEY`、`FORCE_EXTRACT`、`WORK_DIR`、`PERSIST_DIR`（Databricks 持久目录，见上）、`PREFETCH`、`PREFETCH_K`，同样可用 `SI_NB_*` 覆盖，见 Notebook 配置 cell。
 
