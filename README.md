@@ -148,6 +148,8 @@ uv run --group notebook jupyter nbconvert --to notebook --execute notebooks/batc
   --output-dir results/notebook
 ```
 
+**开头会先更新代码**：Notebook 最前面的「更新代码（git pull）」cell 在仓库里运行时执行 `git pull --ff-only`（只快进）；不在仓库里（如 Databricks 上单独导入）则 clone 到 `REPO_DIR`（默认 `<当前目录>/SuperIndex`），之后「环境」cell 优先用这份代码（插到 `sys.path` 最前面，优先于 `%pip` 装的 PyPI 版，也不会切换工作目录）。`SI_NB_GIT_PULL=0` 关闭；没装 git、网络不通、认证失败等任何失败都只提示、不中断，继续用现有代码；本地有改动（如在 Jupyter 里保存过带输出的 Notebook）导致无法快进时只提示处理办法，**不会自动覆盖或 stash 你的改动**。pull 更新的是磁盘上的代码：Notebook 文件自身被更新后需重新打开再运行。命令行 `nbconvert` 执行同样会先 pull，所以工作区有未提交改动时可能看到上述提示（不影响运行）。
+
 命令行执行**必须带** `--TagRemovePreprocessor...` 这两个参数：Notebook 开头的「环境安装」cell（`%pip install superindex==0.1.2 ...`）只给 Databricks 用，不跳过的话它会把 PyPI 上的 `superindex` 装进当前环境，覆盖本地的可编辑安装。
 
 问答需要在 `.env` 配好支持 tool calling 的 `SUPERINDEX_CHAT_MODEL`（OpenAI 兼容端点也可以只写 `OPENAI_MODEL` / `OPENAI_BASE_URL` / `OPENAI_API_KEY`，见下文「配置 LLM」）；配置项也可用 `SI_NB_DATASET` / `SI_NB_PDF_DIR` / `SI_NB_LIMIT` 等环境变量覆盖。
@@ -156,7 +158,7 @@ uv run --group notebook jupyter nbconvert --to notebook --execute notebooks/batc
 
 同一个 Notebook 可以导入 Databricks 直接运行（Python 3.11+，按 Databricks 官方的 Runtime 与 Python 版本对应关系，对应 Runtime 15.x 及以上）。步骤：
 
-1. 导入 `notebooks/batch_qa.ipynb`，从上到下运行：先运行「环境安装」两个 cell（`%pip install superindex==0.1.2 pandas openpyxl pycryptodome`，随后重启 Python）。默认从 PyPI 装；公司内部 PyPI 镜像 / Git URL / Repos 路径 / Volumes 里的 wheel 的写法见 Notebook 里「环境安装」的说明，用其中一行替换该 cell 的内容。
+1. 导入 `notebooks/batch_qa.ipynb`，从上到下运行（最前面的「更新代码」cell 会把仓库 clone 到 `REPO_DIR`——要求集群有 git、能访问 `REPO_URL`、目录可写；做不到只提示、不中断，继续用 `%pip` 装的版本；不需要可设 `GIT_PULL = False`）：先运行「环境安装」两个 cell（`%pip install superindex==0.1.2 pandas openpyxl pycryptodome`，随后重启 Python）。默认从 PyPI 装；公司内部 PyPI 镜像 / Git URL / Repos 路径 / Volumes 里的 wheel 的写法见 Notebook 里「环境安装」的说明，用其中一行替换该 cell 的内容。
 2. 在「模型配置」cell 的 `LLM_CONFIG` 里填模型（密钥用 `dbutils.secrets.get(scope=..., key=...)`，不要明文写进 Notebook）：
    - OpenAI 兼容端点：`OPENAI_MODEL="<模型名>"` + `OPENAI_BASE_URL="https://<网关>/v1"` + `OPENAI_API_KEY`（Notebook 的「环境」cell 会把它们映射成 `SUPERINDEX_*`，所以 PyPI 上的版本也适用）；等价写法 `SUPERINDEX_CHAT_MODEL="openai/<模型名>"` + `SUPERINDEX_BASE_URL` + `SUPERINDEX_API_KEY_OVERRIDE`
    - Databricks Model Serving：`"databricks/<endpoint 名>"` + `SUPERINDEX_BASE_URL="https://<workspace>/serving-endpoints"` + token
@@ -255,6 +257,10 @@ uv run superindex ask "2021 年的全年股息是多少？" --store results/chec
 
 | 配置项 | 环境变量 | 默认 | 含义 |
 |---|---|---|---|
+| `GIT_PULL` | `SI_NB_GIT_PULL` | `True` | 开头是否 `git pull` / clone；`0` / `false` / `no` / `off` 关闭（不执行任何 git 命令） |
+| `REPO_URL` | `SI_NB_REPO_URL` | `https://github.com/VoldemortGin/SuperIndex.git` | 不在仓库里时 clone 的地址（公司内网有镜像时改这里；输出里 `user:token@` 会打码） |
+| `REPO_BRANCH` | `SI_NB_REPO_BRANCH` | `main` | clone 的分支 |
+| `REPO_DIR` | `SI_NB_REPO_DIR` | `<当前目录>/SuperIndex` | 不在仓库里时 clone 到哪里；已存在但不是 SuperIndex 仓库则跳过、不会动它 |
 | `DATASET_PATH` | `SI_NB_DATASET` | `data/questions.jsonl` | 题集（`.json` / `.jsonl`） |
 | `PDF_DIR` | `SI_NB_PDF_DIR` | `data/pdfs` | 原始 PDF 目录（递归） |
 | `FIELD_MAP` | `SI_NB_FIELD_MAP` | `id/question/expected/doc` 同名 | 数据集字段名映射，值为 JSON 对象；支持嵌套路径，见下 |
