@@ -261,7 +261,7 @@ uv run superindex ask "2021 年的全年股息是多少？" --store results/chec
 | `REPO_URL` | `SI_NB_REPO_URL` | `https://github.com/VoldemortGin/SuperIndex.git` | 不在仓库里时 clone 的地址（公司内网有镜像时改这里；输出里 `user:token@` 会打码） |
 | `REPO_BRANCH` | `SI_NB_REPO_BRANCH` | `main` | clone 的分支 |
 | `REPO_DIR` | `SI_NB_REPO_DIR` | `<当前目录>/SuperIndex` | 不在仓库里时 clone 到哪里；已存在但不是 SuperIndex 仓库则跳过、不会动它 |
-| `DATASET_PATH` | `SI_NB_DATASET` | `data/questions.jsonl` | 题集（`.json` / `.jsonl`） |
+| `DATASET_PATH` | `DATASET_PATH`（写在 `.env`，优先）/ `SI_NB_DATASET` | `data/questions.jsonl` | 题集（`.json` / `.jsonl`） |
 | `PDF_DIR` | `SI_NB_PDF_DIR` | `data/pdfs` | 原始 PDF 目录（递归） |
 | `FIELD_MAP` | `SI_NB_FIELD_MAP` | `id/question/expected/doc` 同名 | 数据集字段名映射，值为 JSON 对象；支持嵌套路径，见下 |
 | `PDF_EXTRACTOR` | `SI_NB_PDF_EXTRACTOR` | `text-layer` | `text-layer`（离线）或 `azure-di` |
