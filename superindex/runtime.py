@@ -142,6 +142,24 @@ def _read_instructions(path: str) -> str:
     return content
 
 
+def _openai_compat() -> dict[str, str]:
+    """The OPENAI_MODEL / OPENAI_BASE_URL / OPENAI_API_KEY spelling of a model
+    on an OpenAI-compatible endpoint, as ``{"model", "base_url", "api_key"}``
+    (empty values left out). Only OPENAI_MODEL switches it on — OPENAI_API_KEY
+    and OPENAI_BASE_URL are often set for other tools and mean nothing alone.
+    The model gets the ``openai/`` prefix LiteLLM routes by, even when the name
+    itself contains a ``/`` (``Org/model`` -> ``openai/Org/model``)."""
+    model = os.environ.get("OPENAI_MODEL", "").strip()
+    if not model:
+        return {}
+    if not model.startswith("openai/"):
+        model = f"openai/{model}"
+    found = {"model": model,
+             "base_url": os.environ.get("OPENAI_BASE_URL", "").strip(),
+             "api_key": os.environ.get("OPENAI_API_KEY", "").strip()}
+    return {k: v for k, v in found.items() if v}
+
+
 @dataclass
 class LLMSettings:
     index_model: str | None
@@ -156,22 +174,26 @@ class LLMSettings:
                 api_key: str | None = None,
                 reasoning_effort: str | None = None) -> LLMSettings:
         """CLI values win over the environment; nothing falls back to a
-        hard-coded cloud model."""
-        def pick(cli: str | None, env: str) -> str | None:
-            value = cli if cli is not None else getenv(env)
-            if value is None:
-                return None
-            return value.strip() or None
+        hard-coded cloud model. Per setting: CLI > SUPERINDEX_* > PAGEINDEX_* >
+        OPENAI_* (see `_openai_compat`; the index model falls back to
+        OPENAI_MODEL too, so one set of OPENAI_* variables covers both lanes)."""
+        openai = _openai_compat()
+
+        def pick(cli: str | None, env: str, fallback: str | None = None) -> str | None:
+            if cli is not None:
+                return cli.strip() or None
+            value = (getenv(env) or "").strip()
+            return value or fallback
 
         # Unset means "send nothing":
         # local Ollama models reject the parameter — ollama_chat with
         # "does not support thinking", the /v1 route with UnsupportedParamsError.
         effort = pick(reasoning_effort, "SUPERINDEX_REASONING_EFFORT")
         return cls(
-            index_model=pick(index_model, "SUPERINDEX_INDEX_MODEL"),
-            chat_model=pick(chat_model, "SUPERINDEX_CHAT_MODEL"),
-            base_url=pick(base_url, "SUPERINDEX_BASE_URL"),
-            api_key=pick(api_key, "SUPERINDEX_API_KEY_OVERRIDE"),
+            index_model=pick(index_model, "SUPERINDEX_INDEX_MODEL", openai.get("model")),
+            chat_model=pick(chat_model, "SUPERINDEX_CHAT_MODEL", openai.get("model")),
+            base_url=pick(base_url, "SUPERINDEX_BASE_URL", openai.get("base_url")),
+            api_key=pick(api_key, "SUPERINDEX_API_KEY_OVERRIDE", openai.get("api_key")),
             reasoning_effort=effort,
         )
 
@@ -182,7 +204,8 @@ class LLMSettings:
             flag = "--index-model" if role == "index" else "--chat-model"
             raise ConfigError(
                 f"No {role} model configured. Set {env} in .env (looked in the "
-                f"{_env_places()}) or pass {flag}. "
+                f"{_env_places()}) or pass {flag}; "
+                "OPENAI_MODEL / OPENAI_BASE_URL / OPENAI_API_KEY also work. "
                 "Example for a local Ollama: "
                 f"{env}=ollama_chat/qwen2.5:7b and "
                 "SUPERINDEX_BASE_URL=http://localhost:11434 — see .env.example.")

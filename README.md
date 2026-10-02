@@ -32,7 +32,15 @@ superindex index|search|ask|serve|batch|nav-serve --help
 在**当前工作目录**放一个 `.env`（已存在的环境变量优先）。完整模板见
 [`.env.example`](https://github.com/VoldemortGin/SuperIndex/blob/main/.env.example)。
 
-公司内网 OpenAI 兼容网关（vLLM、各类代理等，注意 `/v1` 后缀）：
+公司内网 OpenAI 兼容网关（vLLM、各类代理等，注意 `/v1` 后缀）。最短写法是下面三个变量（模型名写端点上的名字，自动加 `openai/` 前缀）：
+
+```ini
+OPENAI_MODEL=your-model-name
+OPENAI_BASE_URL=https://your-gateway.example.com/v1
+OPENAI_API_KEY=your-gateway-key
+```
+
+等价的 `SUPERINDEX_*` 写法：
 
 ```ini
 SUPERINDEX_BASE_URL=https://your-gateway.example.com/v1
@@ -41,6 +49,8 @@ SUPERINDEX_INDEX_MODEL=openai/your-model-name
 SUPERINDEX_CHAT_MODEL=openai/your-model-name
 SUPERINDEX_REASONING_EFFORT=
 ```
+
+`OPENAI_*` 的规则：**只有 `OPENAI_MODEL` 非空才启用**（很多机器的环境里本来就有 `OPENAI_API_KEY` / `OPENAI_BASE_URL`，单独存在不会改变行为）；启用后 `OPENAI_BASE_URL` → `SUPERINDEX_BASE_URL`、`OPENAI_API_KEY` → `SUPERINDEX_API_KEY_OVERRIDE`，`OPENAI_MODEL` 同时作为问答模型和（没设 `SUPERINDEX_INDEX_MODEL` 时的）建库摘要模型。优先级逐变量判断：命令行参数 > `SUPERINDEX_*` > 旧名 `PAGEINDEX_*` > `OPENAI_*`，即 `SUPERINDEX_*` 已设为非空时不被覆盖。模型名没有 `openai/` 前缀时自动补上（含 `/` 的名字如 `Qwen/Qwen2.5-72B` 也会变成 `openai/Qwen/Qwen2.5-72B`）。`SUPERINDEX_REASONING_EFFORT` 不受影响，非推理模型仍要留空。两级导航 `superindex.nav` 不认这组变量（见文末「两级导航」）。
 
 本机 Ollama（先 `ollama pull qwen2.5:7b`，并调大上下文 `OLLAMA_CONTEXT_LENGTH=32768`）：
 
@@ -140,7 +150,7 @@ uv run --group notebook jupyter nbconvert --to notebook --execute notebooks/batc
 
 命令行执行**必须带** `--TagRemovePreprocessor...` 这两个参数：Notebook 开头的「环境安装」cell（`%pip install superindex==0.1.2 ...`）只给 Databricks 用，不跳过的话它会把 PyPI 上的 `superindex` 装进当前环境，覆盖本地的可编辑安装。
 
-问答需要在 `.env` 配好支持 tool calling 的 `SUPERINDEX_CHAT_MODEL`；配置项也可用 `SI_NB_DATASET` / `SI_NB_PDF_DIR` / `SI_NB_LIMIT` 等环境变量覆盖。
+问答需要在 `.env` 配好支持 tool calling 的 `SUPERINDEX_CHAT_MODEL`（OpenAI 兼容端点也可以只写 `OPENAI_MODEL` / `OPENAI_BASE_URL` / `OPENAI_API_KEY`，见下文「配置 LLM」）；配置项也可用 `SI_NB_DATASET` / `SI_NB_PDF_DIR` / `SI_NB_LIMIT` 等环境变量覆盖。
 
 #### 在 Databricks 上运行
 
@@ -148,7 +158,7 @@ uv run --group notebook jupyter nbconvert --to notebook --execute notebooks/batc
 
 1. 导入 `notebooks/batch_qa.ipynb`，从上到下运行：先运行「环境安装」两个 cell（`%pip install superindex==0.1.2 pandas openpyxl pycryptodome`，随后重启 Python）。默认从 PyPI 装；公司内部 PyPI 镜像 / Git URL / Repos 路径 / Volumes 里的 wheel 的写法见 Notebook 里「环境安装」的说明，用其中一行替换该 cell 的内容。
 2. 在「模型配置」cell 的 `LLM_CONFIG` 里填模型（密钥用 `dbutils.secrets.get(scope=..., key=...)`，不要明文写进 Notebook）：
-   - OpenAI 兼容端点：`SUPERINDEX_CHAT_MODEL="openai/<模型名>"` + `SUPERINDEX_BASE_URL="https://<网关>/v1"` + `SUPERINDEX_API_KEY_OVERRIDE`
+   - OpenAI 兼容端点：`OPENAI_MODEL="<模型名>"` + `OPENAI_BASE_URL="https://<网关>/v1"` + `OPENAI_API_KEY`（Notebook 的「环境」cell 会把它们映射成 `SUPERINDEX_*`，所以 PyPI 上的版本也适用）；等价写法 `SUPERINDEX_CHAT_MODEL="openai/<模型名>"` + `SUPERINDEX_BASE_URL` + `SUPERINDEX_API_KEY_OVERRIDE`
    - Databricks Model Serving：`"databricks/<endpoint 名>"` + `SUPERINDEX_BASE_URL="https://<workspace>/serving-endpoints"` + token
    - Azure OpenAI：`"azure/<deployment>"` + `AZURE_API_BASE` / `AZURE_API_KEY` / `AZURE_API_VERSION`
    - 公司网关要求自定义请求头：填 `LLM_EXTRA_HEADERS`（只加在问答请求上，建库摘要 `INDEX_SUMMARY=True` 不带）。
@@ -186,7 +196,16 @@ SUPERINDEX_API_KEY_OVERRIDE=ollama
 SUPERINDEX_REASONING_EFFORT=
 ```
 
-OpenAI 兼容的自建 / 内网端点（vLLM、LM Studio、公司网关等）：模型名用 `openai/` 前缀加端点上的模型名，地址带 `/v1`。
+OpenAI 兼容的自建 / 内网端点（vLLM、LM Studio、公司网关等）：地址带 `/v1`。推荐写法是 `OPENAI_*` 三个变量（`OPENAI_MODEL` 非空才启用，模型名自动加 `openai/` 前缀；优先级见上文「最小配置」，Notebook 里 `LLM_CONFIG` 填这三个也可以）：
+
+```ini
+OPENAI_MODEL=your-model-name
+OPENAI_BASE_URL=https://your-gateway.example.com/v1
+OPENAI_API_KEY=your-gateway-key
+SUPERINDEX_REASONING_EFFORT=
+```
+
+等价的 `SUPERINDEX_*` 写法（模型名要自己写 `openai/` 前缀）：
 
 ```ini
 SUPERINDEX_CHAT_MODEL=openai/your-model-name
@@ -227,8 +246,8 @@ uv run superindex ask "2021 年的全年股息是多少？" --store results/chec
 
 **常见报错。**
 
-- Notebook 步骤 4 报 `RuntimeError: 未配置可用的问答模型：No chat model configured. Set SUPERINDEX_CHAT_MODEL in .env (looked in the working directory …) …`：没读到 `SUPERINDEX_CHAT_MODEL`。检查 `.env` 是否在仓库根、变量名是否拼对，改完重启内核。
-- `INDEX_SUMMARY=True` 时步骤 2 报 `No index model configured. Set SUPERINDEX_INDEX_MODEL …`：补上 `SUPERINDEX_INDEX_MODEL`，或把 `INDEX_SUMMARY` 改回 `False`。
+- Notebook 步骤 4 报 `RuntimeError: 未配置可用的问答模型：No chat model configured. Set SUPERINDEX_CHAT_MODEL in .env (looked in the working directory …) …`：没读到 `SUPERINDEX_CHAT_MODEL`（或 `OPENAI_MODEL`；只设 `OPENAI_API_KEY` / `OPENAI_BASE_URL` 不算）。检查 `.env` 是否在仓库根、变量名是否拼对，改完重启内核。
+- `INDEX_SUMMARY=True` 时步骤 2 报 `No index model configured. Set SUPERINDEX_INDEX_MODEL …`：补上 `SUPERINDEX_INDEX_MODEL`（用 `OPENAI_MODEL` 时不必，会同用它），或把 `INDEX_SUMMARY` 改回 `False`。
 - `does not support thinking` / `UnsupportedParamsError`：`SUPERINDEX_REASONING_EFFORT` 留空。
 - Ollama 回答很怪、像没看到文档：先用 `ollama ps` 看 CONTEXT 列，默认上下文过小时长提示会被截断，只在 Ollama 服务端日志里有警告。
 
@@ -297,6 +316,7 @@ agent 带一个 `calculate` 工具，基于 [avada-eval](https://pypi.org/projec
 | `SUPERINDEX_INDEX_MODEL` | 节点摘要模型；`index --no-summary` 时不用 |
 | `SUPERINDEX_BASE_URL` | OpenAI 兼容网关或 Ollama 地址 |
 | `SUPERINDEX_API_KEY_OVERRIDE` | 上面地址对应的 key |
+| `OPENAI_MODEL` / `OPENAI_BASE_URL` / `OPENAI_API_KEY` | OpenAI 兼容端点的另一种写法：`OPENAI_MODEL` 非空才启用，自动加 `openai/` 前缀并作为问答模型（及未设 `SUPERINDEX_INDEX_MODEL` 时的摘要模型），`OPENAI_BASE_URL` / `OPENAI_API_KEY` 填入未设的 `SUPERINDEX_BASE_URL` / `SUPERINDEX_API_KEY_OVERRIDE`；`SUPERINDEX_*` 优先；nav 不认 |
 | `SUPERINDEX_REASONING_EFFORT` | 推理强度（如 `low`）；不设或留空则不发送，非推理模型必须留空 |
 | `SUPERINDEX_STORE` | 文档库目录，默认 `./superindex_store` |
 | `SUPERINDEX_INSTRUCTIONS` / `SUPERINDEX_INSTRUCTIONS_FILE` | 回答指令（见上文） |
@@ -407,7 +427,7 @@ uv run python -m superindex.nav.route ./corpus_index "港湾人寿 2022 年的�
 
 `superindex.nav.build` 也可直接吃 PDF（启动时打印所用抽取器，`--extractor {auto,azure-di,text-layer}` 可强制指定）：配置了 Azure DI 时得到带标题的章节树；否则读 PDF 文本层，用 `superindex.engine.flash`（按字号、位置等版面统计离线识别标题，不调 LLM）建章节树，失败再退到每页一个节点（PyInstaller 打包版不含 flash，直接走每页一节点）。
 
-模型：nav 有自己的一套取值，只借用 `SUPERINDEX_CHAT_MODEL`。模型取 `--model` > `NAV_MODEL` > `SUPERINDEX_CHAT_MODEL` > 兜底 `deepseek/deepseek-flash`；推理强度取 `route --effort` > `NAV_REASONING_EFFORT` > 默认 `none`（`build` 没有 `--effort`，只读环境变量）；用网关 / Ollama 上的非推理模型时要设 `NAV_REASONING_EFFORT=`（空值即不发送），否则 LiteLLM 会报 `UnsupportedParamsError`。它**不读** `SUPERINDEX_BASE_URL` / `SUPERINDEX_API_KEY_OVERRIDE`，网关地址与 key 要用 LiteLLM 自己的变量（如 `OPENAI_API_BASE` / `OPENAI_API_KEY`）。详见 [superindex/nav/README.md](https://github.com/VoldemortGin/SuperIndex/blob/main/superindex/nav/README.md)。
+模型：nav 有自己的一套取值，只借用 `SUPERINDEX_CHAT_MODEL`。模型取 `--model` > `NAV_MODEL` > `SUPERINDEX_CHAT_MODEL` > 兜底 `deepseek/deepseek-flash`；推理强度取 `route --effort` > `NAV_REASONING_EFFORT` > 默认 `none`（`build` 没有 `--effort`，只读环境变量）；用网关 / Ollama 上的非推理模型时要设 `NAV_REASONING_EFFORT=`（空值即不发送），否则 LiteLLM 会报 `UnsupportedParamsError`。它**不读** `OPENAI_MODEL`（也就不认上面那组 `OPENAI_*` 映射）和 `SUPERINDEX_BASE_URL` / `SUPERINDEX_API_KEY_OVERRIDE`，网关地址与 key 要用 LiteLLM 自己的变量（如 `OPENAI_API_BASE` / `OPENAI_API_KEY`）。详见 [superindex/nav/README.md](https://github.com/VoldemortGin/SuperIndex/blob/main/superindex/nav/README.md)。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/VoldemortGin/SuperIndex/main/docs/diagrams/addressing-funnel-dark.png">
