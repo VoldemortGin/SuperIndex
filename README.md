@@ -173,6 +173,10 @@ uv run --group notebook jupyter nbconvert --to notebook --execute notebooks/batc
 
 > Databricks 专属的部分（`%pip` 安装、`restartPython`、`dbutils.secrets`、Volumes 读写、Model Serving 端点）没有在真实 Databricks 环境测过，首次使用请先用 `LIMIT=1` 跑一题确认。
 
+#### 答案评测：`notebooks/eval_deepeval.ipynb`
+
+用 deepeval 的 `GEval`（LLM-as-judge）对照 `expected` 逐题判定 `batch_qa` 的答案是否正确，输出准确率。输入默认是 `<ROOT_DIR>/results/notebook/<题集名>/runs/<最新时间戳>/results.jsonl`（可用 `SI_NB_RESULTS` 指定），结果写在同目录的 `eval/` 下（`eval_results.jsonl`、`eval_summary.md`、`eval.csv`、`eval.xlsx`），已评过的题重跑时跳过；没有 `expected` 或 `batch_qa` 未成功的题标为 `not_evaluated`。裁判模型配置复用 `batch_qa`（`.env` 或「模型配置」cell 的 `OPENAI_MODEL` / `OPENAI_BASE_URL` / `OPENAI_API_KEY`，`SI_NB_JUDGE_MODEL` 可换成别的裁判模型），deepeval **不在项目依赖里**（它会拉低 `click` 等包的版本）：Databricks 上由 notebook 的 `%pip install` 安装，本地用 `uv run --group notebook --with deepeval jupyter ...` 临时叠加（不改 `uv.lock`），`nbconvert` 的跳过参数与 `batch_qa` 相同。
+
 #### 配置 LLM
 
 **哪些步骤用到模型。** PDF 抽取（文字层或 Azure DI）、补标题（`ADD_HEADINGS`，离线版面分析）、默认建库（`INDEX_SUMMARY=False`）都**不调模型**；只有步骤 4 问答一定调用 `SUPERINDEX_CHAT_MODEL`，`INDEX_SUMMARY=True` 时建库摘要还会用 `SUPERINDEX_INDEX_MODEL`（没设则报错提示）。所以没配模型也能先跑完前几步，检查 `md/`、`store/` 等中间产物。
