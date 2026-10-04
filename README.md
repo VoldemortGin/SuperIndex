@@ -277,6 +277,8 @@ uv run superindex ask "2021 年的全年股息是多少？" --store results/chec
 | `TIMEOUT` | `TIMEOUT` | `300` | 每题超时（秒） |
 | `CONCURRENCY` | `CONCURRENCY` | `1` | 并发题数 |
 | `RESUME` | `RESUME` | `True` | 续跑最近一次运行目录，跳过已成功的题 |
+| `RATE_LIMIT_WAIT` | `RATE_LIMIT_WAIT` | `60` | 模型接口被限流（429 / rate limit / quota 等）时所有线程一起暂停多久（秒）再重试 |
+| `RATE_LIMIT_RETRIES` | `RATE_LIMIT_RETRIES` | `5` | 每题被限流后最多重试几次（`0` 关闭）；结果只写最终一次，次数记在 `rate_limit_retries` |
 
 **带密码的 PDF。** 主密码写进 `.env`：`PDF_INGEST_PASSWORD='你的密码'`（含 `#`、空格等字符时用单引号括起来）；少数用别的密码的，再在 `PDF_PASSWORDS` 里配候选密码：不加密、或打开密码为空的 PDF 照常处理，需要密码的 PDF 按顺序逐个尝试，密码都不对（或没配密码）的、以及没有文字层的 PDF 会**跳过并标记**（`skipped_wrong_password` / `skipped_no_text_layer`，登记在 `skipped_pdfs.json`），不中断其它文档；指向它们的题不会去问模型。`skipped_wrong_password` 每次运行都会重新尝试，改对密码后直接重跑即可。密码不要写进 Notebook：Databricks 上用 `PDF_PASSWORDS = [dbutils.secrets.get(scope="<scope>", key="<key>")]`，命令行用 `PDF_PASSWORDS`。解密只在内存里进行、不生成解密副本，落盘的只有抽取出的 Markdown（明文，目录权限要按原 PDF 的密级管理）；需要密码的 PDF 不支持页面截图。
 
