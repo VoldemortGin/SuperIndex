@@ -6,6 +6,9 @@
 # Source PDFs under data/ are fetched by the download script next to them.
 data/**/*.pdf
 data/*.pdf
+# Notebook outputs: data/eval/<dataset>/ (step 7), data/notebook/<dataset>/ (work dir).
+data/eval/
+data/notebook/
 
 # ─── generated outputs ─────────────────────────────────────────────────────
 # Everything under results/ is reproducible from the scripts: logs and QA

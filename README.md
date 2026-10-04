@@ -138,14 +138,14 @@ superindex batch questions.jsonl --retrieval-only --match passage
 
 ### Notebook：从原始 PDF 一路跑到答案表
 
-`notebooks/batch_qa.ipynb` 把"一批原始 PDF → Markdown（文字层 + flash 补标题，或 Azure DI）→ 建库 → 用同一条 agent 链路回答 JSON/JSONL 题集 → `summary.md` / `answers.csv` / `answers.xlsx`"串成一次运行；中间产物（`md/`、`store/`、`runs/<时间戳>/`）落在 `<ROOT_DIR>/results/notebook/<题集名>/`（`ROOT_DIR` 是「环境」cell 打印的绝对路径：`ROOT_DIR` > 从当前目录向上找到的仓库根 > clone 副本 > 当前目录；相对路径配置都以它为基准，不依赖 cwd），重跑时已转换的 PDF、已建好的库、已成功的题都会跳过，`results.jsonl` 与 `superindex batch` 兼容。默认只读 PDF 文字层（绝不调用 Azure，需显式设 `PDF_EXTRACTOR="azure-di"`）；无文字层的扫描件会被标记跳过（`skipped_pdfs.json`），指向它的题不问模型、在结果里标 `skipped_no_text_layer`。
+`notebooks/batch_qa.ipynb` 把"一批原始 PDF → Markdown（文字层 + flash 补标题，或 Azure DI）→ 建库 → 用同一条 agent 链路回答 JSON/JSONL 题集 → `summary.md` / `answers.csv` / `answers.xlsx`"串成一次运行；中间产物（`md/`、`store/`、`runs/<时间戳>/`）落在 `<ROOT_DIR>/data/notebook/<题集名>/`（`ROOT_DIR` 是「环境」cell 打印的绝对路径：`ROOT_DIR` > 从当前目录向上找到的仓库根 > clone 副本 > 当前目录；相对路径配置都以它为基准，不依赖 cwd），重跑时已转换的 PDF、已建好的库、已成功的题都会跳过，`results.jsonl` 与 `superindex batch` 兼容。默认只读 PDF 文字层（绝不调用 Azure，需显式设 `PDF_EXTRACTOR="azure-di"`）；无文字层的扫描件会被标记跳过（`skipped_pdfs.json`），指向它的题不问模型、在结果里标 `skipped_no_text_layer`。
 
 ```bash
 uv sync --group notebook                  # ipykernel / pandas / openpyxl（不在主依赖里）
-# 用 Jupyter 或 VS Code 打开 notebooks/batch_qa.ipynb，改配置 cell（题集、PDF 目录、字段映射等）后依次运行（不要运行带 databricks-setup 标签的「环境安装」两个 cell）；或命令行：
+# 用 Jupyter 或 VS Code 打开 notebooks/batch_qa.ipynb，改配置 cell（题集、PDF 目录、字段映射等）后依次运行（不要运行带 databricks-setup 标签的「环境安装」cell）；或命令行：
 uv run --group notebook jupyter nbconvert --to notebook --execute notebooks/batch_qa.ipynb \
   --TagRemovePreprocessor.enabled=True --TagRemovePreprocessor.remove_cell_tags databricks-setup \
-  --output-dir results/notebook
+  --output-dir data/notebook
 ```
 
 **开头会先更新代码**：Notebook 最前面的「更新代码（git pull）」cell 在仓库里运行时执行 `git pull --ff-only`（只快进）；不在仓库里（如 Databricks 上单独导入）则 clone 到 `REPO_DIR`（默认 `<当前目录>/SuperIndex`），之后「环境」cell 优先用这份代码（插到 `sys.path` 最前面，优先于 `%pip` 装的 PyPI 版，也不会切换工作目录）。`GIT_PULL=0` 关闭；没装 git、网络不通、认证失败等任何失败都只提示、不中断，继续用现有代码；本地有改动（如在 Jupyter 里保存过带输出的 Notebook）导致无法快进时只提示处理办法，**不会自动覆盖或 stash 你的改动**。pull 更新的是磁盘上的代码：Notebook 文件自身被更新后需重新打开再运行。命令行 `nbconvert` 执行同样会先 pull，所以工作区有未提交改动时可能看到上述提示（不影响运行）。
@@ -158,7 +158,7 @@ uv run --group notebook jupyter nbconvert --to notebook --execute notebooks/batc
 
 同一个 Notebook 可以导入 Databricks 直接运行（Python 3.11+，按 Databricks 官方的 Runtime 与 Python 版本对应关系，对应 Runtime 15.x 及以上）。步骤：
 
-1. 导入 `notebooks/batch_qa.ipynb`，从上到下运行（最前面的「更新代码」cell 会把仓库 clone 到 `REPO_DIR`——要求集群有 git、能访问 `REPO_URL`、目录可写；做不到只提示、不中断，继续用 `%pip` 装的版本；不需要可设 `GIT_PULL = False`）：先运行「环境安装」两个 cell（`%pip install superindex==0.1.2 pandas openpyxl pycryptodome`，随后重启 Python）。默认从 PyPI 装；公司内部 PyPI 镜像 / Git URL / Repos 路径 / Volumes 里的 wheel 的写法见 Notebook 里「环境安装」的说明，用其中一行替换该 cell 的内容。
+1. 导入 `notebooks/batch_qa.ipynb`，从上到下运行（最前面的「更新代码」cell 会把仓库 clone 到 `REPO_DIR`——要求集群有 git、能访问 `REPO_URL`、目录可写；做不到只提示、不中断，继续用 `%pip` 装的版本；不需要可设 `GIT_PULL = False`）：先运行「环境安装」cell（`%pip install superindex==0.1.2 pandas openpyxl pycryptodome`、可选的 `%pip install deepeval`，随后重启 Python）。默认从 PyPI 装；公司内部 PyPI 镜像 / Git URL / Repos 路径 / Volumes 里的 wheel 的写法见 Notebook 里「环境安装」的说明，用其中一行替换该 cell 的内容。
 2. 在「模型配置」cell 的 `LLM_CONFIG` 里填模型（密钥用 `dbutils.secrets.get(scope=..., key=...)`，不要明文写进 Notebook）：
    - OpenAI 兼容端点：`OPENAI_MODEL="<模型名>"` + `OPENAI_BASE_URL="https://<网关>/v1"` + `OPENAI_API_KEY`（Notebook 的「环境」cell 会把它们映射成 `SUPERINDEX_*`，所以 PyPI 上的版本也适用）；等价写法 `SUPERINDEX_CHAT_MODEL="openai/<模型名>"` + `SUPERINDEX_BASE_URL` + `SUPERINDEX_API_KEY_OVERRIDE`
    - Databricks Model Serving：`"databricks/<endpoint 名>"` + `SUPERINDEX_BASE_URL="https://<workspace>/serving-endpoints"` + token
@@ -167,15 +167,15 @@ uv run --group notebook jupyter nbconvert --to notebook --execute notebooks/batc
    - 公司只提供非 OpenAI 协议的 Python SDK：把「公司 SDK 适配器」cell 里的 `USE_CUSTOM_LLM` 改 `True`，在 `company_chat(messages, tools)` 里调用 SDK（返回 `{"text", "tool_calls"}`，约定见函数文档），模型名写 `company/<任意名>`。适配器是 litellm 的 `CustomLLM`，问答和建库摘要都能走；流式是整段一次性吐出的假流式。
 3. 在配置 cell 填 `DATASET_PATH`、`PDF_DIR`（如 `/Volumes/<catalog>/<schema>/<volume>/...`）和 `PERSIST_DIR`，其余默认即可。
 
-**工作目录与 `PERSIST_DIR`。** `WORK_DIR`（`md/`、`store/`、`runs/`）在 Databricks 上也与本地一致，默认 `<ROOT_DIR>/results/notebook/<题集名>`；存储层用 `fcntl.flock`、`os.replace` 和逐行追加，`/Workspace`、`/dbfs`、`/Volumes` 这类 FUSE 路径对它们的支持不确定，需要时设环境变量 `NB_WORK_DIR`（可写进 `.env`）为集群本地盘（如 `/local_disk0/...`）上的绝对路径。本地盘随集群消失，此时设 `PERSIST_DIR`（如 `/Volumes/<catalog>/<schema>/<volume>/superindex_nb/<题集名>`）：开始时若里面有上次的 `md/`、`store/`、`runs/`、`skipped_pdfs.json` 而本地没有，就复制回来（集群重启后不必重抽取、重建库，已答的题可续跑）；建库后、全部完成后再把 `WORK_DIR` 复制回去，复制失败只警告不中断。不设则全部跳过。
+**工作目录与 `PERSIST_DIR`。** `WORK_DIR`（`md/`、`store/`、`runs/`）在 Databricks 上也与本地一致，默认 `<ROOT_DIR>/data/notebook/<题集名>`；存储层用 `fcntl.flock`、`os.replace` 和逐行追加，`/Workspace`、`/dbfs`、`/Volumes` 这类 FUSE 路径对它们的支持不确定，需要时设环境变量 `NB_WORK_DIR`（可写进 `.env`）为集群本地盘（如 `/local_disk0/...`）上的绝对路径。本地盘随集群消失，此时设 `PERSIST_DIR`（如 `/Volumes/<catalog>/<schema>/<volume>/superindex_nb/<题集名>`）：开始时若里面有上次的 `md/`、`store/`、`runs/`、`skipped_pdfs.json` 而本地没有，就复制回来（集群重启后不必重抽取、重建库，已答的题可续跑）；建库后、全部完成后再把 `WORK_DIR` 复制回去，复制失败只警告不中断。不设则全部跳过。
 
 **本机用 nbconvert 执行时**，带上面的跳过参数即可，不会触发 `%pip`。
 
 > Databricks 专属的部分（`%pip` 安装、`restartPython`、`dbutils.secrets`、Volumes 读写、Model Serving 端点）没有在真实 Databricks 环境测过，首次使用请先用 `LIMIT=1` 跑一题确认。
 
-#### 答案评测：`notebooks/eval_deepeval.ipynb`
+#### 答案评测：`batch_qa` 的步骤 7（可选）
 
-用 deepeval 的 `GEval`（LLM-as-judge）对照 `expected` 逐题判定 `batch_qa` 的答案是否正确，输出准确率。输入默认是 `<ROOT_DIR>/results/notebook/<题集名>/runs/<最新时间戳>/results.jsonl`（可用环境变量 `RESULTS_PATH` 指定；设了 `NB_WORK_DIR` 时从它下面的 `runs/` 找），结果写在同目录的 `eval/` 下（`eval_results.jsonl`、`eval_summary.md`、`eval.csv`、`eval.xlsx`），已评过的题重跑时跳过；没有 `expected` 或 `batch_qa` 未成功的题标为 `not_evaluated`。裁判模型配置复用 `batch_qa`（`.env` 或「模型配置」cell 的 `OPENAI_MODEL` / `OPENAI_BASE_URL` / `OPENAI_API_KEY`，`JUDGE_MODEL` 可换成别的裁判模型），deepeval **不在项目依赖里**（它会拉低 `click` 等包的版本）：Databricks 上由 notebook 的 `%pip install` 安装，本地用 `uv run --group notebook --with deepeval jupyter ...` 临时叠加（不改 `uv.lock`），`nbconvert` 的跳过参数与 `batch_qa` 相同。
+`batch_qa.ipynb` 的最后一步用 deepeval 的 `GEval`（LLM-as-judge）对照 `expected` 逐题判定答案是否正确，输出准确率；开关 `RUN_EVAL`（默认 `True`），配置项（`RESULTS_PATH`、`JUDGE_MODEL`、`PASS_THRESHOLD`、`JUDGE_CONCURRENCY` 等）都在步骤 7 自己的 cell 里，可用同名环境变量覆盖。输入依次取 `RESULTS_PATH`（`results.jsonl` 或运行目录）> 本次运行的 `runs/<时间戳>/results.jsonl` > `runs/` 下最新的一次，结果固定写在 `<ROOT_DIR>/data/eval/<问题集文件名>/` 下（`eval_results.jsonl`、`eval_summary.md`、`eval.csv`、`eval.xlsx`，不写进 `WORK_DIR`；输出目录落在 `WORK_DIR` / `PERSIST_DIR` 内则跳过），已评过的题重跑时跳过；没有 `expected` 或答题未成功的题标为 `not_evaluated`。裁判需要 OpenAI 兼容端点，配置复用「模型配置」/ `.env` 的 `OPENAI_MODEL` / `OPENAI_BASE_URL` / `OPENAI_API_KEY`（`JUDGE_MODEL` 可换成别的裁判模型）。deepeval **不在项目依赖里**（它会把 `click` 降到 8.4 以下）：Databricks 上由「环境安装」里单独的 `%pip install deepeval` cell 安装（可删），本地用 `uv run --group notebook --with deepeval jupyter ...` 临时叠加（不改 `uv.lock`）。没装 deepeval、没配裁判模型、找不到结果等情况只打印提示并跳过，不影响前面的步骤。
 
 #### 配置 LLM
 
