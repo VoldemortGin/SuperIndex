@@ -167,7 +167,7 @@ uv run --group notebook jupyter nbconvert --to notebook --execute notebooks/batc
    - 公司只提供非 OpenAI 协议的 Python SDK：把「公司 SDK 适配器」cell 里的 `USE_CUSTOM_LLM` 改 `True`，在 `company_chat(messages, tools)` 里调用 SDK（返回 `{"text", "tool_calls"}`，约定见函数文档），模型名写 `company/<任意名>`。适配器是 litellm 的 `CustomLLM`，问答和建库摘要都能走；流式是整段一次性吐出的假流式。
 3. 在配置 cell 填 `DATASET_PATH`、`PDF_DIR`（如 `/Volumes/<catalog>/<schema>/<volume>/...`）和 `PERSIST_DIR`，其余默认即可。
 
-**工作目录与 `PERSIST_DIR`。** `WORK_DIR`（`md/`、`store/`、`runs/`）在 Databricks 上也与本地一致，默认 `<ROOT_DIR>/results/notebook/<题集名>`；存储层用 `fcntl.flock`、`os.replace` 和逐行追加，`/Workspace`、`/dbfs`、`/Volumes` 这类 FUSE 路径对它们的支持不确定，需要时设 `SI_NB_WORK_DIR` 为集群本地盘（如 `/local_disk0/...`）上的绝对路径。本地盘随集群消失，此时设 `PERSIST_DIR`（如 `/Volumes/<catalog>/<schema>/<volume>/superindex_nb/<题集名>`）：开始时若里面有上次的 `md/`、`store/`、`runs/`、`skipped_pdfs.json` 而本地没有，就复制回来（集群重启后不必重抽取、重建库，已答的题可续跑）；建库后、全部完成后再把 `WORK_DIR` 复制回去，复制失败只警告不中断。不设则全部跳过。
+**工作目录与 `PERSIST_DIR`。** `WORK_DIR`（`md/`、`store/`、`runs/`）在 Databricks 上也与本地一致，默认 `<ROOT_DIR>/results/notebook/<题集名>`；存储层用 `fcntl.flock`、`os.replace` 和逐行追加，`/Workspace`、`/dbfs`、`/Volumes` 这类 FUSE 路径对它们的支持不确定，需要时设环境变量 `NB_WORK_DIR`（可写进 `.env`）为集群本地盘（如 `/local_disk0/...`）上的绝对路径。本地盘随集群消失，此时设 `PERSIST_DIR`（如 `/Volumes/<catalog>/<schema>/<volume>/superindex_nb/<题集名>`）：开始时若里面有上次的 `md/`、`store/`、`runs/`、`skipped_pdfs.json` 而本地没有，就复制回来（集群重启后不必重抽取、重建库，已答的题可续跑）；建库后、全部完成后再把 `WORK_DIR` 复制回去，复制失败只警告不中断。不设则全部跳过。
 
 **本机用 nbconvert 执行时**，带上面的跳过参数即可，不会触发 `%pip`。
 
@@ -175,7 +175,7 @@ uv run --group notebook jupyter nbconvert --to notebook --execute notebooks/batc
 
 #### 答案评测：`notebooks/eval_deepeval.ipynb`
 
-用 deepeval 的 `GEval`（LLM-as-judge）对照 `expected` 逐题判定 `batch_qa` 的答案是否正确，输出准确率。输入默认是 `<ROOT_DIR>/results/notebook/<题集名>/runs/<最新时间戳>/results.jsonl`（可用 `SI_NB_RESULTS` 指定），结果写在同目录的 `eval/` 下（`eval_results.jsonl`、`eval_summary.md`、`eval.csv`、`eval.xlsx`），已评过的题重跑时跳过；没有 `expected` 或 `batch_qa` 未成功的题标为 `not_evaluated`。裁判模型配置复用 `batch_qa`（`.env` 或「模型配置」cell 的 `OPENAI_MODEL` / `OPENAI_BASE_URL` / `OPENAI_API_KEY`，`SI_NB_JUDGE_MODEL` 可换成别的裁判模型），deepeval **不在项目依赖里**（它会拉低 `click` 等包的版本）：Databricks 上由 notebook 的 `%pip install` 安装，本地用 `uv run --group notebook --with deepeval jupyter ...` 临时叠加（不改 `uv.lock`），`nbconvert` 的跳过参数与 `batch_qa` 相同。
+用 deepeval 的 `GEval`（LLM-as-judge）对照 `expected` 逐题判定 `batch_qa` 的答案是否正确，输出准确率。输入默认是 `<ROOT_DIR>/results/notebook/<题集名>/runs/<最新时间戳>/results.jsonl`（可用 `SI_NB_RESULTS` 指定；设了 `NB_WORK_DIR` 时从它下面的 `runs/` 找），结果写在同目录的 `eval/` 下（`eval_results.jsonl`、`eval_summary.md`、`eval.csv`、`eval.xlsx`），已评过的题重跑时跳过；没有 `expected` 或 `batch_qa` 未成功的题标为 `not_evaluated`。裁判模型配置复用 `batch_qa`（`.env` 或「模型配置」cell 的 `OPENAI_MODEL` / `OPENAI_BASE_URL` / `OPENAI_API_KEY`，`SI_NB_JUDGE_MODEL` 可换成别的裁判模型），deepeval **不在项目依赖里**（它会拉低 `click` 等包的版本）：Databricks 上由 notebook 的 `%pip install` 安装，本地用 `uv run --group notebook --with deepeval jupyter ...` 临时叠加（不改 `uv.lock`），`nbconvert` 的跳过参数与 `batch_qa` 相同。
 
 #### 配置 LLM
 
@@ -280,7 +280,7 @@ uv run superindex ask "2021 年的全年股息是多少？" --store results/chec
 
 **带密码的 PDF。** 主密码写进 `.env`：`PDF_INGEST_PASSWORD='你的密码'`（含 `#`、空格等字符时用单引号括起来）；少数用别的密码的，再在 `PDF_PASSWORDS` 里配候选密码：不加密、或打开密码为空的 PDF 照常处理，需要密码的 PDF 按顺序逐个尝试，密码都不对（或没配密码）的、以及没有文字层的 PDF 会**跳过并标记**（`skipped_wrong_password` / `skipped_no_text_layer`，登记在 `skipped_pdfs.json`），不中断其它文档；指向它们的题不会去问模型。`skipped_wrong_password` 每次运行都会重新尝试，改对密码后直接重跑即可。密码不要写进 Notebook：Databricks 上用 `PDF_PASSWORDS = [dbutils.secrets.get(scope="<scope>", key="<key>")]`，命令行用 `SI_NB_PDF_PASSWORDS`。解密只在内存里进行、不生成解密副本，落盘的只有抽取出的 Markdown（明文，目录权限要按原 PDF 的密级管理）；需要密码的 PDF 不支持页面截图。
 
-另有 `RECORDS_KEY`、`FORCE_EXTRACT`、`WORK_DIR`、`PERSIST_DIR`（Databricks 持久目录，见上）、`PREFETCH`、`PREFETCH_K`，同样可用 `SI_NB_*` 覆盖，见 Notebook 配置 cell。
+另有 `RECORDS_KEY`、`FORCE_EXTRACT`、`PERSIST_DIR`（Databricks 持久目录，见上）、`PREFETCH`、`PREFETCH_K`，同样可用 `SI_NB_*` 覆盖（`WORK_DIR` 例外，读 `NB_WORK_DIR`），见 Notebook 配置 cell。
 
 **`FIELD_MAP` 的嵌套路径。** 值除了顶层字段名，还可以写点号路径（`meta.source`）和 `[]` 列表展开（`evidence[].file` 取每个元素的 `file`，去重保序）。另有可选键 `pages`（如 `evidence[].page`），用于按页码判定检索命中。例如题集顶层是 `{"questions": [...]}`，每题有 `question`、`ground_truth`、`evidence: [{file, page, quote}]`：
 
