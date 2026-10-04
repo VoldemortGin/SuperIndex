@@ -138,7 +138,7 @@ superindex batch questions.jsonl --retrieval-only --match passage
 
 ### Notebook：从原始 PDF 一路跑到答案表
 
-`notebooks/batch_qa.ipynb` 把"一批原始 PDF → Markdown（文字层 + flash 补标题，或 Azure DI）→ 建库 → 用同一条 agent 链路回答 JSON/JSONL 题集 → `summary.md` / `answers.csv` / `answers.xlsx`"串成一次运行；中间产物（`md/`、`store/`、`runs/<时间戳>/`）落在 `<ROOT_DIR>/results/notebook/<题集名>/`（`ROOT_DIR` 是「环境」cell 打印的绝对路径：`SI_NB_ROOT_DIR` > 从当前目录向上找到的仓库根 > clone 副本 > 当前目录；相对路径配置都以它为基准，不依赖 cwd），重跑时已转换的 PDF、已建好的库、已成功的题都会跳过，`results.jsonl` 与 `superindex batch` 兼容。默认只读 PDF 文字层（绝不调用 Azure，需显式设 `PDF_EXTRACTOR="azure-di"`）；无文字层的扫描件会被标记跳过（`skipped_pdfs.json`），指向它的题不问模型、在结果里标 `skipped_no_text_layer`。
+`notebooks/batch_qa.ipynb` 把"一批原始 PDF → Markdown（文字层 + flash 补标题，或 Azure DI）→ 建库 → 用同一条 agent 链路回答 JSON/JSONL 题集 → `summary.md` / `answers.csv` / `answers.xlsx`"串成一次运行；中间产物（`md/`、`store/`、`runs/<时间戳>/`）落在 `<ROOT_DIR>/results/notebook/<题集名>/`（`ROOT_DIR` 是「环境」cell 打印的绝对路径：`ROOT_DIR` > 从当前目录向上找到的仓库根 > clone 副本 > 当前目录；相对路径配置都以它为基准，不依赖 cwd），重跑时已转换的 PDF、已建好的库、已成功的题都会跳过，`results.jsonl` 与 `superindex batch` 兼容。默认只读 PDF 文字层（绝不调用 Azure，需显式设 `PDF_EXTRACTOR="azure-di"`）；无文字层的扫描件会被标记跳过（`skipped_pdfs.json`），指向它的题不问模型、在结果里标 `skipped_no_text_layer`。
 
 ```bash
 uv sync --group notebook                  # ipykernel / pandas / openpyxl（不在主依赖里）
@@ -148,11 +148,11 @@ uv run --group notebook jupyter nbconvert --to notebook --execute notebooks/batc
   --output-dir results/notebook
 ```
 
-**开头会先更新代码**：Notebook 最前面的「更新代码（git pull）」cell 在仓库里运行时执行 `git pull --ff-only`（只快进）；不在仓库里（如 Databricks 上单独导入）则 clone 到 `REPO_DIR`（默认 `<当前目录>/SuperIndex`），之后「环境」cell 优先用这份代码（插到 `sys.path` 最前面，优先于 `%pip` 装的 PyPI 版，也不会切换工作目录）。`SI_NB_GIT_PULL=0` 关闭；没装 git、网络不通、认证失败等任何失败都只提示、不中断，继续用现有代码；本地有改动（如在 Jupyter 里保存过带输出的 Notebook）导致无法快进时只提示处理办法，**不会自动覆盖或 stash 你的改动**。pull 更新的是磁盘上的代码：Notebook 文件自身被更新后需重新打开再运行。命令行 `nbconvert` 执行同样会先 pull，所以工作区有未提交改动时可能看到上述提示（不影响运行）。
+**开头会先更新代码**：Notebook 最前面的「更新代码（git pull）」cell 在仓库里运行时执行 `git pull --ff-only`（只快进）；不在仓库里（如 Databricks 上单独导入）则 clone 到 `REPO_DIR`（默认 `<当前目录>/SuperIndex`），之后「环境」cell 优先用这份代码（插到 `sys.path` 最前面，优先于 `%pip` 装的 PyPI 版，也不会切换工作目录）。`GIT_PULL=0` 关闭；没装 git、网络不通、认证失败等任何失败都只提示、不中断，继续用现有代码；本地有改动（如在 Jupyter 里保存过带输出的 Notebook）导致无法快进时只提示处理办法，**不会自动覆盖或 stash 你的改动**。pull 更新的是磁盘上的代码：Notebook 文件自身被更新后需重新打开再运行。命令行 `nbconvert` 执行同样会先 pull，所以工作区有未提交改动时可能看到上述提示（不影响运行）。
 
 命令行执行**必须带** `--TagRemovePreprocessor...` 这两个参数：Notebook 开头的「环境安装」cell（`%pip install superindex==0.1.2 ...`）只给 Databricks 用，不跳过的话它会把 PyPI 上的 `superindex` 装进当前环境，覆盖本地的可编辑安装。
 
-问答需要在 `.env` 配好支持 tool calling 的 `SUPERINDEX_CHAT_MODEL`（OpenAI 兼容端点也可以只写 `OPENAI_MODEL` / `OPENAI_BASE_URL` / `OPENAI_API_KEY`，见下文「配置 LLM」）；配置项也可用 `SI_NB_DATASET` / `SI_NB_PDF_DIR` / `SI_NB_LIMIT` 等环境变量覆盖。
+问答需要在 `.env` 配好支持 tool calling 的 `SUPERINDEX_CHAT_MODEL`（OpenAI 兼容端点也可以只写 `OPENAI_MODEL` / `OPENAI_BASE_URL` / `OPENAI_API_KEY`，见下文「配置 LLM」）；配置项也可用 `DATASET_PATH` / `PDF_DIR` / `LIMIT` 等同名环境变量覆盖（也可写进 `.env`）。
 
 #### 在 Databricks 上运行
 
@@ -175,7 +175,7 @@ uv run --group notebook jupyter nbconvert --to notebook --execute notebooks/batc
 
 #### 答案评测：`notebooks/eval_deepeval.ipynb`
 
-用 deepeval 的 `GEval`（LLM-as-judge）对照 `expected` 逐题判定 `batch_qa` 的答案是否正确，输出准确率。输入默认是 `<ROOT_DIR>/results/notebook/<题集名>/runs/<最新时间戳>/results.jsonl`（可用 `SI_NB_RESULTS` 指定；设了 `NB_WORK_DIR` 时从它下面的 `runs/` 找），结果写在同目录的 `eval/` 下（`eval_results.jsonl`、`eval_summary.md`、`eval.csv`、`eval.xlsx`），已评过的题重跑时跳过；没有 `expected` 或 `batch_qa` 未成功的题标为 `not_evaluated`。裁判模型配置复用 `batch_qa`（`.env` 或「模型配置」cell 的 `OPENAI_MODEL` / `OPENAI_BASE_URL` / `OPENAI_API_KEY`，`SI_NB_JUDGE_MODEL` 可换成别的裁判模型），deepeval **不在项目依赖里**（它会拉低 `click` 等包的版本）：Databricks 上由 notebook 的 `%pip install` 安装，本地用 `uv run --group notebook --with deepeval jupyter ...` 临时叠加（不改 `uv.lock`），`nbconvert` 的跳过参数与 `batch_qa` 相同。
+用 deepeval 的 `GEval`（LLM-as-judge）对照 `expected` 逐题判定 `batch_qa` 的答案是否正确，输出准确率。输入默认是 `<ROOT_DIR>/results/notebook/<题集名>/runs/<最新时间戳>/results.jsonl`（可用环境变量 `RESULTS_PATH` 指定；设了 `NB_WORK_DIR` 时从它下面的 `runs/` 找），结果写在同目录的 `eval/` 下（`eval_results.jsonl`、`eval_summary.md`、`eval.csv`、`eval.xlsx`），已评过的题重跑时跳过；没有 `expected` 或 `batch_qa` 未成功的题标为 `not_evaluated`。裁判模型配置复用 `batch_qa`（`.env` 或「模型配置」cell 的 `OPENAI_MODEL` / `OPENAI_BASE_URL` / `OPENAI_API_KEY`，`JUDGE_MODEL` 可换成别的裁判模型），deepeval **不在项目依赖里**（它会拉低 `click` 等包的版本）：Databricks 上由 notebook 的 `%pip install` 安装，本地用 `uv run --group notebook --with deepeval jupyter ...` 临时叠加（不改 `uv.lock`），`nbconvert` 的跳过参数与 `batch_qa` 相同。
 
 #### 配置 LLM
 
@@ -248,7 +248,7 @@ uv run superindex ask "2021 年的全年股息是多少？" --store results/chec
 #   Windows PowerShell：$env:SUPERINDEX_CHAT_MODEL="deepseek/deepseek-chat"; uv run superindex ask "..." --store results/check_store
 ```
 
-能流式输出带 `146.00` 的回答就说明模型、地址和 tool calling 都通了。也可以在 Notebook 里设 `LIMIT=1`（或环境变量 `SI_NB_LIMIT=1`）只跑一题。
+能流式输出带 `146.00` 的回答就说明模型、地址和 tool calling 都通了。也可以在 Notebook 里设 `LIMIT=1`（或环境变量 `LIMIT=1`）只跑一题。
 
 **常见报错。**
 
@@ -257,30 +257,30 @@ uv run superindex ask "2021 年的全年股息是多少？" --store results/chec
 - `does not support thinking` / `UnsupportedParamsError`：`SUPERINDEX_REASONING_EFFORT` 留空。
 - Ollama 回答很怪、像没看到文档：先用 `ollama ps` 看 CONTEXT 列，默认上下文过小时长提示会被截断，只在 Ollama 服务端日志里有警告。
 
-**Notebook 配置项速查**（都在第一个配置 cell，也可用 `SI_NB_<名字>` 环境变量覆盖，布尔值写 `1/true/yes/on`）：
+**Notebook 配置项速查**（都在第一个配置 cell，也可用同名环境变量覆盖，或写进 `.env`，布尔值写 `1/true/yes/on`）：
 
 | 配置项 | 环境变量 | 默认 | 含义 |
 |---|---|---|---|
-| `GIT_PULL` | `SI_NB_GIT_PULL` | `True` | 开头是否 `git pull` / clone；`0` / `false` / `no` / `off` 关闭（不执行任何 git 命令） |
-| `REPO_URL` | `SI_NB_REPO_URL` | `https://github.com/VoldemortGin/SuperIndex.git` | 不在仓库里时 clone 的地址（公司内网有镜像时改这里；输出里 `user:token@` 会打码） |
-| `REPO_BRANCH` | `SI_NB_REPO_BRANCH` | `main` | clone 的分支 |
-| `REPO_DIR` | `SI_NB_REPO_DIR` | `<当前目录>/SuperIndex` | 不在仓库里时 clone 到哪里；已存在但不是 SuperIndex 仓库则跳过、不会动它 |
-| `DATASET_PATH` | `DATASET_PATH`（写在 `.env`，优先）/ `SI_NB_DATASET` | `data/questions.jsonl` | 题集（`.json` / `.jsonl`） |
-| `PDF_DIR` | `SI_NB_PDF_DIR` | `data/pdfs` | 原始 PDF 目录（递归） |
-| `FIELD_MAP` | `SI_NB_FIELD_MAP` | `id/question/expected/doc` 同名 | 数据集字段名映射，值为 JSON 对象；支持嵌套路径，见下 |
-| `PDF_EXTRACTOR` | `SI_NB_PDF_EXTRACTOR` | `text-layer` | `text-layer`（离线）或 `azure-di` |
-| `ADD_HEADINGS` | `SI_NB_ADD_HEADINGS` | `True` | 仅 `text-layer`：离线补 `#` 章节标题，不调 LLM |
+| `GIT_PULL` | `GIT_PULL` | `True` | 开头是否 `git pull` / clone；`0` / `false` / `no` / `off` 关闭（不执行任何 git 命令） |
+| `REPO_URL` | `REPO_URL` | `https://github.com/VoldemortGin/SuperIndex.git` | 不在仓库里时 clone 的地址（公司内网有镜像时改这里；输出里 `user:token@` 会打码） |
+| `REPO_BRANCH` | `REPO_BRANCH` | `main` | clone 的分支 |
+| `REPO_DIR` | `REPO_DIR` | `<当前目录>/SuperIndex` | 不在仓库里时 clone 到哪里；已存在但不是 SuperIndex 仓库则跳过、不会动它 |
+| `DATASET_PATH` | `DATASET_PATH`（可写在 `.env`） | `data/questions.jsonl` | 题集（`.json` / `.jsonl`） |
+| `PDF_DIR` | `PDF_DIR` | `data/pdfs` | 原始 PDF 目录（递归） |
+| `FIELD_MAP` | `FIELD_MAP` | `id/question/expected/doc` 同名 | 数据集字段名映射，值为 JSON 对象；支持嵌套路径，见下 |
+| `PDF_EXTRACTOR` | `PDF_EXTRACTOR` | `text-layer` | `text-layer`（离线）或 `azure-di` |
+| `ADD_HEADINGS` | `ADD_HEADINGS` | `True` | 仅 `text-layer`：离线补 `#` 章节标题，不调 LLM |
 | （无） | `PDF_INGEST_PASSWORD` | 空 | 需要密码才能打开的 PDF 的**主密码**，写在 `.env` 里，原样当作一个密码，总是第一个尝试 |
-| `PDF_PASSWORDS` | `SI_NB_PDF_PASSWORDS` | `[]` | 其它候选密码（排在主密码之后按顺序尝试）；环境变量值写 JSON 数组 `'["pw1", "pw,2"]'`，非 JSON 时整串当单个密码 |
-| `INDEX_SUMMARY` | `SI_NB_INDEX_SUMMARY` | `False` | `True`：建库时用 `SUPERINDEX_INDEX_MODEL` 写摘要 |
-| `LIMIT` | `SI_NB_LIMIT` | 全部 | 只跑前 N 题 |
-| `TIMEOUT` | `SI_NB_TIMEOUT` | `300` | 每题超时（秒） |
-| `CONCURRENCY` | `SI_NB_CONCURRENCY` | `1` | 并发题数 |
-| `RESUME` | `SI_NB_RESUME` | `True` | 续跑最近一次运行目录，跳过已成功的题 |
+| `PDF_PASSWORDS` | `PDF_PASSWORDS` | `[]` | 其它候选密码（排在主密码之后按顺序尝试）；环境变量值写 JSON 数组 `'["pw1", "pw,2"]'`，非 JSON 时整串当单个密码 |
+| `INDEX_SUMMARY` | `INDEX_SUMMARY` | `False` | `True`：建库时用 `SUPERINDEX_INDEX_MODEL` 写摘要 |
+| `LIMIT` | `LIMIT` | 全部 | 只跑前 N 题 |
+| `TIMEOUT` | `TIMEOUT` | `300` | 每题超时（秒） |
+| `CONCURRENCY` | `CONCURRENCY` | `1` | 并发题数 |
+| `RESUME` | `RESUME` | `True` | 续跑最近一次运行目录，跳过已成功的题 |
 
-**带密码的 PDF。** 主密码写进 `.env`：`PDF_INGEST_PASSWORD='你的密码'`（含 `#`、空格等字符时用单引号括起来）；少数用别的密码的，再在 `PDF_PASSWORDS` 里配候选密码：不加密、或打开密码为空的 PDF 照常处理，需要密码的 PDF 按顺序逐个尝试，密码都不对（或没配密码）的、以及没有文字层的 PDF 会**跳过并标记**（`skipped_wrong_password` / `skipped_no_text_layer`，登记在 `skipped_pdfs.json`），不中断其它文档；指向它们的题不会去问模型。`skipped_wrong_password` 每次运行都会重新尝试，改对密码后直接重跑即可。密码不要写进 Notebook：Databricks 上用 `PDF_PASSWORDS = [dbutils.secrets.get(scope="<scope>", key="<key>")]`，命令行用 `SI_NB_PDF_PASSWORDS`。解密只在内存里进行、不生成解密副本，落盘的只有抽取出的 Markdown（明文，目录权限要按原 PDF 的密级管理）；需要密码的 PDF 不支持页面截图。
+**带密码的 PDF。** 主密码写进 `.env`：`PDF_INGEST_PASSWORD='你的密码'`（含 `#`、空格等字符时用单引号括起来）；少数用别的密码的，再在 `PDF_PASSWORDS` 里配候选密码：不加密、或打开密码为空的 PDF 照常处理，需要密码的 PDF 按顺序逐个尝试，密码都不对（或没配密码）的、以及没有文字层的 PDF 会**跳过并标记**（`skipped_wrong_password` / `skipped_no_text_layer`，登记在 `skipped_pdfs.json`），不中断其它文档；指向它们的题不会去问模型。`skipped_wrong_password` 每次运行都会重新尝试，改对密码后直接重跑即可。密码不要写进 Notebook：Databricks 上用 `PDF_PASSWORDS = [dbutils.secrets.get(scope="<scope>", key="<key>")]`，命令行用 `PDF_PASSWORDS`。解密只在内存里进行、不生成解密副本，落盘的只有抽取出的 Markdown（明文，目录权限要按原 PDF 的密级管理）；需要密码的 PDF 不支持页面截图。
 
-另有 `RECORDS_KEY`、`FORCE_EXTRACT`、`PERSIST_DIR`（Databricks 持久目录，见上）、`PREFETCH`、`PREFETCH_K`，同样可用 `SI_NB_*` 覆盖（`WORK_DIR` 例外，读 `NB_WORK_DIR`），见 Notebook 配置 cell。
+另有 `RECORDS_KEY`、`FORCE_EXTRACT`、`PERSIST_DIR`（Databricks 持久目录，见上）、`PREFETCH`、`PREFETCH_K`，同样可用同名环境变量覆盖（`WORK_DIR` 例外，环境变量叫 `NB_WORK_DIR`），见 Notebook 配置 cell。
 
 **`FIELD_MAP` 的嵌套路径。** 值除了顶层字段名，还可以写点号路径（`meta.source`）和 `[]` 列表展开（`evidence[].file` 取每个元素的 `file`，去重保序）。另有可选键 `pages`（如 `evidence[].page`），用于按页码判定检索命中。例如题集顶层是 `{"questions": [...]}`，每题有 `question`、`ground_truth`、`evidence: [{file, page, quote}]`：
 
@@ -289,7 +289,7 @@ FIELD_MAP = {"id": "id", "question": "question", "expected": "ground_truth",
              "doc": "evidence[].file", "pages": "evidence[].page"}
 ```
 
-命令行执行时用环境变量传 JSON 字符串，如 `SI_NB_FIELD_MAP='{"id": "id", "question": "question", "doc": null}'`（PowerShell 里用 `$env:SI_NB_FIELD_MAP='{"id": "id", "question": "question", "doc": null}'`）。注意：把 `doc` 映射到标准证据文档，会把检索限定在正确文档内，评测成绩偏乐观；想评估全库检索，就把 `doc` 设为 `None`（JSON 里写 `null`）。
+命令行执行时用环境变量传 JSON 字符串，如 `FIELD_MAP='{"id": "id", "question": "question", "doc": null}'`（PowerShell 里用 `$env:FIELD_MAP='{"id": "id", "question": "question", "doc": null}'`）。注意：把 `doc` 映射到标准证据文档，会把检索限定在正确文档内，评测成绩偏乐观；想评估全库检索，就把 `doc` 设为 `None`（JSON 里写 `null`）。
 
 **加密 PDF。** 部分 PDF 是 AES 加密的，PyPDF2 需要 `pycryptodome` 才能读文字层；`uv sync --group notebook` 已包含它。缺失时这些 PDF 会在抽取汇总表里标为 failed 并提示安装。
 
