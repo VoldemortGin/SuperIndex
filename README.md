@@ -158,7 +158,7 @@ uv run --group notebook jupyter nbconvert --to notebook --execute notebooks/batc
 
 同一个 Notebook 可以导入 Databricks 直接运行（Python 3.11+，按 Databricks 官方的 Runtime 与 Python 版本对应关系，对应 Runtime 15.x 及以上）。步骤：
 
-1. 导入 `notebooks/batch_qa.ipynb`，从上到下运行（最前面的「更新代码」cell 会把仓库 clone 到 `REPO_DIR`——要求集群有 git、能访问 `REPO_URL`、目录可写；做不到只提示、不中断，继续用 `%pip` 装的版本；不需要可设 `GIT_PULL = False`）：先运行「环境安装」cell（`%pip install superindex==0.1.2 pandas openpyxl pycryptodome`、可选的 `%pip install deepeval`，随后重启 Python）。默认从 PyPI 装；公司内部 PyPI 镜像 / Git URL / Repos 路径 / Volumes 里的 wheel 的写法见 Notebook 里「环境安装」的说明，用其中一行替换该 cell 的内容。
+1. 导入 `notebooks/batch_qa.ipynb`，从上到下运行（最前面的「更新代码」cell 会把仓库 clone 到 `REPO_DIR`——要求集群有 git、能访问 `REPO_URL`、目录可写；做不到只提示、不中断，继续用 `%pip` 装的版本；不需要可设 `GIT_PULL = False`）：先运行「环境安装」cell（`%pip install superindex==0.1.2 pandas openpyxl pycryptodome`，随后重启 Python）。默认从 PyPI 装；公司内部 PyPI 镜像 / Git URL / Repos 路径 / Volumes 里的 wheel 的写法见 Notebook 里「环境安装」的说明，用其中一行替换该 cell 的内容。
 2. 在「模型配置」cell 的 `LLM_CONFIG` 里填模型（密钥用 `dbutils.secrets.get(scope=..., key=...)`，不要明文写进 Notebook）：
    - OpenAI 兼容端点：`OPENAI_MODEL="<模型名>"` + `OPENAI_BASE_URL="https://<网关>/v1"` + `OPENAI_API_KEY`（Notebook 的「环境」cell 会把它们映射成 `SUPERINDEX_*`，所以 PyPI 上的版本也适用）；等价写法 `SUPERINDEX_CHAT_MODEL="openai/<模型名>"` + `SUPERINDEX_BASE_URL` + `SUPERINDEX_API_KEY_OVERRIDE`
    - Databricks Model Serving：`"databricks/<endpoint 名>"` + `SUPERINDEX_BASE_URL="https://<workspace>/serving-endpoints"` + token
@@ -172,10 +172,6 @@ uv run --group notebook jupyter nbconvert --to notebook --execute notebooks/batc
 **本机用 nbconvert 执行时**，带上面的跳过参数即可，不会触发 `%pip`。
 
 > Databricks 专属的部分（`%pip` 安装、`restartPython`、`dbutils.secrets`、Volumes 读写、Model Serving 端点）没有在真实 Databricks 环境测过，首次使用请先用 `LIMIT=1` 跑一题确认。
-
-#### 答案评测：`batch_qa` 的步骤 7（可选）
-
-`batch_qa.ipynb` 的最后一步用 deepeval 的 `GEval`（LLM-as-judge）对照 `expected` 逐题判定答案是否正确，输出准确率；开关 `RUN_EVAL`（默认 `True`），配置项（`RESULTS_PATH`、`JUDGE_MODEL`、`PASS_THRESHOLD`、`JUDGE_CONCURRENCY` 等）都在步骤 7 自己的 cell 里，可用同名环境变量覆盖。输入依次取 `RESULTS_PATH`（`results.jsonl` 或运行目录）> 本次运行的 `runs/<时间戳>/results.jsonl` > `runs/` 下最新的一次，结果固定写在 `<ROOT_DIR>/data/eval/<问题集文件名>/` 下（`eval_results.jsonl`、`eval_summary.md`、`eval.csv`、`eval.xlsx`，不写进 `WORK_DIR`；输出目录落在 `WORK_DIR` / `PERSIST_DIR` 内则跳过），已评过的题重跑时跳过；没有 `expected` 或答题未成功的题标为 `not_evaluated`。裁判需要 OpenAI 兼容端点，配置复用「模型配置」/ `.env` 的 `OPENAI_MODEL` / `OPENAI_BASE_URL` / `OPENAI_API_KEY`（`JUDGE_MODEL` 可换成别的裁判模型）。deepeval **不在项目依赖里**（它会把 `click` 降到 8.4 以下）：Databricks 上由「环境安装」里单独的 `%pip install deepeval` cell 安装（可删），本地用 `uv run --group notebook --with deepeval jupyter ...` 临时叠加（不改 `uv.lock`）。没装 deepeval、没配裁判模型、找不到结果等情况只打印提示并跳过，不影响前面的步骤。
 
 #### 配置 LLM
 
@@ -274,7 +270,8 @@ uv run superindex ask "2021 年的全年股息是多少？" --store results/chec
 | `PDF_PASSWORDS` | `PDF_PASSWORDS` | `[]` | 其它候选密码（排在主密码之后按顺序尝试）；环境变量值写 JSON 数组 `'["pw1", "pw,2"]'`，非 JSON 时整串当单个密码 |
 | `INDEX_SUMMARY` | `INDEX_SUMMARY` | `False` | `True`：建库时用 `SUPERINDEX_INDEX_MODEL` 写摘要 |
 | `LIMIT` | `LIMIT` | 全部 | 只跑前 N 题 |
-| `TIMEOUT` | `TIMEOUT` | `300` | 每题超时（秒） |
+| `TIMEOUT` | `TIMEOUT` | `600` | 每题超时（秒） |
+| `MAX_TURNS` | `MAX_TURNS` | `25` | 每题 agent 最多几回合（超过记为 `max_turns` 出错）；`0` / `none` / `default` 表示不传、沿用 openai-agents SDK 默认的 10 |
 | `CONCURRENCY` | `CONCURRENCY` | `1` | 并发题数 |
 | `RESUME` | `RESUME` | `True` | 续跑最近一次运行目录，跳过已成功的题 |
 | `RATE_LIMIT_WAIT` | `RATE_LIMIT_WAIT` | `60` | 模型接口被限流（429 / rate limit / quota 等）时所有线程一起暂停多久（秒）再重试 |
