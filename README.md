@@ -183,7 +183,7 @@ uv run --group notebook jupyter nbconvert --to notebook --execute notebooks/batc
 
 **这个项目怎么调用大模型。** 问答是 openai-agents 的工具循环（模型调用 `get_document_structure` / `get_page_content` / `search_pages` / `calculate`，直到给出回答），模型调用由 litellm 路由到具体厂商。模型名带 `openai/` 前缀时，发的是 OpenAI **Chat Completions** 流式请求（`POST {base}/chat/completions`，`stream=true`，带 `tools` 和 `stream_options.include_usage`）；**不走 Responses API**。`databricks/<endpoint>`、`azure/<deployment>` 等前缀由 litellm 按各自协议发。走代理或自定义 CA 靠标准环境变量：`HTTPS_PROXY`、`NO_PROXY`、`SSL_CERT_FILE`、`REQUESTS_CA_BUNDLE`。
 
-**在哪里配。** 在**仓库根目录**放 `.env`；Notebook 启动时会自动切到仓库根并加载它（第一个 cell 的输出里会打印读到的 `.env` 路径）。已存在的系统环境变量优先于 `.env`（`.env` 不覆盖它们）。`.env` 只在 Notebook 内核启动时读一次，改完后要**重启内核**再运行。
+**在哪里配。** 在**仓库根目录**（`ROOT_DIR`）放 `.env`，Notebook 也会读当前目录（Notebook 所在目录，如 Databricks 上）的 `.env`：先读 `ROOT_DIR/.env`，再读当前目录的 `.env`（第一个 cell 的输出里会打印读到的 `.env` 路径和变量名，不含值）。已存在的系统环境变量优先于 `.env`（`.env` 不覆盖它们）。`.env` 只在 Notebook 内核启动时读一次，改完后要**重启内核**再运行。
 
 ```bash
 cp .env.example .env              # macOS / Linux
