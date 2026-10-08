@@ -1830,6 +1830,37 @@ wheels = [
 ]
 
 [[package]]
+name = "ocrspine-models"
+version = "0.0.1"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version < '3.12' and sys_platform == 'win32'",
+    "python_full_version < '3.12' and sys_platform == 'emscripten'",
+    "python_full_version < '3.12' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5d/53/f7f419ba1a898e9a56ae602ae6d2b9a78d229f1131cc4b60261fa40ec790/ocrspine_models-0.0.1.tar.gz", hash = "sha256:d51fe925eab9067b7f4f2b4545e5bc7632c1b986e196b77d37658ed1662bef7b", size = 24961736, upload-time = "2026-06-26T02:45:57.009Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4a/8f/104948ded074d1abd90b2e0ae8b70918f10f5631c6cdeacab483880bf80b/ocrspine_models-0.0.1-py3-none-any.whl", hash = "sha256:b28be4815191baa31e07da33af2542c1dcc7e36bbe1fa9cb9f3e8b25bd0a72cd", size = 24975210, upload-time = "2026-06-26T02:45:47.661Z" },
+]
+
+[[package]]
+name = "ocrspine-models"
+version = "0.0.3"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14' and sys_platform == 'win32'",
+    "python_full_version >= '3.14' and sys_platform == 'emscripten'",
+    "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform == 'emscripten'",
+    "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform == 'win32'",
+    "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8d/b9/b4da901bc3f5dbeb335631e3074cf0116fbf870a1b642faababdb678fa6b/ocrspine_models-0.0.3.tar.gz", hash = "sha256:18517b51b604f9d17973701f633f21ab99a6929b87391ce54b30b4c9ca38f5be", size = 24961865, upload-time = "2026-07-30T07:31:28.843Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0b/5c/7fab9ebc0184f0e4198cd30892b12764c73e6a6bd66d41004e0de3c08be1/ocrspine_models-0.0.3-py3-none-any.whl", hash = "sha256:04b00b79f16b1e6331275cbc0d24b69a88d7b28fe6014be152af2d2e67954602", size = 24975285, upload-time = "2026-07-30T07:29:34.012Z" },
+]
+
+[[package]]
 name = "openai"
 version = "2.54.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1986,6 +2017,23 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/30/4b/90c937815137d43ce71ba043cd3566221e9df6b9c805f24b5d138c9d40a7/parso-0.8.7.tar.gz", hash = "sha256:eaaac4c9fdd5e9e8852dc778d2d7405897ec510f2a298071453e5e3a07914bb1", size = 401824, upload-time = "2026-05-01T23:13:02.138Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/99/5d/8268b644392ee874ee82a635cd0df1773de230bde356c38de28e298392cc/parso-0.8.7-py2.py3-none-any.whl", hash = "sha256:a8926eb2a1b915486941fdbd31e86a4baf88fe8c210f25f2f35ecec5b574ca1c", size = 107025, upload-time = "2026-05-01T23:12:58.867Z" },
+]
+
+[[package]]
+name = "pdfspine"
+version = "0.12.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "ocrspine-models", version = "0.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "ocrspine-models", version = "0.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/6e/79/8fe4e5b22d4f411bb2c82f974a4bf21795d1c7e6658bcdf0304e43ba6580/pdfspine-0.12.0.tar.gz", hash = "sha256:450e84a0fe523e036034b0e0a0f7cf1fc69431b81715a2170640e8a64b8a4f98", size = 5228871, upload-time = "2026-10-03T10:23:29.708Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/72/25/bd7d268bf01db207401929e67ac4e431e53112fa1052f642d955614b1658/pdfspine-0.12.0-cp311-abi3-macosx_10_12_x86_64.whl", hash = "sha256:05a6b39e9e84323a30d859667381ad8b985b22ace07ccc00a65dc976e87f807e", size = 12183110, upload-time = "2026-10-03T10:23:17.91Z" },
+    { url = "https://files.pythonhosted.org/packages/d2/df/a54ca84ff88b179ac5f982be11a33507ae8376e491057e3940935024b049/pdfspine-0.12.0-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:c048ecf3d7569a34b9b1a0c96ae2df5e417f69c78751ac0c40478305f5edb6ad", size = 11296750, upload-time = "2026-10-03T10:23:20.497Z" },
+    { url = "https://files.pythonhosted.org/packages/41/63/8ad05cb147b03fae31418893c87b80bb1e55d152d2aa14fb66e2c14e7200/pdfspine-0.12.0-cp311-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:b02e01d6da2660c173d486af16468911bb7a7e076066156f9528b19dda40deaf", size = 12570331, upload-time = "2026-10-03T10:23:22.856Z" },
+    { url = "https://files.pythonhosted.org/packages/fb/e2/ad07282955bb1bca2b4fefb4775a9dd8018f4022313d5bc8e8b5e6c9540d/pdfspine-0.12.0-cp311-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:4c3142b5c83e6d90f333f44e798c0184ba8fb50a6ced6806ab6cdca885ceb3d3", size = 11462734, upload-time = "2026-10-03T10:23:25.148Z" },
+    { url = "https://files.pythonhosted.org/packages/c8/a1/2ae59c4a6a4444b027ce3624a1bcf93b58b82580ec4544498959e8eb8856/pdfspine-0.12.0-cp311-abi3-win_amd64.whl", hash = "sha256:b95a767ab66edc4b61f8af2442d145aa1ef76d21bdd437d544e3b35dc3ebd1cc", size = 12643780, upload-time = "2026-10-03T10:23:27.643Z" },
 ]
 
 [[package]]
@@ -3147,6 +3195,11 @@ dependencies = [
     { name = "tiktoken" },
 ]
 
+[package.optional-dependencies]
+pdfspine = [
+    { name = "pdfspine" },
+]
+
 [package.dev-dependencies]
 build = [
     { name = "pyinstaller" },
@@ -3173,6 +3226,7 @@ requires-dist = [
     { name = "mcp", specifier = ">=2.2.0,<3" },
     { name = "openai", specifier = ">=2.54.0,<3" },
     { name = "openai-agents", specifier = ">=0.20.0,<0.21" },
+    { name = "pdfspine", marker = "extra == 'pdfspine'", specifier = ">=0.12.0,<0.13" },
     { name = "pillow", specifier = ">=10.0,<13" },
     { name = "pypdf2", specifier = ">=3.0.1,<4" },
     { name = "pypdfium2", specifier = ">=5.13.0,<6" },
@@ -3183,6 +3237,7 @@ requires-dist = [
     { name = "sortedcontainers", specifier = ">=2.4,<3" },
     { name = "tiktoken", specifier = ">=0.14.0,<0.15" },
 ]
+provides-extras = ["pdfspine"]
 
 [package.metadata.requires-dev]
 build = [
