@@ -138,7 +138,7 @@ superindex batch questions.jsonl --retrieval-only --match passage
 
 ### Notebook：从原始 PDF 一路跑到答案表
 
-`notebooks/batch_qa.ipynb` 把"一批原始 PDF → Markdown（文字层 + flash 补标题，或 Azure DI）→ 建库 → 用同一条 agent 链路回答 JSON/JSONL 题集 → `summary.md` / `answers.csv` / `answers.xlsx`"串成一次运行；中间产物（`md/`、`store/`、`runs/<时间戳>/`）落在 `<ROOT_DIR>/data/notebook/<题集名>/`（`ROOT_DIR` 是「环境」cell 打印的绝对路径：`ROOT_DIR` > 从当前目录向上找到的仓库根 > clone 副本 > 当前目录；相对路径配置都以它为基准，不依赖 cwd），重跑时已转换的 PDF、已建好的库、已成功的题都会跳过，`results.jsonl` 与 `superindex batch` 兼容。默认只读 PDF 文字层（绝不调用 Azure，需显式设 `PDF_EXTRACTOR="azure-di"`）；无文字层的扫描件会被标记跳过（`skipped_pdfs.json`），指向它的题不问模型、在结果里标 `skipped_no_text_layer`。
+`notebooks/batch_qa.ipynb` 把"一批原始 PDF → Markdown（文字层 + flash 补标题，或 Azure DI）→ 建库 → 用同一条 agent 链路回答 JSON/JSONL 题集 → `summary.md` / `answers.csv` / `answers.xlsx`"串成一次运行；中间产物（`md/`、`store/`、`runs/<时间戳>/`）落在 `<ROOT_DIR>/data/notebook/<题集名>/`（`ROOT_DIR` 是「环境」cell 打印的绝对路径：`ROOT_DIR` > 从当前目录向上找到的仓库根；相对路径配置都以它为基准，不依赖 cwd），重跑时已转换的 PDF、已建好的库、已成功的题都会跳过，`results.jsonl` 与 `superindex batch` 兼容。默认只读 PDF 文字层（绝不调用 Azure，需显式设 `PDF_EXTRACTOR="azure-di"`）；无文字层的扫描件会被标记跳过（`skipped_pdfs.json`），指向它的题不问模型、在结果里标 `skipped_no_text_layer`。
 
 ```bash
 uv sync --group notebook                  # ipykernel / pandas / openpyxl（不在主依赖里）
@@ -148,7 +148,7 @@ uv run --group notebook jupyter nbconvert --to notebook --execute notebooks/batc
   --output-dir data/notebook
 ```
 
-**开头会先更新代码**：Notebook 最前面的「更新代码（git pull）」cell 在仓库里运行时执行 `git pull --ff-only`（只快进）；不在仓库里（如 Databricks 上单独导入）则 clone 到 `REPO_DIR`（默认 `<当前目录>/SuperIndex`），之后「环境」cell 优先用这份代码（插到 `sys.path` 最前面，优先于 `%pip` 装的 PyPI 版，也不会切换工作目录）。`GIT_PULL=0` 关闭；没装 git、网络不通、认证失败等任何失败都只提示、不中断，继续用现有代码；本地有改动（如在 Jupyter 里保存过带输出的 Notebook）导致无法快进时只提示处理办法，**不会自动覆盖或 stash 你的改动**。pull 更新的是磁盘上的代码：Notebook 文件自身被更新后需重新打开再运行。命令行 `nbconvert` 执行同样会先 pull，所以工作区有未提交改动时可能看到上述提示（不影响运行）。
+**代码来源**：Notebook 直接使用它所在仓库里的代码（「环境」cell 从当前目录向上找仓库根并插到 `sys.path` 最前面，优先于 `%pip` 装的 PyPI 版，找不到则报错）；Databricks 上请先把仓库拉到最新再打开本 Notebook。
 
 命令行执行**必须带** `--TagRemovePreprocessor...` 这两个参数：Notebook 开头的「环境安装」cell（`%pip install superindex==0.1.2 ...`）只给 Databricks 用，不跳过的话它会把 PyPI 上的 `superindex` 装进当前环境，覆盖本地的可编辑安装。
 
@@ -158,7 +158,7 @@ uv run --group notebook jupyter nbconvert --to notebook --execute notebooks/batc
 
 同一个 Notebook 可以导入 Databricks 直接运行（Python 3.11+，按 Databricks 官方的 Runtime 与 Python 版本对应关系，对应 Runtime 15.x 及以上）。步骤：
 
-1. 导入 `notebooks/batch_qa.ipynb`，从上到下运行（最前面的「更新代码」cell 会把仓库 clone 到 `REPO_DIR`——要求集群有 git、能访问 `REPO_URL`、目录可写；做不到只提示、不中断，继续用 `%pip` 装的版本；不需要可设 `GIT_PULL = False`）：先运行「环境安装」cell（`%pip install superindex==0.1.2 pandas openpyxl pycryptodome`，随后重启 Python）。默认从 PyPI 装；公司内部 PyPI 镜像 / Git URL / Repos 路径 / Volumes 里的 wheel 的写法见 Notebook 里「环境安装」的说明，用其中一行替换该 cell 的内容。
+1. 导入 `notebooks/batch_qa.ipynb`，从上到下运行（先在 Databricks 上把仓库拉到最新再打开）：先运行「环境安装」cell（`%pip install superindex==0.1.2 pandas openpyxl pycryptodome`，随后重启 Python）。默认从 PyPI 装；公司内部 PyPI 镜像 / Git URL / Repos 路径 / Volumes 里的 wheel 的写法见 Notebook 里「环境安装」的说明，用其中一行替换该 cell 的内容。
 2. 在「模型配置」cell 的 `LLM_CONFIG` 里填模型（密钥用 `dbutils.secrets.get(scope=..., key=...)`，不要明文写进 Notebook）：
    - OpenAI 兼容端点：`OPENAI_MODEL="<模型名>"` + `OPENAI_BASE_URL="https://<网关>/v1"` + `OPENAI_API_KEY`（Notebook 的「环境」cell 会把它们映射成 `SUPERINDEX_*`，所以 PyPI 上的版本也适用）；等价写法 `SUPERINDEX_CHAT_MODEL="openai/<模型名>"` + `SUPERINDEX_BASE_URL` + `SUPERINDEX_API_KEY_OVERRIDE`
    - Databricks Model Serving：`"databricks/<endpoint 名>"` + `SUPERINDEX_BASE_URL="https://<workspace>/serving-endpoints"` + token
@@ -257,10 +257,6 @@ uv run superindex ask "2021 年的全年股息是多少？" --store results/chec
 
 | 配置项 | 环境变量 | 默认 | 含义 |
 |---|---|---|---|
-| `GIT_PULL` | `GIT_PULL` | `True` | 开头是否 `git pull` / clone；`0` / `false` / `no` / `off` 关闭（不执行任何 git 命令） |
-| `REPO_URL` | `REPO_URL` | `https://github.com/VoldemortGin/SuperIndex.git` | 不在仓库里时 clone 的地址（公司内网有镜像时改这里；输出里 `user:token@` 会打码） |
-| `REPO_BRANCH` | `REPO_BRANCH` | `main` | clone 的分支 |
-| `REPO_DIR` | `REPO_DIR` | `<当前目录>/SuperIndex` | 不在仓库里时 clone 到哪里；已存在但不是 SuperIndex 仓库则跳过、不会动它 |
 | `DATASET_PATH` | `DATASET_PATH`（可写在 `.env`） | `data/questions.jsonl` | 题集（`.json` / `.jsonl`） |
 | `PDF_DIR` | `PDF_DIR` | `data/pdfs` | 原始 PDF 目录（递归） |
 | `FIELD_MAP` | `FIELD_MAP` | `id/question/expected/doc` 同名 | 数据集字段名映射，值为 JSON 对象；支持嵌套路径，见下 |

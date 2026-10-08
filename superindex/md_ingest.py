@@ -760,6 +760,7 @@ class IndexResult:
     pdf: str | None = None
     warnings: list[str] = field(default_factory=list)
     doc_meta: dict[str, Any] | None = None
+    doc_meta_added: bool = False    # skipped document, metadata extracted this call
 
 
 def _now_iso() -> str:
@@ -827,15 +828,18 @@ def index_markdown(md_path: Path, store_path: Path, *, summary_model: str | None
                 if linked and any(info.get(k) != v for k, v in linked.items()):
                     _relink(store, meta, linked)
                 found = info.get("doc_meta")
+                added = False
                 if doc_meta and _needs_doc_meta(info, doc_meta_model):
                     found = extract_doc_meta(md_path.name, parse_pages(
                         markdown, page_chars=page_chars).lines, doc_meta_model, backend)
                     _store_doc_meta(store, store.get_meta(meta["id"]) or meta, found)
+                    added = True
                 return IndexResult(meta["id"], name, meta.get("pageNum", 0),
                                    int(info.get("node_count", 0)),
                                    bool(info.get("page_markers")), skipped=True,
                                    pdf=linked.get("pdf_path") or info.get("pdf_path"),
-                                   warnings=warnings, doc_meta=found)
+                                   warnings=warnings, doc_meta=found,
+                                   doc_meta_added=added)
 
     parsed = parse_pages(markdown, page_chars=page_chars)
     if not any(p.strip() for p in parsed.pages):

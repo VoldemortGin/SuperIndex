@@ -134,10 +134,12 @@ def test_index_and_backfill_store_doc_meta(tmp_path: Path,
         "description": "AIA 2024 annual report"}))
     again = index_markdown(md, store, doc_meta_model="fake/model")   # skipped, meta added
     assert again.skipped and again.doc_id == res.doc_id and len(prompts) == 1
+    assert again.doc_meta_added and not res.doc_meta_added
     meta = _stored(store, res.doc_id)
     assert meta["metadata"]["doc_meta"]["source"] == "llm"
     assert meta["description"] == "AIA 2024 annual report"
-    index_markdown(md, store, doc_meta_model="fake/model")           # same model: no new call
+    third = index_markdown(md, store, doc_meta_model="fake/model")   # same model: no new call
+    assert third.skipped and not third.doc_meta_added
     assert len(prompts) == 1
 
     other = tmp_path / "CPIC_IR2023H1.md"
