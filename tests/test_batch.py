@@ -158,6 +158,29 @@ def test_run_question_collects_tools_pages_turns() -> None:
     assert client.calls == [("What dividend?", "pi-1")]
 
 
+def test_calc_diagnostics() -> None:
+    q = batch.Question("Q1", "growth?")
+    rec = batch.run_question(FakeClient({"growth?": "同比增长 4.92%"}), q, None, timeout=5)
+    assert rec["calc_calls"] == 0 and rec["calc_suspect"] is True
+
+    calc_call = {"type": "tool_call", "call_id": "3", "name": "calculate",
+                 "arguments": {"expression": "pct_change(a, b)"}}
+    stream = FakeStream([calc_call, calc_call, {"type": "answer", "delta": "增长 4.92%"}])
+    rec = batch.run_question(FakeClient({"growth?": stream}), q, None, timeout=5)
+    assert rec["calc_calls"] == 2 and rec["calc_suspect"] is False
+
+    for answer, suspect in (("The final dividend was 108 HK cents.", False),
+                            ("CAGR of 15", True), ("是去年的 2 倍", True),
+                            ("up 3 percentage points", True), ("2021 年", False)):
+        assert batch.calc_diagnostics({"answer": answer})["calc_suspect"] is suspect
+
+    records = [{"tool_calls": [{"name": "calculate"}] * 2, "answer": "5%"},
+               {"tool_calls": [], "answer": "环比下降"}, {"answer": "108"}]
+    assert batch.calc_summary_lines([]) == []
+    line = batch.calc_summary_lines(records)[0]
+    assert "调用 calculate 的题 1/3（共 2 次）" in line and "疑似心算 1 题" in line
+
+
 def test_run_question_records_errors() -> None:
     q = batch.Question("Q1", "boom")
     rec = batch.run_question(FakeClient({"boom": RuntimeError("no backend")}), q, None,
@@ -225,6 +248,8 @@ def test_cmd_batch_writes_results_and_summary(tmp_path: Path, store: Path,
     assert "命中率（粗评分）：2/2" in summary and "错误：2" in summary
     assert summary.index("| 1 | A |") < summary.index("| 4 | D |")
     assert "aia_ar2021_excerpt.md:1-2" in summary
+    assert "调用 calculate 的题 0/4" in summary
+    assert recs["A"]["calc_calls"] == 0 and recs["C"]["calc_suspect"] is False
     assert str(out / batch.SUMMARY_FILE) in capsys.readouterr().out
 
     # --resume re-runs only the failed questions; --doc overrides the file's doc

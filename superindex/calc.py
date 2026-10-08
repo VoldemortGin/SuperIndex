@@ -66,8 +66,15 @@ GUIDANCE = (
     "- Any addition, subtraction, multiplication, division, growth rate, share, "
     "difference or unit conversion MUST go through calculate(); never do arithmetic "
     "in your head.\n"
+    "- Read every input figure from the documents first (get_page_content()) and note "
+    "its source page; pass the figures to calculate() via `variables`.\n"
     "- First bring the figures to the same unit and currency (millions vs thousands, "
-    "HK$ vs US$), then calculate. Show the formula with the figures in your answer.\n"
+    "HK$ vs US$) — the conversion itself also through calculate(), at the rate the "
+    "document states — then calculate. Show the formula with the figures and their "
+    "source pages in your answer.\n"
+    "- The final answer uses calculate()'s result; never recompute or change it. For "
+    "fewer decimals, round inside the expression: round(pct_change(a, b), 2). "
+    "Independent calculations can go as several calculate() calls in one turn.\n"
     "- In calculate() expressions put a space after every comma between function "
     "arguments: max(1, 234). A comma with no spaces is a thousands separator "
     "(1,234 is 1234)."
@@ -75,6 +82,9 @@ GUIDANCE = (
 
 CONTEXT = Context(prec=PRECISION, rounding=ROUND_HALF_UP)
 FUNCTION_NAMES = frozenset(DEFAULT_FUNCTIONS) | frozenset(FINANCE_FUNCTIONS)
+# evaluate_for_llm can only add to its function table, not remove from it, so
+# the random functions avada-eval ships by default are rejected before evaluating.
+_DISABLED_FUNCTIONS = frozenset({"rand", "randint"})
 _ERROR_PREFIX = {
     "DivisionByZero": "division by zero",
     "SyntaxError": "invalid expression",
@@ -150,6 +160,15 @@ def evaluate(expression: str, variables: dict[str, Any] | None = None) -> dict[s
             raise CalcError(f"bad variable name {name!r}: use letters, digits and "
                             "underscores, not starting with _ and not a function name")
         names[str(name)] = _number(value, f"variable {name!r}")
+
+    try:
+        called = {n.func.id for n in ast.walk(ast.parse(_preprocess(expression), mode="eval"))
+                  if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+    except SyntaxError:
+        called = set()  # evaluate_for_llm reports the syntax error
+    if disabled := sorted(called & _DISABLED_FUNCTIONS):
+        raise CalcError(f"function not available: {', '.join(disabled)}() "
+                        "(no random numbers; use real figures from the documents)")
 
     try:
         out = evaluate_for_llm(_preprocess(expression), names, context=CONTEXT)

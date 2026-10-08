@@ -52,7 +52,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
-from superindex import bm25, image_chat, page_images, prefetch
+from superindex import bm25, calc, image_chat, page_images, prefetch
 from superindex.runtime import ConfigError, app_dir
 
 RESULTS_FILE = "results.jsonl"
@@ -169,6 +169,35 @@ def pages_read(tool_calls: list[dict[str, Any]]) -> list[str]:
     return out
 
 
+# A percentage, a multiple or a growth/change term in the answer: a figure that
+# was probably computed. Heuristic — it also flags percentages quoted from the
+# documents, and misses computed sums / unit conversions without such a term.
+_CALC_SUSPECT_RE = re.compile(
+    r"\d\s*(?:%|％|个百分点|倍)|同比|环比|增长率|增幅|降幅|复合增长"
+    r"|(?i:cagr|growth rate|percentage points?)")
+
+
+def calc_diagnostics(record: dict[str, Any]) -> dict[str, Any]:
+    """`calc_calls`: the record's calculate calls; `calc_suspect`: none, yet the
+    answer has a percentage / multiple / growth term (`_CALC_SUSPECT_RE`)."""
+    calls = sum(1 for c in record.get("tool_calls") or [] if c.get("name") == calc.TOOL_NAME)
+    suspect = not calls and bool(_CALC_SUSPECT_RE.search(record.get("answer") or ""))
+    return {"calc_calls": calls, "calc_suspect": suspect}
+
+
+def calc_summary_lines(records: list[dict[str, Any]]) -> list[str]:
+    """Printable calculate-tool summary (counts only); [] without records."""
+    if not records:
+        return []
+    diags = [calc_diagnostics(r) for r in records]
+    used = sum(1 for d in diags if d["calc_calls"])
+    calls = sum(d["calc_calls"] for d in diags)
+    suspect = sum(1 for d in diags if d["calc_suspect"])
+    return [(f"- 计算工具：调用 calculate 的题 {used}/{len(records)}（共 {calls} 次）　"
+             f"疑似心算 {suspect} 题（回答含百分比/倍数/增长等字样但未调用；启发式，"
+             "文档原文的百分比也会计入）")]
+
+
 def _arguments(raw: Any) -> Any:
     if isinstance(raw, str):
         try:
@@ -230,6 +259,7 @@ def run_question(client: Any, q: Question, scope: str | list[str] | None, *,
         "tool_calls": list(tool_calls), "pages_read": pages_read(tool_calls),
         "score": score(q.expected, text),
     }
+    record.update(calc_diagnostics(record))
     if session is not None:
         record["page_images"] = session.records()
         record["image_count"] = len(record["page_images"])
@@ -415,6 +445,7 @@ def write_summary(records: list[dict[str, Any]], path: Path, meta: dict[str, Any
          f"　本次运行墙钟：{meta.get('wall_seconds', 0):.1f}s"),
         *_prefetch_lines(records, meta),
         *route_summary_lines(records),
+        *calc_summary_lines(records),
         *([f"- 附图（{meta.get('page_image', '')}）：共 "
            f"{sum(int(r.get('image_count') or 0) for r in records)} 张"]
           if with_images else []),
@@ -860,7 +891,8 @@ def cmd_batch(args: argparse.Namespace) -> int:
                           "expected": q.expected, **q.extra, "scope": None, "answer": "",
                           "error": error, "seconds": 0.0,
                           "llm_turns": 0, "tool_calls": [], "pages_read": [],
-                          "score": score(q.expected, "")}
+                          "score": score(q.expected, ""), "calc_calls": 0,
+                          "calc_suspect": False}
         with lock:
             with (out_dir / RESULTS_FILE).open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -904,7 +936,7 @@ def cmd_batch(args: argparse.Namespace) -> int:
     })
     errors = sum(1 for r in records if r.get("error"))
     print(f"\n{len(records)} question(s), {errors} error(s), {wall:.1f}s")
-    for line in route_summary_lines(records):
+    for line in route_summary_lines(records) + calc_summary_lines(records):
         print(line)
     print(f"summary   : {out_dir / SUMMARY_FILE}")
     return 0

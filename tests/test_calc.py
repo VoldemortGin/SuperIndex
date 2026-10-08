@@ -129,3 +129,24 @@ def test_registered_next_to_search_pages(tmp_path: Path) -> None:
     assert {"search_pages", "calculate"} <= set(specs)
     blocks, err = specs["calculate"][3]({"expression": "0.1 + 0.2"})
     assert not err and json.loads(blocks[0]["text"])["result"] == "0.3"
+
+
+def test_guidance_requires_the_tool() -> None:
+    from superindex import agent_search
+
+    guidance = next(t.guidance for t in agent_search.tools() if t.name == calc.TOOL_NAME)
+    assert guidance == calc.GUIDANCE
+    for rule in ("MUST go through calculate()", "never do arithmetic in your head",
+                 "source page", "uses calculate()'s result", "round(pct_change(a, b), 2)"):
+        assert rule in guidance
+    assert "never compute in your head" in calc.DESCRIPTION
+    assert calc.SCHEMA["required"] == ["expression"]
+    assert set(calc.SCHEMA["properties"]) == {"expression", "variables"}
+
+
+def test_random_functions_are_disabled() -> None:
+    for expression in ("rand()", "randint(1, 2)", "1 + randint(1, 2)"):
+        with pytest.raises(calc.CalcError, match="function not available"):
+            calc.evaluate(expression)
+    text, err = calc.run_calculate({"expression": "randint(1,2)"})
+    assert err and "function not available" in json.loads(text)["error"]
