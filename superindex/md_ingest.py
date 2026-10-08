@@ -43,6 +43,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import html
+import json
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -54,6 +55,7 @@ from superindex import bm25, page_images
 from superindex.engine.local_store import DocStore
 from superindex.engine.naming import sanitize_filename
 from superindex.nav.build import markdown_chapters
+from superindex.nav.policy import YEAR_RE
 from superindex.nav.store import Chapter
 
 # Same marker `extractors.azure_di.PAGE_MARKER` writes ("<!-- page: {n} -->"),
@@ -526,6 +528,226 @@ def summarize(tree: list[dict[str, Any]], parsed: ParsedMarkdown, model: str,
         utils._llm_backend.reset(token)
 
 
+# ───────────────────────────────────────────────────────────── document metadata
+DOC_META_FIELDS = ("company", "region", "period", "report_type", "description")
+REPORT_TYPES = ("annual", "interim", "quarterly", "other")
+_NULLS = {"", "null", "none", "n/a", "na", "unknown", "未知", "无", "不详"}
+_HALF_RE = re.compile(r"(?i)(?<![a-z])H1(?!\d)|(?<![a-z0-9])1H(?![a-z])|上半年|半年|中期|interim"
+                      r"|half[- ]?year|six months|6 months")
+_QUARTER_RE = re.compile(r"(?i)(?<![a-z])Q([1-4])(?!\d)|(?<![a-z0-9])([1-4])Q(?![a-z])"
+                         r"|第([一二三四1-4])季")
+_FY_SHORT_RE = re.compile(r"(?i)(?<![a-z])FY\s?'?(\d{2})(?!\d)")
+_INTERIM_NAME_RE = re.compile(r"(?i)(?<![a-z])(?:IR|interim|H1|1H)(?![a-z])|中期|半年")
+_ANNUAL_NAME_RE = re.compile(r"(?i)(?<![a-z])(?:AR|annual)(?![a-z])|年报|年度报告")
+DOC_META_PROMPT = (
+    "你在为财报文档库建立文档级元数据。根据文件名、章节大纲和开头内容，判断这份文档【本身】的报告主体与主报告期。\n"
+    "注意：报告正文里会出现上年对比数、五年摘要、分部/地区章节、未来年份的计划等，这些年份和地区都不是文档本身的"
+    "报告期或主体；以封面、标题、文件名体现的主报告期与发布主体为准。集团/合并报告的 region 写\"集团\"，"
+    "不要因为有分部或地区章节就写成某个地区。\n"
+    "只输出一个 JSON 对象，不要解释：\n"
+    '{"company": "发布报告的公司名称", "region": "报告主体覆盖的地区（集团报告写\\"集团\\"）", '
+    '"period": "主报告期：年度写 FY2024，上半年/中期写 1H2024", '
+    '"report_type": "annual | interim | other", '
+    '"description": "一句中文概括：主体、报告期、报告类型"}\n'
+    "无法判断的字段填 null。\n\n"
+    "文件名: {name}\n"
+    "章节大纲:\n{outline}\n\n"
+    "开头内容:\n{head}"
+)
+
+
+def _clean(value: Any) -> str | None:
+    if value is None or isinstance(value, (dict, list)):
+        return None
+    text = " ".join(str(value).split())
+    return None if text.lower() in _NULLS else text
+
+
+def normalize_period(text: str | None, report_type: str | None = None) -> str | None:
+    """A reporting period in one spelling: ``FY2024`` (a year), ``1H2024``
+    (first half / interim), ``3Q2024`` (a quarter); None without a year.
+    The first year in `text` is taken; `report_type` "interim" implies 1H."""
+    raw = _clean(text)
+    if raw is None:
+        return None
+    if m := YEAR_RE.search(raw):
+        year = m.group(0)
+    elif m := _FY_SHORT_RE.search(raw):
+        year = "20" + m.group(1)
+    else:
+        return None
+    if quarter := _QUARTER_RE.search(raw):
+        digit = next(g for g in quarter.groups() if g)
+        return f"{'一二三四'.index(digit) + 1 if digit in '一二三四' else digit}Q{year}"
+    if _HALF_RE.search(raw) or report_type == "interim":
+        return f"1H{year}"
+    return f"FY{year}"
+
+
+def period_year(period: str | None) -> int | None:
+    m = YEAR_RE.search(period or "")
+    return int(m.group(0)) if m else None
+
+
+def normalize_report_type(value: str | None, period: str | None = None) -> str | None:
+    """annual / interim / quarterly / other; from the period when not given."""
+    raw = (_clean(value) or "").lower()
+    if raw in REPORT_TYPES:
+        return raw
+    if raw:
+        if _HALF_RE.search(raw):
+            return "interim"
+        if "quarter" in raw or "季" in raw:
+            return "quarterly"
+        if "annual" in raw or "年报" in raw or "年度" in raw:
+            return "annual"
+        return "other"
+    if period and period.startswith("FY"):
+        return "annual"
+    if period and period.startswith("1H"):
+        return "interim"
+    return "quarterly" if period and period[1:2] == "Q" else None
+
+
+def doc_meta_from_filename(name: str) -> dict[str, Any]:
+    """Rule-based metadata from a file name alone: period and report type
+    (e.g. ``AIA_AR2024.md`` -> FY2024 annual, ``AIA_IR2024H1.md`` -> 1H2024
+    interim); company, region and description stay None."""
+    stem = Path(name).stem
+    kind = ("interim" if _INTERIM_NAME_RE.search(stem)
+            else "annual" if _ANNUAL_NAME_RE.search(stem) else None)
+    period = normalize_period(stem, kind)
+    return {"company": None, "region": None, "period": period,
+            "report_type": normalize_report_type(kind, period), "description": None}
+
+
+def parse_doc_meta_reply(reply: str | None) -> dict[str, Any]:
+    """The JSON object in an LLM reply (fenced or bare), fields cleaned;
+    {} when there is none."""
+    text = reply or ""
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end <= start:
+        return {}
+    try:
+        data = json.loads(text[start:end + 1])
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out = {k: _clean(data.get(k)) for k in DOC_META_FIELDS}
+    out["report_type"] = normalize_report_type(out["report_type"])
+    out["period"] = normalize_period(out["period"], out["report_type"])
+    if out["report_type"] is None:
+        out["report_type"] = normalize_report_type(None, out["period"])
+    return {k: v for k, v in out.items() if v}
+
+
+def doc_meta_prompt(name: str, lines: list[str], head_lines: int = 60) -> str:
+    """The extraction prompt: file name, `#`/`##` outline and the opening
+    text (as `nav.build.summarize_files` builds its input)."""
+    chapters = markdown_chapters(_heading_lines(lines))
+    outline = [f"{'  ' * (depth - 1)}- {c.title}"
+               for ch in chapters for c, depth in ch.walk() if depth <= 2][:40]
+    body = [ln for ln in lines if ln.strip()][:head_lines]
+    head = " ".join(" ".join(body).split())[:1200]
+    return (DOC_META_PROMPT.replace("{name}", name)
+            .replace("{outline}", "\n".join(outline) or "（无标题）")
+            .replace("{head}", head))
+
+
+def _complete(model: str, prompt: str, backend: dict[str, str] | None) -> str:
+    from superindex.engine import utils
+
+    token = utils._llm_backend.set(backend)
+    try:
+        return utils.llm_completion(model, prompt) or ""
+    finally:
+        utils._llm_backend.reset(token)
+
+
+def extract_doc_meta(name: str, lines: list[str], model: str | None = None,
+                     backend: dict[str, str] | None = None) -> dict[str, Any]:
+    """Document metadata (`DOC_META_FIELDS`) from one LLM call when `model` is
+    given; a field the LLM leaves out (or every field, when the call fails or
+    there is no model) comes from `doc_meta_from_filename`. `source` says
+    which: "llm", "llm+filename" or "filename"; `model` is the model tried."""
+    fallback = doc_meta_from_filename(name)
+    found: dict[str, Any] = {}
+    error = None
+    if model:
+        try:
+            found = parse_doc_meta_reply(_complete(model, doc_meta_prompt(name, lines), backend))
+            if not found:
+                error = "no JSON object in the reply"
+        except Exception as exc:  # noqa: BLE001 - the file name still gives a period
+            error = f"{type(exc).__name__}: {exc}"
+    meta: dict[str, Any] = {k: found.get(k) or fallback.get(k) for k in DOC_META_FIELDS}
+    if meta["report_type"] == "interim" and (meta["period"] or "").startswith("FY"):
+        meta["period"] = "1H" + meta["period"][2:]
+    from_name = [k for k in DOC_META_FIELDS if not found.get(k) and fallback.get(k)]
+    meta["source"] = ("filename" if not found
+                      else "llm+filename" if from_name else "llm")
+    meta["model"] = model
+    if error:
+        meta["error"] = error[:300]
+    return meta
+
+
+def _needs_doc_meta(info: dict[str, Any], model: str | None, force: bool = False) -> bool:
+    """Whether a stored document should get (new) metadata: it has none, or
+    `model` is set and has not been tried on it yet."""
+    current = info.get("doc_meta")
+    if force or not isinstance(current, dict):
+        return True
+    return bool(model) and current.get("model") != model
+
+
+def _with_doc_meta(meta: dict[str, Any], doc_meta: dict[str, Any]) -> dict[str, Any]:
+    """`meta` with `metadata.doc_meta` set; an empty description (or one that
+    came from the previous doc_meta) takes the extracted one."""
+    info = meta.get("metadata") or {}
+    old = (info.get("doc_meta") or {}).get("description")
+    updated = {**meta, "metadata": {**info, "doc_meta": doc_meta}}
+    if doc_meta.get("description") and (not meta.get("description")
+                                        or meta.get("description") == old):
+        updated["description"] = doc_meta["description"]
+    return updated
+
+
+def _store_doc_meta(store: DocStore, meta: dict[str, Any], doc_meta: dict[str, Any]) -> None:
+    doc_id = meta["id"]
+    with store.lock():
+        tree, pages = store.get_tree(doc_id), store.get_pages(doc_id)
+        if tree is None or pages is None:
+            return
+        store.save_document(doc_id, _with_doc_meta(meta, doc_meta), tree, pages)
+
+
+def _stored_lines(store: DocStore, doc_id: str) -> list[str]:
+    pages = store.get_pages(doc_id) or []
+    return "\n".join(str(p.get("markdown") or "") for p in pages).splitlines()
+
+
+def backfill_doc_meta(store_path: Path, *, model: str | None = None,
+                      backend: dict[str, str] | None = None, force: bool = False,
+                      ) -> list[tuple[str, dict[str, Any]]]:
+    """Add document metadata to an existing store without rebuilding trees:
+    every completed document that has none — or, with `model`, that `model`
+    has not been tried on — gets `extract_doc_meta` from its stored text
+    (`force`: every document). Returns (name, doc_meta) per updated document."""
+    store = DocStore(str(store_path))
+    done: list[tuple[str, dict[str, Any]]] = []
+    for meta in sorted(store.list_metas(), key=lambda m: str(m.get("name"))):
+        info = meta.get("metadata") or {}
+        if meta.get("status") != "completed" or not _needs_doc_meta(info, model, force):
+            continue
+        name = str(info.get("source_file") or meta.get("name") or "")
+        doc_meta = extract_doc_meta(name, _stored_lines(store, meta["id"]), model, backend)
+        _store_doc_meta(store, meta, doc_meta)
+        done.append((str(meta.get("name")), doc_meta))
+    return done
+
+
 # ───────────────────────────────────────────────────────────── store
 @dataclass
 class IndexResult:
@@ -537,6 +759,7 @@ class IndexResult:
     skipped: bool = False
     pdf: str | None = None
     warnings: list[str] = field(default_factory=list)
+    doc_meta: dict[str, Any] | None = None
 
 
 def _now_iso() -> str:
@@ -569,15 +792,20 @@ def _link_pdf(pdf: Path | None, md_pages: int, page_mode: str,
 def index_markdown(md_path: Path, store_path: Path, *, summary_model: str | None = None,
                    backend: dict[str, str] | None = None, concurrency: int = 8,
                    page_chars: int = DEFAULT_PAGE_CHARS,
-                   force: bool = False, pdf: Path | None = None) -> IndexResult:
+                   force: bool = False, pdf: Path | None = None,
+                   doc_meta: bool = True, doc_meta_model: str | None = None) -> IndexResult:
     """Index one Markdown file into the store. `summary_model=None` builds the
     tree without any LLM call (no summaries, no description). `pdf` is the
     PDF the Markdown was extracted from (see `superindex.page_images`).
+    `doc_meta` stores document metadata (`extract_doc_meta`: company, region,
+    period, report type) in ``metadata.doc_meta`` — with one `doc_meta_model`
+    call when given, else from the file name — and fills an empty description.
 
     A document is identified by its file name: re-indexing replaces the stored
     copy, and is skipped when the content is unchanged and the stored copy
     already has what was asked for (summaries), unless `force`. A skipped
-    document still gets a new or changed `pdf` linked (metadata only)."""
+    document still gets a new or changed `pdf` linked and missing document
+    metadata added (metadata only)."""
     raw = md_path.read_bytes()
     markdown = raw.decode("utf-8", errors="replace")
     digest = hashlib.sha256(raw).hexdigest()
@@ -598,11 +826,16 @@ def index_markdown(md_path: Path, store_path: Path, *, summary_model: str | None
                                    info.get("page_mode") or "marker", warnings)
                 if linked and any(info.get(k) != v for k, v in linked.items()):
                     _relink(store, meta, linked)
+                found = info.get("doc_meta")
+                if doc_meta and _needs_doc_meta(info, doc_meta_model):
+                    found = extract_doc_meta(md_path.name, parse_pages(
+                        markdown, page_chars=page_chars).lines, doc_meta_model, backend)
+                    _store_doc_meta(store, store.get_meta(meta["id"]) or meta, found)
                 return IndexResult(meta["id"], name, meta.get("pageNum", 0),
                                    int(info.get("node_count", 0)),
                                    bool(info.get("page_markers")), skipped=True,
                                    pdf=linked.get("pdf_path") or info.get("pdf_path"),
-                                   warnings=warnings)
+                                   warnings=warnings, doc_meta=found)
 
     parsed = parse_pages(markdown, page_chars=page_chars)
     if not any(p.strip() for p in parsed.pages):
@@ -613,6 +846,8 @@ def index_markdown(md_path: Path, store_path: Path, *, summary_model: str | None
         assert summary_model is not None
         description = summarize(tree, parsed, summary_model, backend=backend,
                                 concurrency=concurrency)
+    found = extract_doc_meta(md_path.name, parsed.lines, doc_meta_model, backend) \
+        if doc_meta else None
     public = _public_tree(tree)
     node_count = len(_preorder(public))
     pages = [{"page_index": i + 1, "markdown": text}
@@ -642,6 +877,8 @@ def index_markdown(md_path: Path, store_path: Path, *, summary_model: str | None
         },
         "mode": "markdown",
     }
+    if found is not None:
+        meta = _with_doc_meta(meta, found)
     # The keyword index and page tags go in first: doc.json, written last by
     # save_document, is what makes the document visible.
     doc_dir = Path(store_path).expanduser() / "docs" / doc_id
@@ -652,7 +889,7 @@ def index_markdown(md_path: Path, store_path: Path, *, summary_model: str | None
         for old in previous:
             store.delete_document(old["id"])
     return IndexResult(doc_id, name, len(pages), node_count, parsed.has_markers,
-                       pdf=linked.get("pdf_path"), warnings=warnings)
+                       pdf=linked.get("pdf_path"), warnings=warnings, doc_meta=found)
 
 
 def _relink(store: DocStore, meta: dict[str, Any], linked: dict[str, Any]) -> None:

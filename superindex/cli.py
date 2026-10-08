@@ -7,6 +7,7 @@
     superindex nav-serve [--port 8787] [--no-watch]
     superindex batch questions.jsonl [--out DIR] [--concurrency 1] [--resume]
     superindex batch questions.jsonl --retrieval-only [--top-k 5]
+    superindex doc-meta [--store DIR] [--force] [--no-llm]
 
 (From a source checkout: `uv run python scripts/si.py ...`.)
 
@@ -146,6 +147,7 @@ def cmd_index(args: argparse.Namespace) -> int:
     if not args.no_summary:
         summary_model = settings.require("index")
         configure_litellm()
+    meta_model = _doc_meta_model(settings) if args.doc_meta else None
     store = _store(args)
     files = find_markdown(Path(args.path).expanduser())
     if not files:
@@ -155,6 +157,7 @@ def cmd_index(args: argparse.Namespace) -> int:
     pdfs = page_images.pdf_index(Path(pdf_dir).expanduser()) if pdf_dir else None
     print(f"store   : {store}")
     print(f"summary : {summary_model or 'off'}")
+    print(f"docmeta : {(meta_model or 'file name only') if args.doc_meta else 'off'}")
     if pdf_dir:
         print(f"pdfs    : {pdf_dir} ({sum(len(v) for v in (pdfs or {}).values())} found)")
     failed = 0
@@ -167,7 +170,8 @@ def cmd_index(args: argparse.Namespace) -> int:
                                      backend=settings.index_backend(),
                                      concurrency=args.concurrency,
                                      page_chars=args.page_chars, force=args.force,
-                                     pdf=page_images.find_pdf(md, pdfs))
+                                     pdf=page_images.find_pdf(md, pdfs),
+                                     doc_meta=args.doc_meta, doc_meta_model=meta_model)
         except Exception as exc:  # noqa: BLE001 - keep going with the next file
             failed += 1
             print(f"  FAIL  {md.name}: {type(exc).__name__}: {exc}", flush=True)
@@ -178,9 +182,46 @@ def cmd_index(args: argparse.Namespace) -> int:
               f"  ({time.time() - t0:.1f}s)", flush=True)
         if res.pdf:
             print(f"        pdf: {res.pdf}", flush=True)
+        if res.doc_meta:
+            print(f"        meta: {_meta_line(res.doc_meta)}", flush=True)
         for warning in res.warnings:
             print(f"        warning: {warning}", flush=True)
     return 1 if failed else 0
+
+
+def _doc_meta_model(settings: LLMSettings) -> str | None:
+    """The model for document metadata (the index model, else the chat
+    model); None, with a note, when neither is configured."""
+    model = settings.index_model or settings.chat_model
+    if model:
+        configure_litellm()
+    else:
+        print("doc meta: no SUPERINDEX_INDEX_MODEL / SUPERINDEX_CHAT_MODEL — "
+              "periods from file names only", file=sys.stderr)
+    return model
+
+
+def _meta_line(meta: dict[str, Any]) -> str:
+    parts = [str(meta.get(k)) for k in ("company", "region", "period", "report_type")
+             if meta.get(k)]
+    return " | ".join(parts or ["-"]) + f"  ({meta.get('source')})" \
+        + (f"  error: {meta['error']}" if meta.get("error") else "")
+
+
+def cmd_doc_meta(args: argparse.Namespace) -> int:
+    from superindex.md_ingest import backfill_doc_meta
+
+    model = None if args.no_llm else _doc_meta_model(_settings(args))
+    store = _store(args)
+    print(f"store   : {store}")
+    print(f"docmeta : {model or 'file name only'}{'  (force)' if args.force else ''}")
+    done = backfill_doc_meta(store, model=model,
+                             backend=_settings(args).index_backend() if model else None,
+                             force=args.force)
+    for name, meta in done:
+        print(f"  {name}: {_meta_line(meta)}", flush=True)
+    print(f"{len(done)} document(s) updated")
+    return 0
 
 
 # ───────────────────────────────────────────────────────────── ask
@@ -315,7 +356,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("path", help="a .md file or a directory (searched recursively)")
     p.add_argument("--store", help="store directory (SUPERINDEX_STORE)")
     p.add_argument("--no-summary", action="store_true",
-                   help="build the tree without any LLM call (no summaries/description)")
+                   help="build the tree without summaries/description (no LLM call "
+                        "unless --doc-meta finds a model)")
     p.add_argument("--force", action="store_true", help="re-index unchanged files")
     p.add_argument("--concurrency", type=int, default=8,
                    help="simultaneous summary calls (default 8)")
@@ -323,8 +365,21 @@ def build_parser() -> argparse.ArgumentParser:
                    help="pseudo-page size for Markdown without page markers (default 4000)")
     p.add_argument("--pdf-dir", help="folder of the source PDFs, matched to the Markdown by "
                                      "file name, for page screenshots (SUPERINDEX_PDF_DIR)")
+    p.add_argument("--doc-meta", action=argparse.BooleanOptionalAction, default=True,
+                   help="store document metadata (company, region, period, report type) "
+                        "for question routing: one LLM call per document with the index "
+                        "(else chat) model, file-name rules without one (default on)")
     _add_llm_flags(p)
     p.set_defaults(func=cmd_index)
+
+    p = sub.add_parser("doc-meta", help="add document metadata to an existing store "
+                                        "(no re-indexing)")
+    p.add_argument("--store", help="store directory (SUPERINDEX_STORE)")
+    p.add_argument("--force", action="store_true",
+                   help="re-extract for every document, not only those missing it")
+    p.add_argument("--no-llm", action="store_true", help="file-name rules only, no LLM call")
+    _add_llm_flags(p)
+    p.set_defaults(func=cmd_doc_meta)
 
     p = sub.add_parser("ask", help="ask a question over the indexed documents")
     p.add_argument("question")
@@ -391,6 +446,12 @@ def build_parser() -> argparse.ArgumentParser:
                         "whether a top-k page holds the expected answer (recall@k, MRR)")
     p.add_argument("--top-k", type=int, default=5,
                    help="pages searched per question with --retrieval-only (default 5)")
+    p.add_argument("--route", action=argparse.BooleanOptionalAction, default=True,
+                   help="limit a question without `doc` to the documents of the years it "
+                        "names, by their stored metadata (default on)")
+    p.add_argument("--route-adjacent", action=argparse.BooleanOptionalAction, default=True,
+                   help="with --route, also include the next year's reports, which carry "
+                        "the comparatives (default on)")
     _add_match_flag(p)
     _add_prefetch_flags(p)
     _add_page_image_flag(p)

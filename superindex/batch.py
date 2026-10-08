@@ -23,6 +23,14 @@ the agent behind its top keyword-search pages; the record keeps them
 whether one of them holds the answer, so the summary can tell "search missed
 it" from "found but not used". The rough score still reads only the answer.
 
+A question without `doc` is routed (`route_scope`, `--no-route` to turn it
+off): the years it names pick the documents whose stored metadata
+(`md_ingest.extract_doc_meta`) has that period — interim reports only for a
+first-half question, plus next year's reports unless `--no-route-adjacent` —
+and the whole store is searched when it names no year or nothing matches.
+Records carry `routed_docs`, `route_reason`, `route_fallback`, `route_note`
+and (`route_diagnostics`) which read documents fell outside that range.
+
 With `--page-image auto|always` (`superindex.page_images`) the record lists the
 PDF page screenshots the question was given (`page_images`: document, page and
 source auto/always/tool; `image_count`).
@@ -404,6 +412,7 @@ def write_summary(records: list[dict[str, Any]], path: Path, meta: dict[str, Any
         (f"- 单题耗时合计：{sum(secs):.1f}s　平均：{(sum(secs) / len(secs) if secs else 0):.1f}s"
          f"　本次运行墙钟：{meta.get('wall_seconds', 0):.1f}s"),
         *_prefetch_lines(records, meta),
+        *route_summary_lines(records),
         *([f"- 附图（{meta.get('page_image', '')}）：共 "
            f"{sum(int(r.get('image_count') or 0) for r in records)} 张"]
           if with_images else []),
@@ -497,6 +506,226 @@ def _scope(docs: list[dict[str, Any]], wanted: list[str]) -> list[str]:
     return ids
 
 
+# ───────────────────────────────────────────────────────────── routing
+ROUTE_FALLBACKS = {"no_period": "问题里没有年份/期间", "no_meta": "库内文档没有期间元数据",
+                   "no_match": "没有期间匹配的文档"}
+_H1_QUESTION_RE = re.compile(
+    r"(?i)上半年|半年|中报|中期报告|中期业绩|中期(?!股息|派息)|(?<![a-z])(?:H1|1H)(?![a-z])"
+    r"|interim(?!\s+dividend)|first half|half[- ]year|six months|6 months")
+_FULL_YEAR_RE = re.compile(r"(?i)全年|年度报告|(?<!半)年报|full[- ]year|annual")
+_ORG_SUFFIX_RE = re.compile(
+    r"(?i)\b(?:group|holdings?|limited|ltd|co|inc|corp(?:oration)?|plc|company)\b\.?"
+    r"|股份有限公司|有限公司|集团|控股|公司|[()（）,，.、]")
+_GROUP_REGIONS = re.compile(r"(?i)集团|group|global|全球|consolidated|合并|全公司")
+
+
+@dataclass
+class Route:
+    """Where one question searches: `scope_ids` (None = the whole store), why
+    (`reason`: doc / off / routed / no_period / no_meta / no_match) and a
+    printable `note`."""
+    scope_ids: list[str] | None
+    reason: str
+    note: str
+    docs: list[str] = field(default_factory=list)
+    years: list[int] = field(default_factory=list)
+    allowed_years: list[int] = field(default_factory=list)
+    interim_only: bool = False
+
+    @property
+    def fallback(self) -> bool:
+        return self.reason in ROUTE_FALLBACKS
+
+    def fields(self) -> dict[str, Any]:
+        """The routing fields of a results.jsonl record."""
+        return {"routed_docs": self.docs, "route_reason": self.reason,
+                "route_fallback": self.fallback, "route_note": self.note}
+
+
+def _routing_policy() -> Any:
+    from superindex.nav.policy import PolicyError, RoutingPolicy
+
+    try:
+        return RoutingPolicy.load()
+    except PolicyError as exc:
+        print(f"routing policy ignored: {exc}", flush=True)
+        return RoutingPolicy()
+
+
+def question_periods(question: str, policy: Any = None) -> tuple[list[int], bool]:
+    """Years the question names (`RoutingPolicy.periods_in`, plus ``FY24``)
+    and whether it asks about the first half / interim period only."""
+    from superindex.md_ingest import _FY_SHORT_RE
+
+    policy = _routing_policy() if policy is None else policy
+    years = [int(p) for p in policy.periods_in(question) if p.isdigit() and len(p) == 4]
+    years += [2000 + int(m.group(1)) for m in _FY_SHORT_RE.finditer(question)]
+    interim = bool(_H1_QUESTION_RE.search(question)) and not _FULL_YEAR_RE.search(question)
+    return sorted(set(years)), interim
+
+
+def _doc_meta(doc: dict[str, Any]) -> dict[str, Any]:
+    found = (doc.get("metadata") or {}).get("doc_meta")
+    return found if isinstance(found, dict) else {}
+
+
+def _mentioned(value: str | None, question: str, aliases: Any = ()) -> bool:
+    """Whether `value` (a company or region; its core without Group / Limited
+    / 有限公司 …, or a policy alias of it) appears in the question."""
+    if not value:
+        return False
+    names = {value.lower(), " ".join(_ORG_SUFFIX_RE.sub(" ", value).split()).lower()}
+    for key, variants in aliases:
+        group = {g.lower() for g in (key, *variants)}
+        if group & names:
+            names |= group
+    low = question.lower()
+    for name in names:
+        if len(name) < 2:
+            continue
+        if name.isascii():
+            if re.search(rf"(?<![a-z0-9]){re.escape(name)}(?![a-z0-9])", low):
+                return True
+        elif name in low:
+            return True
+    return False
+
+
+def _narrow(cands: list[dict[str, Any]], key: str, question: str, aliases: Any,
+            keep: Any = None) -> tuple[list[dict[str, Any]], str | None]:
+    """Keep the documents whose `key` the question mentions (plus those with
+    no value, or a value `keep` accepts) — only when the question mentions
+    at least one; otherwise nothing is filtered."""
+    hit = [d for d in cands if _mentioned(_doc_meta(d).get(key), question, aliases)]
+    if not hit:
+        return cands, None
+    kept = [d for d in cands if d in hit or not _doc_meta(d).get(key)
+            or (keep is not None and keep(_doc_meta(d).get(key)))]
+    values = sorted({str(_doc_meta(d).get(key)) for d in hit})
+    return kept, ", ".join(values)
+
+
+def route_scope(docs: list[dict[str, Any]], question: str, doc: list[str] | None = None, *,
+                enabled: bool = True, adjacent: bool = True, policy: Any = None) -> Route:
+    """Pick the documents a question is searched in, from their stored
+    metadata (`md_ingest.extract_doc_meta`).
+
+    A question with `doc` keeps that scope (`_scope`). Otherwise the years it
+    names select the reports of those years — interim reports only when it
+    asks about the first half — plus, with `adjacent`, the next year's reports
+    (they carry the comparatives); a document of unknown period is kept.
+    Company and region narrow further only when the question mentions a
+    stored value (a group-level region is always kept). No period in the
+    question, no metadata or no match: the whole store (None)."""
+    policy = _routing_policy() if policy is None and enabled else policy
+    years, interim = question_periods(question, policy) if policy is not None else ([], False)
+    allowed = sorted(set(years) | ({y + 1 for y in years} if adjacent else set()))
+    base = {"years": years, "allowed_years": allowed, "interim_only": interim}
+    if doc:
+        ids = _scope(docs, doc)
+        names = [d.get("name") or d["id"] for d in docs if d["id"] in ids]
+        return Route(ids, "doc", f"题目指定文档：{', '.join(names)}", names, **base)
+    if not enabled:
+        return Route(None, "off", "路由关闭：全库", **base)
+    if not years:
+        return Route(None, "no_period", f"{ROUTE_FALLBACKS['no_period']}，全库", **base)
+    if not any(_doc_meta(d).get("period") for d in docs):
+        return Route(None, "no_meta", f"{ROUTE_FALLBACKS['no_meta']}，全库", **base)
+
+    from superindex.md_ingest import period_year
+
+    def pick(only_interim: bool) -> list[dict[str, Any]]:
+        out = []
+        for d in docs:
+            meta = _doc_meta(d)
+            year = period_year(meta.get("period"))
+            if year is None or (year in allowed and (
+                    not only_interim or meta.get("report_type") == "interim")):
+                out.append(d)
+        return out
+
+    def known(cands: list[dict[str, Any]]) -> bool:
+        return any(period_year(_doc_meta(d).get("period")) is not None for d in cands)
+
+    cands = pick(interim)
+    kinds = "仅中报" if interim else "年报+中报"
+    if interim and not known(cands):
+        cands, kinds = pick(False), "无对应中报，放宽为全部报告类型"
+    year_text = "/".join(map(str, years))
+    if not known(cands):
+        return Route(None, "no_match", f"期间 {year_text}：{ROUTE_FALLBACKS['no_match']}，全库",
+                     **base)
+    aliases = getattr(policy, "aliases", ())
+    cands, company = _narrow(cands, "company", question, aliases)
+    cands, region = _narrow(cands, "region", question, aliases,
+                            keep=lambda v: bool(_GROUP_REGIONS.search(v)))
+    names = [d.get("name") or d["id"] for d in cands]
+    note = (f"期间 {year_text}（{kinds}" + ("，含下一年" if adjacent else "") + "）"
+            + (f"，公司 {company}" if company else "") + (f"，地区 {region}" if region else "")
+            + f" → {len(cands)} 份文档")
+    return Route([d["id"] for d in cands], "routed", note, names, **base)
+
+
+def route_diagnostics(record: dict[str, Any], route: Route,
+                      docs: list[dict[str, Any]]) -> dict[str, Any]:
+    """Which documents the agent read pages from (`get_page_content`), and of
+    those, which lie outside the route's scope or have a period year the
+    question does not allow. `read_out_of_range` is None when neither can be
+    judged (no scope and no year in the question). Names only, no content."""
+    from superindex.md_ingest import period_year
+
+    read: list[str] = []
+    for call in record.get("tool_calls") or []:
+        name = (call.get("arguments") or {}).get("doc_name") \
+            if call.get("name") == "get_page_content" and isinstance(call.get("arguments"), dict) \
+            else None
+        if name and name not in read:
+            read.append(str(name))
+    by_name = {d.get("name"): d for d in docs}
+    scope = set(route.scope_ids) if route.scope_ids is not None else None
+    outside = [n for n in read if scope is not None and n in by_name
+               and by_name[n]["id"] not in scope]
+    mismatch = []
+    for n in read:
+        year = period_year(_doc_meta(by_name.get(n) or {}).get("period"))
+        if route.years and year is not None and year not in route.allowed_years:
+            mismatch.append(n)
+    judged = scope is not None or bool(route.years)
+    return {"read_docs": read, "read_outside_route": outside, "read_year_mismatch": mismatch,
+            "read_out_of_range": bool(outside or mismatch) if judged and read else
+            (False if judged else None)}
+
+
+def route_stats(records: list[dict[str, Any]]) -> dict[str, int]:
+    """Counts over the records that carry routing fields."""
+    routed = [r for r in records if "route_reason" in r]
+    out_of_range = [r for r in routed if r.get("read_out_of_range")]
+    return {
+        "questions": len(routed),
+        "routed": sum(1 for r in routed if r["route_reason"] == "routed"),
+        "doc": sum(1 for r in routed if r["route_reason"] == "doc"),
+        "off": sum(1 for r in routed if r["route_reason"] == "off"),
+        "fallback": sum(1 for r in routed if r.get("route_fallback")),
+        **{f"fallback_{k}": sum(1 for r in routed if r["route_reason"] == k)
+           for k in ROUTE_FALLBACKS},
+        "read_out_of_range": len(out_of_range),
+        "read_out_of_range_wrong": sum(1 for r in out_of_range if not r.get("error")
+                                       and r.get("score") and not r["score"]["hit"]),
+    }
+
+
+def route_summary_lines(records: list[dict[str, Any]]) -> list[str]:
+    """Printable routing summary (counts only); [] without routing fields."""
+    s = route_stats(records)
+    if not s["questions"]:
+        return []
+    reasons = "、".join(f"{label} {s['fallback_' + k]}" for k, label in ROUTE_FALLBACKS.items())
+    return [(f"- 期间路由：命中 {s['routed']}/{s['questions']} 题　回退全库 {s['fallback']} 题"
+             f"（{reasons}）　题目指定文档 {s['doc']}　关闭 {s['off']}"),
+            (f"- 读取范围：读到路由范围外/年份不符文档的题 {s['read_out_of_range']} 题，"
+             f"其中粗评分判错 {s['read_out_of_range_wrong']} 题")]
+
+
 def cmd_batch(args: argparse.Namespace) -> int:
     from superindex.cli import (
         _instructions,
@@ -527,6 +756,9 @@ def cmd_batch(args: argparse.Namespace) -> int:
     match = bm25.resolve_match(getattr(args, "match", None))
     prefetch_k = 0 if retrieval else _prefetch_k(args)
     image_mode = "off" if retrieval else _page_image_mode(args)
+    route_on = getattr(args, "route", True) is not False
+    adjacent = getattr(args, "route_adjacent", True) is not False
+    policy = _routing_policy() if route_on else None
     client = None if retrieval else make_client(settings, store, instructions=_instructions(args))
     texts: dict[str, list[str]] = {}
 
@@ -547,14 +779,19 @@ def cmd_batch(args: argparse.Namespace) -> int:
     else:
         print(f"timeout   : {args.timeout:g}s  concurrency: {args.concurrency}  "
               f"prefetch: {prefetch_k or 'off'}  page images: {image_mode}", flush=True)
+    print(f"routing   : {'on' if route_on else 'off'}"
+          + (f"  next-year reports: {'on' if adjacent else 'off'}" if route_on else ""), flush=True)
 
     lock = threading.Lock()
     finished = [0]
 
     def run(q: Question) -> None:
         record: dict[str, Any]
+        route: Route | None = None
         try:
-            scope_ids = _scope(docs, args.doc or q.doc) if (args.doc or q.doc) else None
+            route = route_scope(docs, q.question, args.doc or q.doc, enabled=route_on,
+                                adjacent=adjacent, policy=policy)
+            scope_ids = route.scope_ids
             scope = scope_ids[0] if scope_ids and len(scope_ids) == 1 else scope_ids
             if retrieval:
                 record = run_retrieval(store, q, scope_ids, top_k=top_k, match=match,
@@ -573,6 +810,9 @@ def cmd_batch(args: argparse.Namespace) -> int:
                     record["prefetch"] = [{"doc_name": h.doc_name, "page": h.page,
                                            "relevant": f} for h, f in zip(hits, flags)]
                     record["prefetch_hit"] = any(flags) if judge else None
+            record.update(route.fields())
+            if not retrieval:
+                record.update(route_diagnostics(record, route, docs))
         except Exception as exc:  # noqa: BLE001 - e.g. an unknown doc: record it
             error = f"{type(exc).__name__}: {exc}"
             if retrieval:
@@ -600,6 +840,8 @@ def cmd_batch(args: argparse.Namespace) -> int:
             status = "ERROR " + record["error"] if record["error"] else _hit_mark(record)
             print(f"[{finished[0]}/{len(todo)}] {q.id}  {record['seconds']:.1f}s  "
                   f"{status}  pages: {', '.join(record['pages_read']) or '-'}", flush=True)
+            if route is not None and route.reason != "doc":
+                print(f"    route: {route.note}", flush=True)
             if record["answer"]:
                 print(f"    {_cell(record['answer'], 160)}", flush=True)
 
@@ -616,6 +858,8 @@ def cmd_batch(args: argparse.Namespace) -> int:
             "match": match, "top_k": top_k})
         print(f"\n{metrics['questions']} judged question(s): "
               + "  ".join(f"{k} {v:.3f}" for k, v in metrics.items() if k != "questions"))
+        for line in route_summary_lines(records)[:1]:
+            print(line)
         print(f"summary   : {out_dir / SUMMARY_FILE}")
         return 0
     write_summary(records, out_dir / SUMMARY_FILE, {
@@ -625,5 +869,7 @@ def cmd_batch(args: argparse.Namespace) -> int:
     })
     errors = sum(1 for r in records if r.get("error"))
     print(f"\n{len(records)} question(s), {errors} error(s), {wall:.1f}s")
+    for line in route_summary_lines(records):
+        print(line)
     print(f"summary   : {out_dir / SUMMARY_FILE}")
     return 0
