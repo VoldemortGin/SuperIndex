@@ -655,7 +655,8 @@ def merge_manifests(corpora: list[tuple[str, "str | Path", str, str]]
             nrp = f"{cid}/{rp}"
             parent = f"{cid}/{d.parent}" if d.parent else cid
             merged.dirs[nrp] = DirEntry(rel_path=nrp, name=d.name,
-                                        parent=parent, summary=d.summary)
+                                        parent=parent, summary=d.summary,
+                                        topic=d.topic)
             merged.dirs[parent].child_dirs.append(nrp)
 
         for rp, f in src.files.items():

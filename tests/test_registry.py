@@ -201,6 +201,9 @@ def test_multi_corpus(tmp: Path) -> None:
     b = reg.add(str(make_corpus(tmp / "src", "two", SAMPLE)), name="语料二")
     reg.index(a.id, summarize=False)
     reg.index(b.id, summarize=False)
+    ma = Manifest.load(a.index_dir)
+    ma.dirs["2024"].topic = "年度报告"
+    ma.save(a.index_dir)
 
     merged, dirs = merge_manifests([
         (a.id, a.index_dir, a.name, "第一个"),
@@ -218,6 +221,8 @@ def test_multi_corpus(tmp: Path) -> None:
           sorted(d.name for d in sub) == ["2024", "2025"], str([d.name for d in sub]))
     f = merged.files[f"{a.id}/2024/annual/A.md"]
     check("文件 parent 正确指向", f.parent == f"{a.id}/2024/annual", f.parent)
+    check("合并后保留目录 topic", merged.dirs[f"{a.id}/2024"].topic == "年度报告",
+          merged.dirs[f"{a.id}/2024"].topic)
 
     nav = MultiNavigator([
         (a.id, a.index_dir, a.name, "第一个"),
