@@ -45,13 +45,16 @@ import hashlib
 import html
 import json
 import re
+import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from superindex import bm25, page_images
+from superindex.engine.errors import is_rate_limit_error
 from superindex.engine.local_store import DocStore
 from superindex.engine.naming import sanitize_filename
 from superindex.nav.build import markdown_chapters
@@ -464,6 +467,42 @@ def _public_tree(tree: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+# ───────────────────────────────────────────────────────────── rate limits
+@dataclass
+class RateLimitPolicy:
+    """Waiting on rate limits, shared by all LLM calls of a run: sleep `wait`
+    seconds and retry, at most `max_waits` times per call (0: no waiting).
+    Once one call has used them all and is still limited the quota is taken as
+    spent: `exhausted` is set and later calls do not wait (nor recover)."""
+    wait: float = 60.0
+    max_waits: int = 0
+    exhausted: bool = False
+
+
+def _wait_on_rate_limit(call: Callable[[], Any], policy: RateLimitPolicy | None) -> Any:
+    """`call()`; on a rate-limit / quota error, wait and call again as
+    `policy` says — then the error raises."""
+    policy = policy or RateLimitPolicy()
+    max_waits = 0 if policy.exhausted else policy.max_waits
+    for attempt in range(max_waits + 1):
+        try:
+            return call()
+        except Exception as exc:
+            if not is_rate_limit_error(exc):
+                raise
+            if attempt >= max_waits:
+                if max_waits and not policy.exhausted:
+                    policy.exhausted = True
+                    print(f"\n⚠ 已连续等待 {max_waits} 次仍被限流，判断为额度耗尽：本次运行后续文档不再等待，"
+                          "失败的元数据/摘要下次运行重试", flush=True)
+                raise
+            brief = " ".join(f"{type(exc).__name__}: {exc}".split())[:160]
+            print(f"\nLLM 额度不足/被限流，等待 {policy.wait:g}s 后重试（第 {attempt + 1}/{max_waits} 次）：{brief}",
+                  flush=True)
+            time.sleep(policy.wait)
+    raise AssertionError("unreachable")
+
+
 # ───────────────────────────────────────────────────────────── summaries
 def _own_texts(tree: list[dict[str, Any]], parsed: ParsedMarkdown) -> list[str]:
     """Each node's own text in preorder: from its heading to the next heading
@@ -484,7 +523,8 @@ def _own_texts(tree: list[dict[str, Any]], parsed: ParsedMarkdown) -> list[str]:
 
 def summarize(tree: list[dict[str, Any]], parsed: ParsedMarkdown, model: str,
               backend: dict[str, str] | None = None, concurrency: int = 8,
-              describe: bool = True) -> str | None:
+              describe: bool = True,
+              rate_limit: RateLimitPolicy | None = None) -> str | None:
     """Fill `summary` on every node with the engine's own `summarize_tree`, and
     return a one-line document description (`generate_doc_description`).
 
@@ -493,7 +533,8 @@ def summarize(tree: list[dict[str, Any]], parsed: ParsedMarkdown, model: str,
     shadow tree whose "pages" are the nodes' own section texts, in preorder.
     Leaves are then summarized from exactly their section, and a parent from
     its opening text plus its children's summaries — the engine's semantics,
-    at section rather than page granularity."""
+    at section rather than page granularity. A rate-limit error waits and
+    retries (`_wait_on_rate_limit`); nodes summarized before it are kept."""
     from superindex.engine import utils
 
     nodes = _preorder(tree)
@@ -515,15 +556,15 @@ def summarize(tree: list[dict[str, Any]], parsed: ParsedMarkdown, model: str,
     shadow_tree = [shadow(n) for n in tree]
     token = utils._llm_backend.set(backend)
     try:
-        asyncio.run(utils.summarize_tree(shadow_tree, virtual_pages, model=model,
-                                         concurrency=concurrency))
+        _wait_on_rate_limit(lambda: asyncio.run(utils.summarize_tree(
+            shadow_tree, virtual_pages, model=model, concurrency=concurrency)), rate_limit)
         for node, twin in zip(nodes, _preorder(shadow_tree)):
             node["summary"] = twin.get("summary", "")
         if not describe:
             return None
-        return utils.generate_doc_description(
-            utils.create_clean_structure_for_description(_public_tree(tree)),
-            model=model) or None
+        structure = utils.create_clean_structure_for_description(_public_tree(tree))
+        return _wait_on_rate_limit(lambda: utils.generate_doc_description(structure, model=model),
+                                   rate_limit) or None
     finally:
         utils._llm_backend.reset(token)
 
@@ -666,21 +707,28 @@ def _complete(model: str, prompt: str, backend: dict[str, str] | None) -> str:
 
 
 def extract_doc_meta(name: str, lines: list[str], model: str | None = None,
-                     backend: dict[str, str] | None = None) -> dict[str, Any]:
+                     backend: dict[str, str] | None = None,
+                     rate_limit: RateLimitPolicy | None = None) -> dict[str, Any]:
     """Document metadata (`DOC_META_FIELDS`) from one LLM call when `model` is
     given; a field the LLM leaves out (or every field, when the call fails or
     there is no model) comes from `doc_meta_from_filename`. `source` says
-    which: "llm", "llm+filename" or "filename"; `model` is the model tried."""
+    which: "llm", "llm+filename" or "filename"; `model` is the model tried.
+    A rate-limit error waits and retries (`_wait_on_rate_limit`); a call that
+    still fails sets `llm_failed`, so `_needs_doc_meta` tries it again."""
     fallback = doc_meta_from_filename(name)
     found: dict[str, Any] = {}
     error = None
+    failed = False
     if model:
+        prompt = doc_meta_prompt(name, lines)
         try:
-            found = parse_doc_meta_reply(_complete(model, doc_meta_prompt(name, lines), backend))
+            found = parse_doc_meta_reply(_wait_on_rate_limit(
+                lambda: _complete(model, prompt, backend), rate_limit))
             if not found:
                 error = "no JSON object in the reply"
         except Exception as exc:  # noqa: BLE001 - the file name still gives a period
             error = f"{type(exc).__name__}: {exc}"
+            failed = True
     meta: dict[str, Any] = {k: found.get(k) or fallback.get(k) for k in DOC_META_FIELDS}
     if meta["report_type"] == "interim" and (meta["period"] or "").startswith("FY"):
         meta["period"] = "1H" + meta["period"][2:]
@@ -690,16 +738,18 @@ def extract_doc_meta(name: str, lines: list[str], model: str | None = None,
     meta["model"] = model
     if error:
         meta["error"] = error[:300]
+    if failed:
+        meta["llm_failed"] = True
     return meta
 
 
 def _needs_doc_meta(info: dict[str, Any], model: str | None, force: bool = False) -> bool:
     """Whether a stored document should get (new) metadata: it has none, or
-    `model` is set and has not been tried on it yet."""
+    `model` is set and has not been tried on it yet, or its call failed."""
     current = info.get("doc_meta")
     if force or not isinstance(current, dict):
         return True
-    return bool(model) and current.get("model") != model
+    return bool(model) and (current.get("model") != model or bool(current.get("llm_failed")))
 
 
 def _with_doc_meta(meta: dict[str, Any], doc_meta: dict[str, Any]) -> dict[str, Any]:
@@ -730,6 +780,7 @@ def _stored_lines(store: DocStore, doc_id: str) -> list[str]:
 
 def backfill_doc_meta(store_path: Path, *, model: str | None = None,
                       backend: dict[str, str] | None = None, force: bool = False,
+                      rate_limit: RateLimitPolicy | None = None,
                       ) -> list[tuple[str, dict[str, Any]]]:
     """Add document metadata to an existing store without rebuilding trees:
     every completed document that has none — or, with `model`, that `model`
@@ -742,7 +793,8 @@ def backfill_doc_meta(store_path: Path, *, model: str | None = None,
         if meta.get("status") != "completed" or not _needs_doc_meta(info, model, force):
             continue
         name = str(info.get("source_file") or meta.get("name") or "")
-        doc_meta = extract_doc_meta(name, _stored_lines(store, meta["id"]), model, backend)
+        doc_meta = extract_doc_meta(name, _stored_lines(store, meta["id"]), model, backend,
+                                    rate_limit)
         _store_doc_meta(store, meta, doc_meta)
         done.append((str(meta.get("name")), doc_meta))
     return done
@@ -794,7 +846,8 @@ def index_markdown(md_path: Path, store_path: Path, *, summary_model: str | None
                    backend: dict[str, str] | None = None, concurrency: int = 8,
                    page_chars: int = DEFAULT_PAGE_CHARS,
                    force: bool = False, pdf: Path | None = None,
-                   doc_meta: bool = True, doc_meta_model: str | None = None) -> IndexResult:
+                   doc_meta: bool = True, doc_meta_model: str | None = None,
+                   rate_limit: RateLimitPolicy | None = None) -> IndexResult:
     """Index one Markdown file into the store. `summary_model=None` builds the
     tree without any LLM call (no summaries, no description). `pdf` is the
     PDF the Markdown was extracted from (see `superindex.page_images`).
@@ -806,7 +859,8 @@ def index_markdown(md_path: Path, store_path: Path, *, summary_model: str | None
     copy, and is skipped when the content is unchanged and the stored copy
     already has what was asked for (summaries), unless `force`. A skipped
     document still gets a new or changed `pdf` linked and missing document
-    metadata added (metadata only)."""
+    metadata added (metadata only). Every LLM call waits and retries on a
+    rate-limit error as `rate_limit` says (None: fail as before)."""
     raw = md_path.read_bytes()
     markdown = raw.decode("utf-8", errors="replace")
     digest = hashlib.sha256(raw).hexdigest()
@@ -831,7 +885,8 @@ def index_markdown(md_path: Path, store_path: Path, *, summary_model: str | None
                 added = False
                 if doc_meta and _needs_doc_meta(info, doc_meta_model):
                     found = extract_doc_meta(md_path.name, parse_pages(
-                        markdown, page_chars=page_chars).lines, doc_meta_model, backend)
+                        markdown, page_chars=page_chars).lines, doc_meta_model, backend,
+                        rate_limit)
                     _store_doc_meta(store, store.get_meta(meta["id"]) or meta, found)
                     added = True
                 return IndexResult(meta["id"], name, meta.get("pageNum", 0),
@@ -849,9 +904,9 @@ def index_markdown(md_path: Path, store_path: Path, *, summary_model: str | None
     if want_summary:
         assert summary_model is not None
         description = summarize(tree, parsed, summary_model, backend=backend,
-                                concurrency=concurrency)
-    found = extract_doc_meta(md_path.name, parsed.lines, doc_meta_model, backend) \
-        if doc_meta else None
+                                concurrency=concurrency, rate_limit=rate_limit)
+    found = extract_doc_meta(md_path.name, parsed.lines, doc_meta_model, backend,
+                             rate_limit) if doc_meta else None
     public = _public_tree(tree)
     node_count = len(_preorder(public))
     pages = [{"page_index": i + 1, "markdown": text}

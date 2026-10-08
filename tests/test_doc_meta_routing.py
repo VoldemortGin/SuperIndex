@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT))
 
 from superindex import batch, cli, md_ingest  # noqa: E402
 from superindex.md_ingest import (  # noqa: E402
+    RateLimitPolicy,
     backfill_doc_meta,
     doc_meta_from_filename,
     extract_doc_meta,
@@ -151,6 +152,125 @@ def test_index_and_backfill_store_doc_meta(tmp_path: Path,
     assert backfill_doc_meta(store) == []
     assert len(backfill_doc_meta(store, force=True)) == 2
     assert _stored(store, plain.doc_id)["pageNum"] == 1                # text untouched
+
+
+def _flaky_llm(monkeypatch: pytest.MonkeyPatch, failures: int, reply: str) -> tuple[list[str], list[float]]:
+    """llm_completion that raises a rate-limit error `failures` times, then replies;
+    time.sleep recorded, not slept."""
+    from superindex.engine import utils
+
+    prompts: list[str] = []
+    sleeps: list[float] = []
+
+    def fake(model: str, prompt: str, **_: Any) -> str:
+        prompts.append(prompt)
+        if len(prompts) <= failures:
+            raise utils.LLMRetriesExhausted("RateLimitError: quota exceeded", status_code=429)
+        return reply
+
+    monkeypatch.setattr(utils, "llm_completion", fake)
+    monkeypatch.setattr(md_ingest.time, "sleep", sleeps.append)
+    return prompts, sleeps
+
+
+AIA_REPLY = json.dumps({"company": "AIA", "period": "FY2024", "report_type": "annual"})
+
+
+def test_doc_meta_rate_limit_waits_then_succeeds(monkeypatch: pytest.MonkeyPatch,
+                                                 capsys: pytest.CaptureFixture[str]) -> None:
+    prompts, sleeps = _flaky_llm(monkeypatch, 2, AIA_REPLY)
+    meta = extract_doc_meta("AIA_AR2024.md", REPORT.splitlines(), "fake/model",
+                            rate_limit=RateLimitPolicy(60, 30))
+    assert meta["source"] == "llm" and "llm_failed" not in meta
+    assert len(prompts) == 3 and sleeps == [60, 60]
+    assert "等待 60s 后重试（第 2/30 次）" in capsys.readouterr().out
+
+
+def test_doc_meta_rate_limit_exhausted_is_retried_next_run(tmp_path: Path,
+                                                           monkeypatch: pytest.MonkeyPatch) -> None:
+    md = tmp_path / "AIA_AR2024.md"
+    md.write_text(REPORT, encoding="utf-8")
+    store = tmp_path / "store"
+    prompts, sleeps = _flaky_llm(monkeypatch, 99, AIA_REPLY)
+    res = index_markdown(md, store, doc_meta_model="fake/model",
+                         rate_limit=RateLimitPolicy(60, 3))
+    assert len(prompts) == 4 and sleeps == [60, 60, 60]
+    info = _stored(store, res.doc_id)["metadata"]
+    assert info["doc_meta"]["source"] == "filename" and info["doc_meta"]["llm_failed"]
+    assert info["doc_meta"]["period"] == "FY2024"
+    assert md_ingest._needs_doc_meta(info, "fake/model")
+
+    prompts, _ = _flaky_llm(monkeypatch, 0, AIA_REPLY)               # quota back: next run
+    again = index_markdown(md, store, doc_meta_model="fake/model")
+    assert again.skipped and again.doc_meta_added and len(prompts) == 1
+    info = _stored(store, res.doc_id)["metadata"]
+    assert info["doc_meta"]["source"] == "llm" and "llm_failed" not in info["doc_meta"]
+    assert not md_ingest._needs_doc_meta(info, "fake/model")
+    third = index_markdown(md, store, doc_meta_model="fake/model")   # LLM succeeded: no new call
+    assert not third.doc_meta_added and len(prompts) == 1
+    assert backfill_doc_meta(store, model="fake/model") == []
+
+
+def test_doc_meta_other_errors_do_not_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_llm(monkeypatch, RuntimeError("down"))
+    sleeps: list[float] = []
+    monkeypatch.setattr(md_ingest.time, "sleep", sleeps.append)
+    meta = extract_doc_meta("AIA_AR2024.md", REPORT.splitlines(), "fake/model",
+                            rate_limit=RateLimitPolicy(60, 30))
+    assert sleeps == [] and meta["llm_failed"] and meta["source"] == "filename"
+
+
+def test_quota_exhausted_stops_waiting_for_later_documents(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    prompts, sleeps = _flaky_llm(monkeypatch, 99, AIA_REPLY)
+    policy = RateLimitPolicy(60, 2)
+    for name in ("AIA_AR2024.md", "AIA_AR2023.md"):
+        md = tmp_path / name
+        md.write_text(REPORT, encoding="utf-8")
+        res = index_markdown(md, tmp_path / "store", doc_meta_model="fake/model", rate_limit=policy)
+        assert res.doc_meta and res.doc_meta["llm_failed"]
+    assert policy.exhausted
+    assert len(prompts) == 3 + 1 and sleeps == [60, 60]   # 2nd document: one call, no sleep
+    assert capsys.readouterr().out.count("判断为额度耗尽") == 1
+    backfill_doc_meta(tmp_path / "store", model="fake/model", rate_limit=policy)
+    assert sleeps == [60, 60]                              # backfill honours it too
+
+
+def test_summary_rate_limit_waits_and_keeps_done_nodes(tmp_path: Path,
+                                                       monkeypatch: pytest.MonkeyPatch) -> None:
+    from superindex.engine import utils
+
+    calls: list[int] = []
+    sleeps: list[float] = []
+
+    async def fake_summarize(structure: list[dict[str, Any]], pages: Any, **_: Any) -> None:
+        calls.append(sum(1 for n in structure if n.get("summary")))
+        structure[0]["summary"] = "first"
+        if len(calls) == 1:
+            raise utils.LLMRetriesExhausted("Too Many Requests", status_code=429)
+        for node in structure:
+            node.setdefault("summary", "rest")
+
+    monkeypatch.setattr(utils, "summarize_tree", fake_summarize)
+    monkeypatch.setattr(utils, "generate_doc_description", lambda *_a, **_k: "desc")
+    monkeypatch.setattr(md_ingest.time, "sleep", sleeps.append)
+    md = tmp_path / "AIA_AR2024.md"
+    md.write_text(REPORT, encoding="utf-8")
+    res = index_markdown(md, tmp_path / "store", summary_model="fake/model", doc_meta=False,
+                         rate_limit=RateLimitPolicy(5, 2))
+    assert sleeps == [5] and calls == [0, 1]                         # the retry kept "first"
+    assert _stored(tmp_path / "store", res.doc_id)["description"] == "desc"
+
+
+def test_is_rate_limit_error() -> None:
+    from superindex.engine.errors import is_rate_limit_error
+    from superindex.engine.utils import LLMRetriesExhausted
+
+    assert is_rate_limit_error(LLMRetriesExhausted("x", status_code=429))
+    assert is_rate_limit_error(RuntimeError("Error code: 429 - quota"))
+    assert is_rate_limit_error("litellm.RateLimitError: slow down")
+    assert not is_rate_limit_error(RuntimeError("page 429 not found"))
+    assert not is_rate_limit_error(None)
 
 
 # ───────────────────────────────────────────────────────────── routing
