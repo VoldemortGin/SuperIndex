@@ -27,9 +27,11 @@ A question without `doc` is routed (`route_scope`, `--no-route` to turn it
 off): the years it names pick the documents whose stored metadata
 (`md_ingest.extract_doc_meta`) has that period — interim reports only for a
 first-half question, plus next year's reports unless `--no-route-adjacent` —
-and the whole store is searched when it names no year or nothing matches.
-Records carry `routed_docs`, `route_reason`, `route_fallback`, `route_note`
-and (`route_diagnostics`) which read documents fell outside that range.
+and the whole store is searched when it names no year or nothing matches; a
+report type (`report_types` in the routing policy) narrows only when the
+question names it. Records carry `routed_docs`, `route_reason`,
+`route_fallback`, `route_note`, `route_report_types` and
+(`route_diagnostics`) which read documents fell outside that range.
 
 With `--page-image auto|always` (`superindex.page_images`) the record lists the
 PDF page screenshots the question was given (`page_images`: document, page and
@@ -531,6 +533,8 @@ class Route:
     years: list[int] = field(default_factory=list)
     allowed_years: list[int] = field(default_factory=list)
     interim_only: bool = False
+    report_types: list[str] = field(default_factory=list)   # types the question names
+    allowed_types: list[str] = field(default_factory=list)  # ... and those that cover them
 
     @property
     def fallback(self) -> bool:
@@ -539,7 +543,8 @@ class Route:
     def fields(self) -> dict[str, Any]:
         """The routing fields of a results.jsonl record."""
         return {"routed_docs": self.docs, "route_reason": self.reason,
-                "route_fallback": self.fallback, "route_note": self.note}
+                "route_fallback": self.fallback, "route_note": self.note,
+                "route_report_types": self.report_types}
 
 
 def _routing_policy() -> Any:
@@ -553,13 +558,14 @@ def _routing_policy() -> Any:
 
 
 def question_periods(question: str, policy: Any = None) -> tuple[list[int], bool]:
-    """Years the question names (`RoutingPolicy.periods_in`, plus ``FY24``)
-    and whether it asks about the first half / interim period only."""
-    from superindex.md_ingest import _FY_SHORT_RE
+    """Years the question names (`RoutingPolicy.periods_in`, plus ``FY24``,
+    ``3Q24``, ``1H24`` …) and whether it asks about the first half / interim
+    period only."""
+    from superindex.md_ingest import _SHORT_YEAR_RE
 
     policy = _routing_policy() if policy is None else policy
     years = [int(p) for p in policy.periods_in(question) if p.isdigit() and len(p) == 4]
-    years += [2000 + int(m.group(1)) for m in _FY_SHORT_RE.finditer(question)]
+    years += [2000 + int(m.group(1)) for m in _SHORT_YEAR_RE.finditer(question)]
     interim = bool(_H1_QUESTION_RE.search(question)) and not _FULL_YEAR_RE.search(question)
     return sorted(set(years)), interim
 
@@ -611,16 +617,23 @@ def route_scope(docs: list[dict[str, Any]], question: str, doc: list[str] | None
     metadata (`md_ingest.extract_doc_meta`).
 
     A question with `doc` keeps that scope (`_scope`). Otherwise the years it
-    names select the reports of those years — interim reports only when it
-    asks about the first half — plus, with `adjacent`, the next year's reports
-    (they carry the comparatives); a document of unknown period is kept.
-    Company and region narrow further only when the question mentions a
-    stored value (a group-level region is always kept). No period in the
-    question, no metadata or no match: the whole store (None)."""
+    names select the reports of those years, plus, with `adjacent`, the next
+    year's reports (they carry the comparatives); a document of unknown
+    period is kept. Quarters and months never exclude a document (trend
+    reports hold earlier periods). A first-half question keeps, of the
+    annual / interim reports, only the interim ones — when there is one;
+    other report types are not affected. Report type narrows only when the
+    question names a configured type (`RoutingPolicy.report_types_in`: an
+    abbreviation or full name); company and region only when the question
+    mentions a stored value (a group-level region is always kept). No period
+    in the question, no metadata or no match: the whole store (None)."""
     policy = _routing_policy() if policy is None and enabled else policy
     years, interim = question_periods(question, policy) if policy is not None else ([], False)
     allowed = sorted(set(years) | ({y + 1 for y in years} if adjacent else set()))
-    base = {"years": years, "allowed_years": allowed, "interim_only": interim}
+    named = policy.report_types_in(question) if policy is not None else []
+    covering = sorted(policy.covering_types(named)) if named else []
+    base = {"years": years, "allowed_years": allowed, "interim_only": interim,
+            "report_types": named, "allowed_types": covering}
     if doc:
         ids = _scope(docs, doc)
         names = [d.get("name") or d["id"] for d in docs if d["id"] in ids]
@@ -632,15 +645,16 @@ def route_scope(docs: list[dict[str, Any]], question: str, doc: list[str] | None
     if not any(_doc_meta(d).get("period") for d in docs):
         return Route(None, "no_meta", f"{ROUTE_FALLBACKS['no_meta']}，全库", **base)
 
-    from superindex.md_ingest import period_year
+    from superindex.md_ingest import REPORT_TYPES, period_year
 
     def pick(only_interim: bool) -> list[dict[str, Any]]:
         out = []
         for d in docs:
             meta = _doc_meta(d)
             year = period_year(meta.get("period"))
+            kind = meta.get("report_type")
             if year is None or (year in allowed and (
-                    not only_interim or meta.get("report_type") == "interim")):
+                    not only_interim or kind == "interim" or kind not in REPORT_TYPES)):
                 out.append(d)
         return out
 
@@ -648,19 +662,33 @@ def route_scope(docs: list[dict[str, Any]], question: str, doc: list[str] | None
         return any(period_year(_doc_meta(d).get("period")) is not None for d in cands)
 
     cands = pick(interim)
-    kinds = "仅中报" if interim else "年报+中报"
-    if interim and not known(cands):
-        cands, kinds = pick(False), "无对应中报，放宽为全部报告类型"
+    kinds = "年报+中报"
+    if interim:
+        has_interim = any(_doc_meta(d).get("report_type") == "interim" for d in cands)
+        has_legacy = any(_doc_meta(d).get("report_type") in REPORT_TYPES for d in pick(False))
+        if has_interim:
+            kinds = "仅中报"
+        elif has_legacy:
+            cands, kinds = pick(False), "无对应中报，放宽为全部报告类型"
+        else:
+            cands, kinds = pick(False), "上半年（不按期间类型排除）"
     year_text = "/".join(map(str, years))
     if not known(cands):
         return Route(None, "no_match", f"期间 {year_text}：{ROUTE_FALLBACKS['no_match']}，全库",
                      **base)
+    type_text = None
+    if covering:
+        hit = [d for d in cands if _doc_meta(d).get("report_type") in covering]
+        if hit:
+            cands = [d for d in cands if d in hit or not _doc_meta(d).get("report_type")]
+            type_text = "/".join(named)
     aliases = getattr(policy, "aliases", ())
     cands, company = _narrow(cands, "company", question, aliases)
     cands, region = _narrow(cands, "region", question, aliases,
                             keep=lambda v: bool(_GROUP_REGIONS.search(v)))
     names = [d.get("name") or d["id"] for d in cands]
     note = (f"期间 {year_text}（{kinds}" + ("，含下一年" if adjacent else "") + "）"
+            + (f"，类型 {type_text}" if type_text else "")
             + (f"，公司 {company}" if company else "") + (f"，地区 {region}" if region else "")
             + f" → {len(cands)} 份文档")
     return Route([d["id"] for d in cands], "routed", note, names, **base)
@@ -670,8 +698,10 @@ def route_diagnostics(record: dict[str, Any], route: Route,
                       docs: list[dict[str, Any]]) -> dict[str, Any]:
     """Which documents the agent read pages from (`get_page_content`), and of
     those, which lie outside the route's scope or have a period year the
-    question does not allow. `read_out_of_range` is None when neither can be
-    judged (no scope and no year in the question). Names only, no content."""
+    question does not allow (and, when it names a report type, which are of
+    another type: `read_type_mismatch`). `read_out_of_range` is None when
+    neither can be judged (no scope and no year in the question). Names only,
+    no content."""
     from superindex.md_ingest import period_year
 
     read: list[str] = []
@@ -691,9 +721,14 @@ def route_diagnostics(record: dict[str, Any], route: Route,
         if route.years and year is not None and year not in route.allowed_years:
             mismatch.append(n)
     judged = scope is not None or bool(route.years)
-    return {"read_docs": read, "read_outside_route": outside, "read_year_mismatch": mismatch,
-            "read_out_of_range": bool(outside or mismatch) if judged and read else
-            (False if judged else None)}
+    out = {"read_docs": read, "read_outside_route": outside, "read_year_mismatch": mismatch,
+           "read_out_of_range": bool(outside or mismatch) if judged and read else
+           (False if judged else None)}
+    if route.allowed_types:     # the question named a report type
+        out["read_type_mismatch"] = [
+            n for n in read if n in by_name and _doc_meta(by_name[n]).get("report_type")
+            and _doc_meta(by_name[n]).get("report_type") not in route.allowed_types]
+    return out
 
 
 def route_stats(records: list[dict[str, Any]]) -> dict[str, int]:

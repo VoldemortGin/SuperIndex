@@ -379,6 +379,51 @@ def _flat_metadata(value: Any) -> Optional[dict[str, Any]]:
     return flat or None
 
 
+def _doc_meta(doc: dict[str, Any]) -> dict[str, Any]:
+    found = (doc.get("metadata") or {}).get("doc_meta")
+    return found if isinstance(found, dict) else {}
+
+
+def _doc_label(doc: dict[str, Any]) -> str | None:
+    """``[report_type · period]`` from the document's stored metadata
+    (`superindex.md_ingest`), ``-`` for an unknown half; None without both."""
+    meta = _doc_meta(doc)
+    kind, period = meta.get("report_type"), meta.get("period")
+    if not kind and not period:
+        return None
+    return f"[{kind or '-'} · {period or '-'}]"
+
+
+def _routing_policy() -> Any:
+    """The business routing policy (`superindex.nav.policy`), or None when it
+    cannot be loaded — report types are then matched by key only."""
+    try:
+        from superindex.nav.policy import RoutingPolicy
+        return RoutingPolicy.load()
+    except Exception:  # noqa: BLE001 - a broken policy must not break the tools
+        return None
+
+
+def _report_type_filter(value: str) -> Callable[[dict[str, Any]], bool]:
+    """Whether a document is of the report type `value` names (its key, or an
+    abbreviation / full name from the policy; a type that splits into it —
+    MBR/QBR for MBR — counts too)."""
+    want = "_".join(re.split(r"[\s_\-]+", value.strip().lower()))
+    policy = _routing_policy()
+    if policy is not None:
+        want = policy.report_type_from_name(value) or want
+        wanted = policy.covering_types([want])
+    else:
+        wanted = {want}
+    return lambda doc: str(_doc_meta(doc).get("report_type") or "").lower() in wanted
+
+
+def report_types_guidance() -> str | None:
+    """The agent guidance on the configured report types, or None."""
+    policy = _routing_policy()
+    return (policy.report_types_block() or None) if policy is not None else None
+
+
 def _scope_documents(documents: list[dict[str, Any]],
                      allowed_ids: Optional[frozenset]) -> list[dict[str, Any]]:
     if allowed_ids is None:
@@ -714,6 +759,7 @@ def _split_oversized_node(node: Any, budget: int) -> list[Any]:
 def _browse_documents(client, folder_id: str = "root", recursive: bool = False,
                       sort: str = "time", query: Optional[str] = None,
                       offset: int = 0, limit: int = 10,
+                      report_type: str | None = None,
                       _allowed_ids: Optional[frozenset] = None) -> tuple[dict, bool]:
     if folder_id != "root":
         return _folder_unsupported("folder_id")
@@ -746,7 +792,12 @@ def _browse_documents(client, folder_id: str = "root", recursive: bool = False,
                          "options": ["Pass integer offset and limit values"]},
                         "INVALID_INPUT")
 
-    if _allowed_ids is None:
+    if report_type and str(report_type).strip():
+        wanted = _report_type_filter(str(report_type))
+        scoped = [doc for doc in _scope_documents(_all_documents(client), _allowed_ids)
+                  if wanted(doc)]
+        window, total = scoped[offset:offset + limit], len(scoped)
+    elif _allowed_ids is None:
         listing = client.list_documents(limit=limit, offset=offset)
         window = listing.get("documents") or []
         total = listing.get("total")
@@ -774,6 +825,8 @@ def _browse_documents(client, folder_id: str = "root", recursive: bool = False,
             "status": status,
             "created_at": _normalize_created_at(doc.get("createdAt")),
         }
+        if label := _doc_label(doc):
+            item["label"] = label
         metadata = _flat_metadata(doc.get("metadata"))
         if metadata is not None:
             item["metadata"] = metadata
@@ -788,6 +841,12 @@ def _browse_documents(client, folder_id: str = "root", recursive: bool = False,
     if not recursive:
         data["folders"] = []
 
+    if not items and offset == 0 and report_type:
+        return _success(data, {
+            "summary": f"No documents of report type {report_type!r}",
+            "options": [("Retry browse_documents() without `report_type` and judge the "
+                         "documents by their names, descriptions and labels")],
+        })
     if not items and offset == 0:
         next_steps = {
             "summary": "Nothing to show",
@@ -874,6 +933,8 @@ def _get_document(client, doc_name: str, folder_id: Optional[str] = None,
         "page_count": page_num or None,
         "folder_id": entry.get("folderId"),
     }
+    if label := _doc_label(entry):
+        data["label"] = label
     metadata = _flat_metadata(entry.get("metadata"))
     if metadata is not None:
         data["metadata"] = metadata
@@ -1271,10 +1332,11 @@ _LOCAL_DOC_NAME_DESCRIPTION = (
 _LOCAL_DESCRIPTIONS: dict[str, str] = {
     "browse_documents": (
         "Primary document discovery tool — first choice for finding which "
-        "documents exist. Lists your documents newest first with names and "
-        "descriptions; match them against the user's intent and page "
-        "through with `offset: next_offset` (limit up to 50) while "
-        "`has_more` is true."
+        "documents exist. Lists your documents newest first with names, "
+        "descriptions and a `label` [report_type · period] when known; match "
+        "them against the user's intent and page through with "
+        "`offset: next_offset` (limit up to 50) while `has_more` is true. "
+        "Pass `report_type` to list only documents of that type."
     ),
     "get_document": (
         "Show a document's metadata: description, status, page count "
@@ -1314,10 +1376,26 @@ def _local_description(name: str) -> str:
     return _LOCAL_DESCRIPTIONS.get(name) or TOOL_CONTRACT[name]["description"]
 
 
+_LOCAL_EXTRA_PARAMS: dict[str, dict[str, Any]] = {
+    "browse_documents": {
+        "report_type": {
+            "type": "string",
+            "description": (
+                "Only list documents of this report type — the first part of "
+                "a document's `label` (e.g. \"qmr\", \"factbook\"); an "
+                "abbreviation or full name of a configured type works too. "
+                "Omit to list every document."
+            ),
+        },
+    },
+}
+
+
 def _local_schema(name: str) -> dict[str, Any]:
     schema = copy.deepcopy(TOOL_CONTRACT[name]["schema"])
     for param in _LOCAL_HIDDEN_PARAMS.get(name, ()):
         schema["properties"].pop(param, None)
+    schema["properties"].update(copy.deepcopy(_LOCAL_EXTRA_PARAMS.get(name, {})))
     for (tool_name, param), text in _LOCAL_PARAM_DESCRIPTIONS.items():
         if tool_name == name and param in schema["properties"]:
             schema["properties"][param]["description"] = text
@@ -1615,9 +1693,10 @@ def fetch_citation_prompt(client, format: str) -> str:
 
 
 def _base_instructions(client, include_management: bool = False) -> str:
-    """The built-in instructions, then the client's own and each extra
-    tool's guidance."""
-    own = [getattr(client, "instructions", None),
+    """The built-in instructions, the configured report types
+    (`report_types_guidance`), then the client's own and each extra tool's
+    guidance."""
+    own = [report_types_guidance(), getattr(client, "instructions", None),
            *[tool.guidance for tool in client.tools]]
     return "\n\n".join([AGENT_INSTRUCTIONS, *[text for text in own if text]])
 

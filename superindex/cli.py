@@ -7,7 +7,7 @@
     superindex nav-serve [--port 8787] [--no-watch]
     superindex batch questions.jsonl [--out DIR] [--concurrency 1] [--resume]
     superindex batch questions.jsonl --retrieval-only [--top-k 5]
-    superindex doc-meta [--store DIR] [--force] [--no-llm]
+    superindex doc-meta [--store DIR] [--force] [--no-llm] [--pdf-dir DIR]
 
 (From a source checkout: `uv run python scripts/si.py ...`.)
 
@@ -140,7 +140,13 @@ def make_client(settings: LLMSettings, store: Path, instructions: str | None = N
 # ───────────────────────────────────────────────────────────── index
 def cmd_index(args: argparse.Namespace) -> int:
     from superindex import page_images
-    from superindex.md_ingest import find_markdown, index_markdown
+    from superindex.md_ingest import (
+        clash_names,
+        drop_clash_leftovers,
+        find_markdown,
+        index_markdown,
+        pdf_source_path,
+    )
 
     settings = _settings(args)
     summary_model = None
@@ -149,7 +155,8 @@ def cmd_index(args: argparse.Namespace) -> int:
         configure_litellm()
     meta_model = _doc_meta_model(settings) if args.doc_meta else None
     store = _store(args)
-    files = find_markdown(Path(args.path).expanduser())
+    root = Path(args.path).expanduser()
+    files = find_markdown(root)
     if not files:
         print(f"no Markdown files under {args.path}", file=sys.stderr)
         return 1
@@ -160,9 +167,18 @@ def cmd_index(args: argparse.Namespace) -> int:
     print(f"docmeta : {(meta_model or 'file name only') if args.doc_meta else 'off'}")
     if pdf_dir:
         print(f"pdfs    : {pdf_dir} ({sum(len(v) for v in (pdfs or {}).values())} found)")
+    root_pdf = Path(pdf_dir).expanduser().resolve() if pdf_dir else None
+    sources = [p.relative_to(root_pdf).as_posix() for v in (pdfs or {}).values() for p in v]
+    names = clash_names(sources)
+    if names:
+        print(f"clashes : {len(names)} same-name PDFs in different folders, "
+              "named with a folder prefix")
+        for gone in drop_clash_leftovers(store, sources):
+            print(f"  drop  {gone} (unprefixed copy)", flush=True)
     failed = 0
     for md in files:
         t0 = time.time()
+        source = pdf_source_path(md, Path(pdf_dir).expanduser(), root, pdfs) if pdf_dir else None
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -171,7 +187,8 @@ def cmd_index(args: argparse.Namespace) -> int:
                                      concurrency=args.concurrency,
                                      page_chars=args.page_chars, force=args.force,
                                      pdf=page_images.find_pdf(md, pdfs),
-                                     doc_meta=args.doc_meta, doc_meta_model=meta_model)
+                                     doc_meta=args.doc_meta, doc_meta_model=meta_model,
+                                     source_path=source, name=names.get(source or ""))
         except Exception as exc:  # noqa: BLE001 - keep going with the next file
             failed += 1
             print(f"  FAIL  {md.name}: {type(exc).__name__}: {exc}", flush=True)
@@ -209,18 +226,24 @@ def _meta_line(meta: dict[str, Any]) -> str:
 
 
 def cmd_doc_meta(args: argparse.Namespace) -> int:
-    from superindex.md_ingest import backfill_doc_meta
+    from superindex import page_images
+    from superindex.md_ingest import backfill_doc_meta, doc_meta_stats
 
     model = None if args.no_llm else _doc_meta_model(_settings(args))
     store = _store(args)
+    pdf_dir = args.pdf_dir or os.getenv(page_images.PDF_DIR_ENV, "").strip() or None
     print(f"store   : {store}")
     print(f"docmeta : {model or 'file name only'}{'  (force)' if args.force else ''}")
+    if pdf_dir:
+        print(f"pdfs    : {pdf_dir}")
     done = backfill_doc_meta(store, model=model,
                              backend=_settings(args).index_backend() if model else None,
-                             force=args.force)
+                             force=args.force,
+                             pdf_dir=Path(pdf_dir).expanduser() if pdf_dir else None)
     for name, meta in done:
         print(f"  {name}: {_meta_line(meta)}", flush=True)
     print(f"{len(done)} document(s) updated")
+    print(doc_meta_stats(store))
     return 0
 
 
@@ -378,6 +401,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--force", action="store_true",
                    help="re-extract for every document, not only those missing it")
     p.add_argument("--no-llm", action="store_true", help="file-name rules only, no LLM call")
+    p.add_argument("--pdf-dir", help="folder of the source PDFs: each document's source "
+                                     "folder sets its report type (SUPERINDEX_PDF_DIR)")
     _add_llm_flags(p)
     p.set_defaults(func=cmd_doc_meta)
 

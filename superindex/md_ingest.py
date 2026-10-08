@@ -50,7 +50,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from superindex import bm25, page_images
@@ -572,12 +572,28 @@ def summarize(tree: list[dict[str, Any]], parsed: ParsedMarkdown, model: str,
 # ───────────────────────────────────────────────────────────── document metadata
 DOC_META_FIELDS = ("company", "region", "period", "report_type", "description")
 REPORT_TYPES = ("annual", "interim", "quarterly", "other")
+DOC_META_RULES = 3   # version of the rule-based fields; older doc_meta is refreshed without LLM
 _NULLS = {"", "null", "none", "n/a", "na", "unknown", "未知", "无", "不详"}
-_HALF_RE = re.compile(r"(?i)(?<![a-z])H1(?!\d)|(?<![a-z0-9])1H(?![a-z])|上半年|半年|中期|interim"
-                      r"|half[- ]?year|six months|6 months")
+_HALF_RE = re.compile(r"(?i)(?<![a-z])H1(?!\d)|(?<![a-z0-9])1H(?![a-z])|(?<![a-z])HY(?![a-z])"
+                      r"|上半年|半年|中期|interim|half[- ]?year|six months|6 months")
+_H2_RE = re.compile(r"(?i)(?<![a-z])H2(?!\d)|(?<![a-z0-9])2H(?![a-z])|下半年|second half")
 _QUARTER_RE = re.compile(r"(?i)(?<![a-z])Q([1-4])(?!\d)|(?<![a-z0-9])([1-4])Q(?![a-z])"
                          r"|第([一二三四1-4])季")
 _FY_SHORT_RE = re.compile(r"(?i)(?<![a-z])FY\s?'?(\d{2})(?!\d)")
+# A 2-digit year only counts next to a period token: FY22, YE22, HY22, 3Q22, Q3'22, 1H22, H1 22.
+_SHORT_YEAR_RE = re.compile(r"(?i)(?<![a-z])(?:FY|YE|HY|Q[1-4]|[1-4]Q|[12]H|H[12])\s?['’_-]?\s?(\d{2})(?!\d)")
+_MONTH_NAME = (r"(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?"
+               r"|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)")
+# (year, month) spellings: Mar 2022 / Mar-22, 2022 Mar, 2022M03 / 2022-03 / 202203, 2022年3月, 03/2022
+_MONTH_ABBR = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
+_MONTH_RES = (
+    (re.compile(rf"(?i)(?<![a-z]){_MONTH_NAME}(?![a-z])\.?\s?['’_-]?\s?((?:19|20)\d{{2}}|\d{{2}})(?!\d)"), 2, 1),
+    (re.compile(rf"(?i)(?<!\d)((?:19|20)\d{{2}})\s?[_-]?\s?{_MONTH_NAME}(?![a-z])"), 1, 2),
+    (re.compile(r"(?i)(?<!\d)((?:19|20)\d{2})(?:M(0?[1-9]|1[0-2])|[-_/.]?(0[1-9]|1[0-2]))(?!\d)"), 1, 2),
+    (re.compile(r"(?<!\d)((?:19|20)\d{2})\s*年\s*(0?[1-9]|1[0-2])\s*月"), 1, 2),
+    (re.compile(r"(?<!\d)(0[1-9]|1[0-2])[-/.]((?:19|20)\d{2})(?!\d)"), 2, 1),
+)
+_FY_WORD_RE = re.compile(r"(?i)(?<![a-z])(?:FY|YE)(?![a-z])|full[- ]?year|annual|全年|年度|年报")
 _INTERIM_NAME_RE = re.compile(r"(?i)(?<![a-z])(?:IR|interim|H1|1H)(?![a-z])|中期|半年")
 _ANNUAL_NAME_RE = re.compile(r"(?i)(?<![a-z])(?:AR|annual)(?![a-z])|年报|年度报告")
 DOC_META_PROMPT = (
@@ -604,24 +620,57 @@ def _clean(value: Any) -> str | None:
     return None if text.lower() in _NULLS else text
 
 
-def normalize_period(text: str | None, report_type: str | None = None) -> str | None:
-    """A reporting period in one spelling: ``FY2024`` (a year), ``1H2024``
-    (first half / interim), ``3Q2024`` (a quarter); None without a year.
-    The first year in `text` is taken; `report_type` "interim" implies 1H."""
+def _months(raw: str) -> list[tuple[int, int]]:
+    """(year, month) of every month spelling in `raw` (`_MONTH_RES`)."""
+    out = []
+    for pattern, year_group, month_group in _MONTH_RES:
+        for m in pattern.finditer(raw):
+            year = m.group(year_group)
+            month = m.group(month_group) or m.group(month_group + 1)
+            if not month.isdigit():
+                month = str(_MONTH_ABBR.index(month[:3].lower()) + 1)
+            out.append((int(year) if len(year) == 4 else 2000 + int(year), int(month)))
+    return out
+
+
+def normalize_period(text: str | None, report_type: str | None = None,
+                     quarter_as_half: bool = False) -> str | None:
+    """A reporting period in one spelling: ``FY2024`` (a year; also YE),
+    ``1H2024`` (first half: H1 / 1H / HY / interim), ``2H2024``,
+    ``2024Q3`` (a quarter), ``2024M03`` (a month); None without a year, or
+    when it names two different years, quarters or months (ambiguous). Explicit
+    period words win over a month, a month over a bare year. The year is the
+    4-digit one in `text`, else a 2-digit one next to a period token
+    (FY22, 3Q22, Q3'22, Mar-22); `report_type` "interim" implies 1H.
+    `quarter_as_half` (a type published by half year, e.g. Factbook) reads
+    Q2 as 1H and Q4 as FY."""
     raw = _clean(text)
     if raw is None:
         return None
+    months = _months(raw)
     if m := YEAR_RE.search(raw):
         year = m.group(0)
-    elif m := _FY_SHORT_RE.search(raw):
+    elif m := _SHORT_YEAR_RE.search(raw):
         year = "20" + m.group(1)
+    elif months:
+        year = str(months[0][0])
     else:
         return None
-    if quarter := _QUARTER_RE.search(raw):
-        digit = next(g for g in quarter.groups() if g)
-        return f"{'一二三四'.index(digit) + 1 if digit in '一二三四' else digit}Q{year}"
+    quarters = {int(d) if d.isdigit() else "一二三四".index(d) + 1
+                for q in _QUARTER_RE.finditer(raw) for d in q.groups() if d}
+    if len(quarters) > 1 or len(set(months)) > 1 or len(set(YEAR_RE.findall(raw))) > 1:
+        return None
+    if quarters:
+        q = quarters.pop()
+        if quarter_as_half and q in (2, 4):
+            return f"1H{year}" if q == 2 else f"FY{year}"
+        return f"{year}Q{q}"
+    if _H2_RE.search(raw):
+        return f"2H{year}"
     if _HALF_RE.search(raw) or report_type == "interim":
         return f"1H{year}"
+    if months and not _FY_WORD_RE.search(raw):
+        return f"{months[0][0]}M{months[0][1]:02d}"
     return f"FY{year}"
 
 
@@ -630,12 +679,24 @@ def period_year(period: str | None) -> int | None:
     return int(m.group(0)) if m else None
 
 
-def normalize_report_type(value: str | None, period: str | None = None) -> str | None:
-    """annual / interim / quarterly / other; from the period when not given."""
+def _load_policy() -> Any:
+    from superindex.batch import _routing_policy
+
+    return _routing_policy()
+
+
+def normalize_report_type(value: str | None, period: str | None = None,
+                          policy: Any = None) -> str | None:
+    """annual / interim / quarterly / other, or a configured type (its key,
+    or a text naming one of its aliases, e.g. "QMR"); from the period when
+    not given."""
     raw = (_clean(value) or "").lower()
     if raw in REPORT_TYPES:
         return raw
     if raw:
+        policy = _load_policy() if policy is None else policy
+        if found := policy.report_type_from_name(raw):
+            return found
         if _HALF_RE.search(raw):
             return "interim"
         if "quarter" in raw or "季" in raw:
@@ -647,19 +708,36 @@ def normalize_report_type(value: str | None, period: str | None = None) -> str |
         return "annual"
     if period and period.startswith("1H"):
         return "interim"
-    return "quarterly" if period and period[1:2] == "Q" else None
+    return "quarterly" if period and re.fullmatch(r"\d{4}Q[1-4]", period) else None
 
 
-def doc_meta_from_filename(name: str) -> dict[str, Any]:
-    """Rule-based metadata from a file name alone: period and report type
-    (e.g. ``AIA_AR2024.md`` -> FY2024 annual, ``AIA_IR2024H1.md`` -> 1H2024
-    interim); company, region and description stay None."""
+def doc_meta_from_filename(name: str, source_path: str | None = None,
+                           policy: Any = None) -> dict[str, Any]:
+    """Rule-based metadata from a file name and its source folder alone:
+    period (``AIA_AR2024.md`` -> FY2024, ``QMR Q3 2022.pdf`` -> 2022Q3) and
+    report type — a configured type from the folder of `source_path` (path
+    relative to the PDF root) or from the file name's aliases
+    (`RoutingPolicy.report_type_for`), else annual / interim from AR / IR;
+    `*_source` says where each came from. Company, region and description
+    stay None."""
+    policy = _load_policy() if policy is None else policy
     stem = Path(name).stem
-    kind = ("interim" if _INTERIM_NAME_RE.search(stem)
-            else "annual" if _ANNUAL_NAME_RE.search(stem) else None)
-    period = normalize_period(stem, kind)
-    return {"company": None, "region": None, "period": period,
-            "report_type": normalize_report_type(kind, period), "description": None}
+    kind, kind_source = policy.report_type_for(source_path, name)
+    if kind is None:
+        kind = ("interim" if _INTERIM_NAME_RE.search(stem)
+                else "annual" if _ANNUAL_NAME_RE.search(stem) else None)
+    period = normalize_period(stem, kind, policy.quarter_as_half(kind))
+    meta: dict[str, Any] = {"company": None, "region": None, "period": period,
+                            "report_type": normalize_report_type(kind, period, policy),
+                            "description": None}
+    if kind_source:
+        meta["report_type_source"] = kind_source
+    if period:
+        meta["period_source"] = "filename"
+    if source_path:
+        meta["source_path"] = source_path
+        meta["source_folder"] = source_path.split("/", 1)[0] if "/" in source_path else None
+    return meta
 
 
 def parse_doc_meta_reply(reply: str | None) -> dict[str, Any]:
@@ -706,16 +784,49 @@ def _complete(model: str, prompt: str, backend: dict[str, str] | None) -> str:
         utils._llm_backend.reset(token)
 
 
+def _apply_rules(meta: dict[str, Any], fallback: dict[str, Any], policy: Any) -> dict[str, Any]:
+    """`meta` with the rule-based fields of `fallback` (`doc_meta_from_filename`)
+    on top: a report type from the folder or a configured alias, and a period
+    the file name gives, win over the LLM's; another period is re-normalized
+    (older spellings such as ``3Q2024``). Marks the rules version."""
+    out = {**meta}
+    if fallback.get("report_type_source"):
+        out["report_type"] = fallback["report_type"]
+        out["report_type_source"] = fallback["report_type_source"]
+    elif out.pop("report_type_source", None) or not out.get("report_type"):
+        out["report_type"] = fallback.get("report_type")
+    if fallback.get("period"):
+        out["period"], out["period_source"] = fallback["period"], "filename"
+    elif out.get("period_source") == "filename" or out.get("source") == "filename":
+        out["period"] = None          # the file name no longer gives one (e.g. now ambiguous)
+        out.pop("period_source", None)
+    else:
+        out["period"] = normalize_period(out.get("period"), out.get("report_type"),
+                                         policy.quarter_as_half(out.get("report_type")))
+    if out["report_type"] == "interim" and (out["period"] or "").startswith("FY"):
+        out["period"] = "1H" + out["period"][2:]
+    for key in ("source_path", "source_folder"):
+        if fallback.get(key):
+            out[key] = fallback[key]
+    out["rules"] = DOC_META_RULES
+    return out
+
+
 def extract_doc_meta(name: str, lines: list[str], model: str | None = None,
                      backend: dict[str, str] | None = None,
-                     rate_limit: RateLimitPolicy | None = None) -> dict[str, Any]:
+                     rate_limit: RateLimitPolicy | None = None,
+                     source_path: str | None = None, policy: Any = None) -> dict[str, Any]:
     """Document metadata (`DOC_META_FIELDS`) from one LLM call when `model` is
     given; a field the LLM leaves out (or every field, when the call fails or
-    there is no model) comes from `doc_meta_from_filename`. `source` says
-    which: "llm", "llm+filename" or "filename"; `model` is the model tried.
-    A rate-limit error waits and retries (`_wait_on_rate_limit`); a call that
-    still fails sets `llm_failed`, so `_needs_doc_meta` tries it again."""
-    fallback = doc_meta_from_filename(name)
+    there is no model) comes from `doc_meta_from_filename`, whose folder /
+    configured report type and file-name period win over the LLM's
+    (`_apply_rules`; `source_path` is the PDF's path relative to the PDF
+    root). `source` says which: "llm", "llm+filename" or "filename"; `model`
+    is the model tried. A rate-limit error waits and retries
+    (`_wait_on_rate_limit`); a call that still fails sets `llm_failed`, so
+    `_needs_doc_meta` tries it again."""
+    policy = _load_policy() if policy is None else policy
+    fallback = doc_meta_from_filename(name, source_path, policy)
     found: dict[str, Any] = {}
     error = None
     failed = False
@@ -730,9 +841,10 @@ def extract_doc_meta(name: str, lines: list[str], model: str | None = None,
             error = f"{type(exc).__name__}: {exc}"
             failed = True
     meta: dict[str, Any] = {k: found.get(k) or fallback.get(k) for k in DOC_META_FIELDS}
-    if meta["report_type"] == "interim" and (meta["period"] or "").startswith("FY"):
-        meta["period"] = "1H" + meta["period"][2:]
-    from_name = [k for k in DOC_META_FIELDS if not found.get(k) and fallback.get(k)]
+    if found.get("period"):
+        meta["period_source"] = "llm"
+    meta = _apply_rules(meta, fallback, policy)
+    from_name = [k for k in DOC_META_FIELDS if meta.get(k) and meta[k] != found.get(k)]
     meta["source"] = ("filename" if not found
                       else "llm+filename" if from_name else "llm")
     meta["model"] = model
@@ -743,6 +855,16 @@ def extract_doc_meta(name: str, lines: list[str], model: str | None = None,
     return meta
 
 
+def refresh_doc_meta(current: dict[str, Any], name: str, source_path: str | None = None,
+                     policy: Any = None) -> dict[str, Any]:
+    """Stored metadata with the rule-based fields redone (`_apply_rules`) for
+    the current rules and `source_path` — no LLM call; the LLM's company,
+    region and description are kept."""
+    policy = _load_policy() if policy is None else policy
+    source_path = source_path or current.get("source_path")
+    return _apply_rules(current, doc_meta_from_filename(name, source_path, policy), policy)
+
+
 def _needs_doc_meta(info: dict[str, Any], model: str | None, force: bool = False) -> bool:
     """Whether a stored document should get (new) metadata: it has none, or
     `model` is set and has not been tried on it yet, or its call failed."""
@@ -750,6 +872,15 @@ def _needs_doc_meta(info: dict[str, Any], model: str | None, force: bool = False
     if force or not isinstance(current, dict):
         return True
     return bool(model) and (current.get("model") != model or bool(current.get("llm_failed")))
+
+
+def _needs_rules(current: Any, source_path: str | None) -> bool:
+    """Whether stored metadata lacks the current rules (`DOC_META_RULES`) or
+    a newly known `source_path` — a rule-only refresh, no LLM call."""
+    if not isinstance(current, dict):
+        return False
+    return (current.get("rules") != DOC_META_RULES
+            or bool(source_path) and current.get("source_path") != source_path)
 
 
 def _with_doc_meta(meta: dict[str, Any], doc_meta: dict[str, Any]) -> dict[str, Any]:
@@ -778,26 +909,149 @@ def _stored_lines(store: DocStore, doc_id: str) -> list[str]:
     return "\n".join(str(p.get("markdown") or "") for p in pages).splitlines()
 
 
+def _relative_source(pdf: Any, pdf_dir: Path) -> str | None:
+    """`pdf` relative to `pdf_dir` (POSIX form), or None when it is not under it."""
+    if not pdf:
+        return None
+    try:
+        return Path(str(pdf)).expanduser().resolve().relative_to(
+            Path(pdf_dir).expanduser().resolve()).as_posix()
+    except (ValueError, OSError):
+        return None
+
+
+def pdf_source_path(md_path: Path, pdf_dir: Path, md_dir: Path | None = None,
+                    pdfs: dict[str, list[Path]] | None = None) -> str | None:
+    """The source PDF of a Markdown file, relative to `pdf_dir`: the
+    ``.meta.json`` sidecar's ``source_path`` (or its ``source`` under
+    `pdf_dir`), else the same relative path under `pdf_dir` as `md_path` has
+    under `md_dir`, else the only PDF of that stem in `pdfs`
+    (`page_images.pdf_index`); None when not found or ambiguous."""
+    try:
+        sidecar = json.loads(md_path.with_suffix(".meta.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        sidecar = {}
+    if isinstance(sidecar, dict):
+        if sidecar.get("source_path"):
+            return str(sidecar["source_path"])
+        if found := _relative_source(sidecar.get("source"), pdf_dir):
+            return found
+    if md_dir is not None:
+        try:
+            rel = md_path.relative_to(md_dir).with_suffix(".pdf")
+        except ValueError:
+            rel = None
+        if rel is not None and (Path(pdf_dir) / rel).is_file():
+            return rel.as_posix()
+    matches = (pdfs or {}).get(md_path.stem.lower()) or []
+    return _relative_source(matches[0], pdf_dir) if len(matches) == 1 else None
+
+
+def _stored_source_path(info: dict[str, Any], name: str, pdf_dir: Path,
+                        pdfs: dict[str, list[Path]]) -> str | None:
+    """A stored document's source PDF relative to `pdf_dir`: its linked
+    ``pdf_path``, else the only PDF of its stem; None when not found or
+    ambiguous."""
+    if found := _relative_source(info.get("pdf_path"), pdf_dir):
+        return found
+    matches = pdfs.get(Path(name).stem.lower()) or []
+    return _relative_source(matches[0], pdf_dir) if len(matches) == 1 else None
+
+
+def same_name_sources(source_paths: list[str]) -> dict[str, list[str]]:
+    """Source PDFs (relative paths) whose Markdown gets the same document
+    name — the store keeps one document per name, so they replace each
+    other: {document name: [paths]} for every name with more than one."""
+    by_name: dict[str, list[str]] = {}
+    for path in source_paths:
+        name = sanitize_filename(Path(path).with_suffix(".md").name)
+        by_name.setdefault(name, []).append(path)
+    return {k: v for k, v in sorted(by_name.items()) if len(v) > 1}
+
+
+def clash_names(source_paths: list[str]) -> dict[str, str]:
+    """{source path: document name} for the source PDFs that share a
+    document name (`same_name_sources`): the name gets its folder (relative
+    to the PDF root) as a prefix, ``Factbook__Pack 2022.md`` — more of the
+    folder path, ``2022__Factbook__Pack 2022.md``, when the folder itself
+    is shared. Every other PDF keeps its plain name and is not listed."""
+    out: dict[str, str] = {}
+    for name, paths in same_name_sources(source_paths).items():
+        parents = {p: PurePosixPath(p).parent.parts for p in paths}
+        names: dict[str, str] = {}
+        for depth in range(1, max(len(v) for v in parents.values()) + 1):
+            names = {p: sanitize_filename("__".join((*parents[p][-depth:], name)))
+                     for p in paths}
+            if len(set(names.values())) == len(paths):
+                break
+        out.update(names)
+    return out
+
+
+def drop_clash_leftovers(store_path: Path, source_paths: list[str]) -> list[str]:
+    """Delete the stored documents still under the plain name of a clash
+    (`clash_names`): from before the prefixes, the PDF last indexed of the
+    same name. Returns the deleted documents' names."""
+    stale = set(same_name_sources(source_paths)) - set(clash_names(source_paths).values())
+    store = DocStore(str(store_path))
+    gone = [m for m in store.list_metas() if m.get("name") in stale]
+    with store.lock():
+        for meta in gone:
+            store.delete_document(meta["id"])
+    return [str(m["name"]) for m in gone]
+
+
 def backfill_doc_meta(store_path: Path, *, model: str | None = None,
                       backend: dict[str, str] | None = None, force: bool = False,
                       rate_limit: RateLimitPolicy | None = None,
+                      pdf_dir: Path | None = None,
                       ) -> list[tuple[str, dict[str, Any]]]:
     """Add document metadata to an existing store without rebuilding trees:
     every completed document that has none — or, with `model`, that `model`
     has not been tried on — gets `extract_doc_meta` from its stored text
-    (`force`: every document). Returns (name, doc_meta) per updated document."""
+    (`force`: every document). Any other document whose metadata predates the
+    current rules, or lacks its source path, gets `refresh_doc_meta` (no LLM
+    call). With `pdf_dir` the source path (folder → report type) is found
+    from the linked PDF or the file name (`_stored_source_path`). Returns
+    (name, doc_meta) per updated document."""
     store = DocStore(str(store_path))
+    policy = _load_policy()
+    pdfs = page_images.pdf_index(Path(pdf_dir)) if pdf_dir else {}
     done: list[tuple[str, dict[str, Any]]] = []
     for meta in sorted(store.list_metas(), key=lambda m: str(m.get("name"))):
         info = meta.get("metadata") or {}
-        if meta.get("status") != "completed" or not _needs_doc_meta(info, model, force):
+        if meta.get("status") != "completed":
             continue
         name = str(info.get("source_file") or meta.get("name") or "")
-        doc_meta = extract_doc_meta(name, _stored_lines(store, meta["id"]), model, backend,
-                                    rate_limit)
+        source = (_stored_source_path(info, name, Path(pdf_dir), pdfs) if pdf_dir else None) \
+            or (info.get("doc_meta") or {}).get("source_path")
+        if _needs_doc_meta(info, model, force):
+            doc_meta = extract_doc_meta(name, _stored_lines(store, meta["id"]), model, backend,
+                                        rate_limit, source, policy)
+        elif _needs_rules(info.get("doc_meta"), source):
+            doc_meta = refresh_doc_meta(info["doc_meta"], name, source, policy)
+        else:
+            continue
         _store_doc_meta(store, meta, doc_meta)
         done.append((str(meta.get("name")), doc_meta))
     return done
+
+
+def doc_meta_stats(store_path: Path) -> str:
+    """One line over the store's completed documents: documents per report
+    type, with a period, and whose source folder gives no type."""
+    metas = [m for m in DocStore(str(store_path)).list_metas() if m.get("status") == "completed"]
+    found = [(m.get("metadata") or {}).get("doc_meta") or {} for m in metas]
+    kinds: dict[str, int] = {}
+    for d in found:
+        kinds[d.get("report_type") or "未知"] = kinds.get(d.get("report_type") or "未知", 0) + 1
+    no_source = sum(1 for d in found if not d.get("source_path"))
+    unknown_folder = sum(1 for d in found if d.get("source_path")
+                         and d.get("report_type_source") != "folder")
+    return (f"{len(metas)} 个文档；报告类型 "
+            + ("，".join(f"{k} {v}" for k, v in sorted(kinds.items())) or "-")
+            + f"；有期间 {sum(1 for d in found if d.get('period'))}"
+            + f"；来源文件夹无法识别类型 {unknown_folder}，来源路径未知 {no_source}")
 
 
 # ───────────────────────────────────────────────────────────── store
@@ -847,24 +1101,29 @@ def index_markdown(md_path: Path, store_path: Path, *, summary_model: str | None
                    page_chars: int = DEFAULT_PAGE_CHARS,
                    force: bool = False, pdf: Path | None = None,
                    doc_meta: bool = True, doc_meta_model: str | None = None,
-                   rate_limit: RateLimitPolicy | None = None) -> IndexResult:
+                   rate_limit: RateLimitPolicy | None = None,
+                   source_path: str | None = None, name: str | None = None) -> IndexResult:
     """Index one Markdown file into the store. `summary_model=None` builds the
     tree without any LLM call (no summaries, no description). `pdf` is the
     PDF the Markdown was extracted from (see `superindex.page_images`).
     `doc_meta` stores document metadata (`extract_doc_meta`: company, region,
     period, report type) in ``metadata.doc_meta`` — with one `doc_meta_model`
     call when given, else from the file name — and fills an empty description.
+    `source_path` is the source PDF's path relative to the PDF root (its
+    folder gives the report type, `RoutingPolicy.report_type_for`). `name`
+    is the document name when not the file name (`clash_names`).
 
-    A document is identified by its file name: re-indexing replaces the stored
+    A document is identified by its name: re-indexing replaces the stored
     copy, and is skipped when the content is unchanged and the stored copy
     already has what was asked for (summaries), unless `force`. A skipped
-    document still gets a new or changed `pdf` linked and missing document
-    metadata added (metadata only). Every LLM call waits and retries on a
+    document still gets a new or changed `pdf` linked, missing document
+    metadata added and outdated rule-based metadata redone (`refresh_doc_meta`,
+    no LLM call), and other local copies of the same name deleted. Every LLM call waits and retries on a
     rate-limit error as `rate_limit` says (None: fail as before)."""
     raw = md_path.read_bytes()
     markdown = raw.decode("utf-8", errors="replace")
     digest = hashlib.sha256(raw).hexdigest()
-    name = sanitize_filename(md_path.name)
+    name = sanitize_filename(name or md_path.name)
     want_summary = summary_model is not None
     store = DocStore(str(store_path))
 
@@ -874,6 +1133,13 @@ def index_markdown(md_path: Path, store_path: Path, *, summary_model: str | None
             info = meta.get("metadata") or {}
             if (meta.get("status") == "completed" and info.get("sha256") == digest
                     and (info.get("summary") or not want_summary)):
+                if extra := [m for m in previous if m["id"] != meta["id"]]:
+                    # e.g. a store restored from PERSIST_DIR next to a newer local copy
+                    with store.lock():
+                        for old in extra:
+                            store.delete_document(old["id"])
+                    print(f"{name}: 本地库有 {len(previous)} 份同名文档，已删除其余 {len(extra)} 份"
+                          f"（保留内容一致的 {meta['id']}）", flush=True)
                 bm25.ensure_index(store, meta["id"])   # stores from before bm25.json
                 page_images.load_tags(store_path, meta["id"])
                 warnings: list[str] = []
@@ -886,7 +1152,11 @@ def index_markdown(md_path: Path, store_path: Path, *, summary_model: str | None
                 if doc_meta and _needs_doc_meta(info, doc_meta_model):
                     found = extract_doc_meta(md_path.name, parse_pages(
                         markdown, page_chars=page_chars).lines, doc_meta_model, backend,
-                        rate_limit)
+                        rate_limit, source_path or (found or {}).get("source_path"))
+                    _store_doc_meta(store, store.get_meta(meta["id"]) or meta, found)
+                    added = True
+                elif doc_meta and _needs_rules(found, source_path):
+                    found = refresh_doc_meta(found, md_path.name, source_path)
                     _store_doc_meta(store, store.get_meta(meta["id"]) or meta, found)
                     added = True
                 return IndexResult(meta["id"], name, meta.get("pageNum", 0),
@@ -906,7 +1176,7 @@ def index_markdown(md_path: Path, store_path: Path, *, summary_model: str | None
         description = summarize(tree, parsed, summary_model, backend=backend,
                                 concurrency=concurrency, rate_limit=rate_limit)
     found = extract_doc_meta(md_path.name, parsed.lines, doc_meta_model, backend,
-                             rate_limit) if doc_meta else None
+                             rate_limit, source_path) if doc_meta else None
     public = _public_tree(tree)
     node_count = len(_preorder(public))
     pages = [{"page_index": i + 1, "markdown": text}

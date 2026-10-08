@@ -39,7 +39,7 @@ REPORT = "# Annual Report 2024\n\n## Chairman's Statement\n\nVONB grew 20% compa
     ("PingAn_IR2023H1.md", "1H2023", "interim"),
     ("HarbourLife_FY23_annual.md", "FY2023", "annual"),
     ("友邦2024年中期报告.md", "1H2024", "interim"),
-    ("CPIC_3Q2024.md", "3Q2024", "quarterly"),
+    ("CPIC_3Q2024.md", "2024Q3", "quarterly"),
     ("report.md", None, None),
 ])
 def test_doc_meta_from_filename(name: str, period: str | None, kind: str | None) -> None:

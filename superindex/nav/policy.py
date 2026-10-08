@@ -106,6 +106,29 @@ class Scope:
 
 
 @dataclass(frozen=True)
+class ReportType:
+    """A kind of report (`report_types:` in the policy file).
+
+    `folders` are keywords of the source folder (the strongest evidence),
+    `aliases` the abbreviations / full names that identify it in a file name
+    or in a question, `filename` extra file-name-only keywords (too generic
+    for questions, e.g. "Monthly"). A type with `split` (folder MBR/QBR) is
+    refined by those types' file-name keywords; `use` says what it answers.
+    `quarter_as_half`: its Q2 / Q4 mean the half year / full year (1H / FY),
+    e.g. a Factbook published half-yearly.
+    """
+
+    key: str
+    name: str = ""
+    folders: tuple[str, ...] = ()
+    aliases: tuple[str, ...] = ()
+    filename: tuple[str, ...] = ()
+    split: tuple[str, ...] = ()
+    use: str = ""
+    quarter_as_half: bool = False
+
+
+@dataclass(frozen=True)
 class Overlay:
     """Per-corpus additions, merged on top of the global defaults."""
 
@@ -142,6 +165,12 @@ def _as_str_tuple(value: Any, key: str) -> tuple[str, ...]:
             out.append(v.strip())
         return tuple(out)
     raise PolicyError(f"{key}: 期望字符串或字符串列表，得到 {type(value).__name__}")
+
+
+def _as_bool(value: Any, key: str) -> bool:
+    if not isinstance(value, bool):
+        raise PolicyError(f"{key}: 期望 true / false，得到 {type(value).__name__}")
+    return value
 
 
 def _as_int(value: Any, key: str) -> int:
@@ -228,6 +257,58 @@ def _parse_aliases(raw: Any, key: str) -> tuple[tuple[str, tuple[str, ...]], ...
     else:
         raise PolicyError(f"{key}: 期望映射或列表，得到 {type(raw).__name__}")
     return tuple(items)
+
+
+def _parse_report_types(raw: Any, key: str) -> tuple[ReportType, ...]:
+    """`{qmr: {name, folders, aliases, filename, split, use, quarter_as_half}}`, in file order
+    (the first type whose folder / file-name keyword matches wins)."""
+    if raw is None:
+        return ()
+    if not isinstance(raw, Mapping):
+        raise PolicyError(f"{key}: 期望映射（类型键 → name / folders / aliases / use）")
+    out: list[ReportType] = []
+    for k, body in raw.items():
+        if not isinstance(k, str) or not k.strip():
+            raise PolicyError(f"{key}: 类型键必须是非空字符串，得到 {k!r}")
+        body = body or {}
+        if not isinstance(body, Mapping):
+            raise PolicyError(f"{key}.{k}: 期望映射")
+        where = f"{key}.{k}"
+        out.append(ReportType(
+            key=k.strip().lower(),
+            name=_as_text(body.get("name"), f"{where}.name"),
+            folders=_as_str_tuple(body.get("folders"), f"{where}.folders"),
+            aliases=_as_str_tuple(body.get("aliases"), f"{where}.aliases"),
+            filename=_as_str_tuple(body.get("filename"), f"{where}.filename"),
+            split=tuple(s.lower() for s in _as_str_tuple(body.get("split"), f"{where}.split")),
+            use=_as_text(body.get("use"), f"{where}.use"),
+            quarter_as_half=_as_bool(body.get("quarter_as_half", False),
+                                     f"{where}.quarter_as_half"),
+        ))
+    keys = {t.key for t in out}
+    for t in out:
+        if unknown := [s for s in t.split if s not in keys]:
+            raise PolicyError(f"{key}.{t.key}.split: 未定义的类型 {unknown}")
+    return tuple(out)
+
+
+def _words(text: str) -> str:
+    """Lower case, `_` / `-` / runs of spaces as one space (file and folder
+    names write "MBR QBR_Finance  Part" as freely as "mbr-qbr finance part")."""
+    return " ".join(re.sub(r"[_\-]+", " ", text or "").lower().split())
+
+
+def _term_in(term: str, text: str, whole: bool = True) -> bool:
+    """`term` in `text` (both `_words`): ASCII terms on letter boundaries —
+    at the end too when `whole` (a folder keyword may be a word's start:
+    "country trend" in "country trends") — others as a substring."""
+    term = _words(term)
+    if not term:
+        return False
+    if not term.isascii():
+        return term in text
+    tail = r"(?![a-z])" if whole else ""
+    return re.search(rf"(?<![a-z]){re.escape(term)}{tail}", text) is not None
 
 
 @lru_cache(maxsize=64)
@@ -353,6 +434,7 @@ class RoutingPolicy:
     aliases: tuple[tuple[str, tuple[str, ...]], ...] = ()
     instructions: str = ""
     corpora: tuple[tuple[str, Overlay], ...] = ()
+    report_types: tuple[ReportType, ...] = ()
     source: str = ""
 
     # ---- construction --------------------------------------------------
@@ -420,6 +502,7 @@ class RoutingPolicy:
             aliases=_parse_aliases(raw.get("aliases"), "aliases"),
             instructions=_as_text(raw.get("instructions"), "instructions"),
             corpora=tuple(corpora),
+            report_types=_parse_report_types(raw.get("report_types"), "report_types"),
             source=source,
         )
 
@@ -427,7 +510,8 @@ class RoutingPolicy:
     @property
     def is_empty(self) -> bool:
         return not (self.weights or self.exclude or self.scopes or self.periods
-                    or self.aliases or self.instructions.strip() or self.corpora)
+                    or self.aliases or self.instructions.strip() or self.corpora
+                    or self.report_types)
 
     @property
     def corpus_keys(self) -> tuple[str, ...]:
@@ -451,6 +535,8 @@ class RoutingPolicy:
             bits.append("提示词补充")
         if self.corpora:
             bits.append(f"{len(self.corpora)} 个语料覆盖")
+        if self.report_types:
+            bits.append(f"{len(self.report_types)} 种报告类型")
         text = "、".join(bits)
         return f"{text}（来自 {self.source}）" if self.source else text
 
@@ -664,6 +750,67 @@ class RoutingPolicy:
                 out.append((g, 2))
         return out
 
+    # ---- injection point 5: report types -------------------------------
+    def report_type(self, key: str | None) -> ReportType | None:
+        want = (key or "").strip().lower()
+        return next((t for t in self.report_types if t.key == want), None)
 
-__all__ = ["DirWeight", "Overlay", "PolicyError", "RoutingPolicy", "Scope",
+    def quarter_as_half(self, key: str | None) -> bool:
+        """Whether type `key` reads Q2 / Q4 as 1H / FY (`ReportType.quarter_as_half`)."""
+        found = self.report_type(key)
+        return bool(found and found.quarter_as_half)
+
+    def report_type_from_name(self, name: str,
+                              among: Sequence[str] | None = None) -> str | None:
+        """The first type (of `among`, default all) whose alias or file-name
+        keyword is in the file name `name` (or any short text, e.g. an LLM's
+        "QMR"), or whose key is the whole text."""
+        text = _words(Path(name).stem if Path(name).suffix.lower() in (
+            ".pdf", ".md", ".markdown") else name)
+        for t in self.report_types:
+            if among is not None and t.key not in among:
+                continue
+            if text == _words(t.key) or any(_term_in(a, text) for a in (*t.aliases, *t.filename)):
+                return t.key
+        return None
+
+    def report_type_for(self, source_path: str | None,
+                        name: str) -> tuple[str | None, str | None]:
+        """(type, "folder" | "filename") of a document: a folder of its
+        `source_path` (relative to the PDF root) holding a type's folder
+        keyword, refined by the file name for a type with `split`; else the
+        file name's aliases; (None, None) when neither tells."""
+        folders = [_words(seg) for seg in str(source_path or "").replace("\\", "/").split("/")[:-1]]
+        for seg in folders:
+            for t in self.report_types:
+                if any(_term_in(k, seg, whole=False) for k in t.folders):
+                    subs = {s for s in t.split if self.report_type_from_name(name, (s,))}
+                    return (subs.pop() if len(subs) == 1 else t.key), "folder"
+        found = self.report_type_from_name(name)
+        return (found, "filename") if found else (None, None)
+
+    def report_types_in(self, question: str) -> list[str]:
+        """Types the question names by an alias (abbreviation or full name)."""
+        text = _words(question)
+        return [t.key for t in self.report_types if any(_term_in(a, text) for a in t.aliases)]
+
+    def covering_types(self, named: Sequence[str]) -> set[str]:
+        """`named` plus the types that split into one of them (MBR → MBR/QBR)."""
+        return set(named) | {t.key for t in self.report_types if set(t.split) & set(named)}
+
+    def report_types_block(self) -> str:
+        """Agent guidance on the configured report types; "" without any."""
+        if not self.report_types:
+            return ""
+        lines = [f"- {t.key}: {t.name or t.key}" + (f" — {t.use}" if t.use else "")
+                 for t in self.report_types]
+        return ("REPORT TYPES:\n"
+                "browse_documents() shows each document's [report_type · period]; pass "
+                "`report_type` to list one type. Questions rarely name the type — choose "
+                "it from what is asked:\n" + "\n".join(lines)
+                + "\n- A document may hold earlier periods (trends, comparatives): the period "
+                "is its own reporting period, not the only one it covers.")
+
+
+__all__ = ["DirWeight", "Overlay", "PolicyError", "ReportType", "RoutingPolicy", "Scope",
            "POLICY_ENV", "YEAR_RE"]

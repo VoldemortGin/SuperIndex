@@ -81,6 +81,58 @@ directories:
 #   - 集团合并口径优先于子公司口径
 #   - 同一年度同时存在「已审计」和「未审计」时，优先已审计
 
+# ── 报告类型 ──────────────────────────────────────────────────────────────
+# 建库时给每份文档定 report_type（存进 doc_meta），优先级：来源文件夹 > 文件名 > LLM。
+#   folders : 来源文件夹名关键词（相对 PDF 根目录的任一级目录；大小写、_ - 多空格不敏感，
+#             按词首匹配，所以 "country trend" 也命中 "Country Trends Encropyted"）
+#   aliases : 缩写 / 全称：既用于文件名兜底，也用于识别「问题点名了这类报告」
+#             （点名才只在这类里查，没点名不按类型过滤）
+#   filename: 只用于文件名的额外关键词（太泛、不适合从问题里识别的词，如 Monthly）
+#   split   : 文件夹定了大类后，再看文件名细分成哪一类（判断不了就记大类）
+#   use     : 这类报告适合回答什么 —— 原样写进 agent 提示词，帮它自己判断该查哪类
+#   quarter_as_half: true 时文件名里的 Q2 / Q4 记为 1H / FY（按半年出的报告，如 Factbook）；
+#             其它类型的 Q2 / Q4 仍是季度（2022Q2 / 2022Q4）
+# 改完后运行 `superindex doc-meta --no-llm --pdf-dir <PDF 目录>`（或 Notebook 步骤 2）
+# 即可按新规则补全已有文档，不调 LLM、不重建库。
+# 现有的 annual / interim（年报 / 中报）是内置类型，不用写在这里。
+report_types:
+  qmr:
+    name: QMR（Quarterly Management Report，季度管理报告）
+    folders: [qmr]
+    aliases: [QMR, Quarterly Management Report]
+    use: 季度实际经营数据、管理口径的业绩与指标
+  mbr_qbr:
+    name: MBR / QBR（月度 / 季度业务回顾，文件名无法区分时）
+    folders: [mbr, qbr]
+    split: [mbr, qbr]
+    use: 月度 / 季度实际经营数据与业务回顾
+  mbr:
+    name: MBR（Monthly Business Review，月度业务回顾）
+    aliases: [MBR, Monthly Business Review]
+    filename: [Monthly]
+    use: 月度实际经营数据与业务回顾
+  qbr:
+    name: QBR（Quarterly Business Review，季度业务回顾）
+    aliases: [QBR, Quarterly Business Review]
+    filename: [Quarterly Business]
+    use: 季度实际经营数据与业务回顾
+  factbook:
+    name: Factbook（数据手册，大体按半年）
+    folders: [factbook, fact book]
+    aliases: [Factbook, Fact Book]
+    use: 历史趋势、多期对比的数据（含往期数据）
+    quarter_as_half: true
+  exco_trend:
+    name: EXCO Trend（Executive Committee 关键指标趋势，按国家/地区）
+    folders: [country trend]
+    aliases: [EXCO Trend, EXCO Trends, Country Trend, Country Trends]
+    use: 各国家/地区关键指标的多期趋势与对比（含往期数据）
+  go_exco_deck:
+    name: GO EXCO Deck（Group Office EXCO 汇报材料）
+    folders: [go exco, exco deck, exco deco]
+    aliases: [GO EXCO, GO EXCO Deck, EXCO Deck, Group Office EXCO]
+    use: 集团层面的汇报材料、集团整体表现与重点事项
+
 # ── 单语料覆盖 ────────────────────────────────────────────────────────────
 # 键写语料的**显示名**（左侧列表里看到的那个名字）或语料 ID。
 # 覆盖项与全局**合并**，不是替换 —— 所以只写需要追加的部分即可。
