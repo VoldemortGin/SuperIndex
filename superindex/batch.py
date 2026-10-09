@@ -18,8 +18,10 @@ too), or else when its text holds the expected answer (same rule as the rough
 score). The summary reports recall@1/3/5 and MRR.
 
 With prefetch on (the default, `superindex.prefetch`), each question goes to
-the agent behind its top keyword-search pages; the record keeps them
-(`prefetch`, each judged like `--retrieval-only`) and `prefetch_hit` says
+the agent behind its top keyword-search pages, with their page text; the
+record keeps them (`prefetch`, each judged like `--retrieval-only` and marked
+`injected` / `truncated`), lists the pages sent in full (`pages_injected`,
+also first in `pages_read`) and `prefetch_hit` says
 whether one of them holds the answer, so the summary can tell "search missed
 it" from "found but not used". The rough score still reads only the answer.
 
@@ -210,9 +212,12 @@ def _arguments(raw: Any) -> Any:
 def run_question(client: Any, q: Question, scope: str | list[str] | None, *,
                  timeout: float, reasoning_effort: str | None = None,
                  message: str | None = None,
-                 session: page_images.Session | None = None) -> dict[str, Any]:
+                 session: page_images.Session | None = None,
+                 pages_injected: list[str] | None = None) -> dict[str, Any]:
     """Answer one question (sent as `message`, default the question text, with
-    `session`'s page images); never raises. `llm_turns` is an estimate: one
+    `session`'s page images); never raises. `pages_injected` (`doc:page` of the
+    pages whose text `message` carries) count as read, ahead of the
+    get_page_content calls. `llm_turns` is an estimate: one
     turn per batch of tool calls (ended by a tool result or text), plus the
     final answer turn."""
     answer: list[str] = []
@@ -256,7 +261,9 @@ def run_question(client: Any, q: Question, scope: str | list[str] | None, *,
         **q.extra,
         "scope": scope, "answer": text, "error": state["error"],
         "seconds": round(time.time() - t0, 2), "llm_turns": turns,
-        "tool_calls": list(tool_calls), "pages_read": pages_read(tool_calls),
+        "tool_calls": list(tool_calls),
+        "pages_read": list(dict.fromkeys([*(pages_injected or []), *pages_read(tool_calls)])),
+        "pages_injected": list(pages_injected or []),
         "score": score(q.expected, text),
     }
     record.update(calc_diagnostics(record))
@@ -797,6 +804,7 @@ def cmd_batch(args: argparse.Namespace) -> int:
         _instructions,
         _page_image_mode,
         _prefetch_k,
+        _prefetch_text,
         _settings,
         _store,
         make_client,
@@ -821,6 +829,7 @@ def cmd_batch(args: argparse.Namespace) -> int:
     top_k = max(1, int(getattr(args, "top_k", 5) or 5))
     match = bm25.resolve_match(getattr(args, "match", None))
     prefetch_k = 0 if retrieval else _prefetch_k(args)
+    prefetch_chars, prefetch_content = _prefetch_text(args)
     image_mode = "off" if retrieval else _page_image_mode(args)
     route_on = getattr(args, "route", True) is not False
     adjacent = getattr(args, "route_adjacent", True) is not False
@@ -844,7 +853,9 @@ def cmd_batch(args: argparse.Namespace) -> int:
         print(f"retrieval : only (no LLM)  match: {match}  top-k: {top_k}", flush=True)
     else:
         print(f"timeout   : {args.timeout:g}s  concurrency: {args.concurrency}  "
-              f"prefetch: {prefetch_k or 'off'}  page images: {image_mode}", flush=True)
+              f"prefetch: {prefetch_k or 'off'}"
+              + (f" ({prefetch_content}, {prefetch_chars} chars)" if prefetch_k else "")
+              + f"  page images: {image_mode}", flush=True)
     print(f"routing   : {'on' if route_on else 'off'}"
           + (f"  next-year reports: {'on' if adjacent else 'off'}" if route_on else ""), flush=True)
 
@@ -863,18 +874,21 @@ def cmd_batch(args: argparse.Namespace) -> int:
                 record = run_retrieval(store, q, scope_ids, top_k=top_k, match=match,
                                        texts=texts)
             else:
-                hits = prefetch.search(store, q.question, scope_ids, prefetch_k)
+                pf = prefetch.prepare(store, q.question, scope_ids, prefetch_k,
+                                      chars=prefetch_chars, content=prefetch_content)
                 session = page_images.new_session(store, image_mode)
                 if session is not None:
-                    session.attach_prefetch(hits)
+                    session.attach_prefetch(pf.hits)
                 record = run_question(client, q, scope, timeout=args.timeout,
                                       reasoning_effort=settings.reasoning_effort,
-                                      message=prefetch.augment(q.question, hits),
-                                      session=session)
+                                      message=pf.message, session=session,
+                                      pages_injected=pf.injected())
                 if prefetch_k:
-                    judge, flags = judge_hits(store, q, hits, texts)
+                    judge, flags = judge_hits(store, q, pf.hits, texts)
                     record["prefetch"] = [{"doc_name": h.doc_name, "page": h.page,
-                                           "relevant": f} for h, f in zip(hits, flags)]
+                                           "relevant": f, "injected": p.injected,
+                                           **({"truncated": True} if p.truncated else {})}
+                                          for h, p, f in zip(pf.hits, pf.pages, flags)]
                     record["prefetch_hit"] = any(flags) if judge else None
             record.update(route.fields())
             if not retrieval:

@@ -48,6 +48,10 @@ REASONING_EFFORT: str | None = None
 # Pages keyword-searched before each question and handed to the agent as
 # hints (superindex.prefetch); `superindex serve` sets it, 0 is off.
 PREFETCH_K = 0
+# Page text budget and content mode for those pages; None: the environment /
+# project default (superindex.prefetch.resolve_chars / resolve_content).
+PREFETCH_CHARS: int | None = None
+PREFETCH_CONTENT: str | None = None
 # PDF page screenshots for a vision model (superindex.page_images): "off",
 # "auto" or "always"; `superindex serve` sets it.
 PAGE_IMAGE = "off"
@@ -201,10 +205,12 @@ class Handler(BaseHTTPRequestHandler):
             if PREFETCH_K:
                 from superindex import prefetch
 
-                message, hits = prefetch.prepare(STORE, question, doc_ids, PREFETCH_K)
-                event = {"candidates": prefetch.candidates(hits)}
+                pf = prefetch.prepare(STORE, question, doc_ids, PREFETCH_K,
+                                      chars=PREFETCH_CHARS, content=PREFETCH_CONTENT)
+                message = pf.message
+                event = {"candidates": prefetch.candidates(pf.hits, pf.pages)}
                 if session is not None:
-                    session.attach_prefetch(hits)
+                    session.attach_prefetch(pf.hits)
                     event["images"] = session.records()
                 emit("prefetch", event)
             # One run per answer; serialize so two browser tabs cannot

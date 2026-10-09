@@ -35,7 +35,7 @@ def store(tmp_path: Path) -> Path:
 
 @pytest.fixture(autouse=True)
 def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in (prefetch.ENV, prefetch.K_ENV):
+    for name in (prefetch.ENV, prefetch.K_ENV, prefetch.CHARS_ENV, prefetch.CONTENT_ENV):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -82,10 +82,30 @@ def test_resolve_k_flags_and_environment(monkeypatch: pytest.MonkeyPatch) -> Non
         prefetch.resolve_k(k=-1)
 
 
+def test_resolve_chars_and_content(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert prefetch.resolve_chars() == prefetch.DEFAULT_CHARS == 60000
+    assert prefetch.resolve_content() == "page"
+    monkeypatch.setenv(prefetch.CHARS_ENV, "500")
+    monkeypatch.setenv(prefetch.CONTENT_ENV, "Snippet")
+    assert prefetch.resolve_chars() == 500 and prefetch.resolve_chars(0) == 0
+    assert prefetch.resolve_content() == "snippet" and prefetch.resolve_content("page") == "page"
+    monkeypatch.setenv(prefetch.CHARS_ENV, "lots")
+    monkeypatch.setenv(prefetch.CONTENT_ENV, "pdf")
+    with pytest.raises(ConfigError):
+        prefetch.resolve_chars()
+    with pytest.raises(ConfigError):
+        prefetch.resolve_content()
+
+
 def test_cli_flags() -> None:
     for command in (["ask", "q"], ["serve"], ["batch", "q.jsonl"]):
         args = cli.build_parser().parse_args(command)
         assert args.prefetch is None and args.prefetch_k is None
+        assert args.prefetch_chars is None and args.prefetch_content is None
+        assert cli._prefetch_text(args) == (60000, "page")
+        args = cli.build_parser().parse_args([*command, "--prefetch-chars", "100",
+                                              "--prefetch-content", "snippet"])
+        assert cli._prefetch_text(args) == (100, "snippet")
         args = cli.build_parser().parse_args([*command, "--no-prefetch", "--prefetch-k", "3"])
         assert args.prefetch is False and cli._prefetch_k(args) == 0
         args = cli.build_parser().parse_args([*command, "--prefetch", "--prefetch-k", "3"])
@@ -93,9 +113,12 @@ def test_cli_flags() -> None:
 
 
 # ───────────────────────────────────────────────────────────── the block
-def test_block_format(store: Path) -> None:
-    message, hits = prefetch.prepare(store, "末期股息", None, 3)
+def test_block_format(store: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(prefetch.CONTENT_ENV, "snippet")      # the old, snippet-only block
+    pf = prefetch.prepare(store, "末期股息", None, 3)
+    message, hits = pf.message, pf.hits
     assert hits and len(hits) <= 3
+    assert pf.injected() == [] and not any(p.text for p in pf.pages)
     head, question = message.split("\n\n问题：")
     assert question == "末期股息"
     lines = head.splitlines()
@@ -113,8 +136,66 @@ def test_whitelist_and_no_hit(store: Path) -> None:
     assert hits and {h.doc_name for h in hits} == {"aia_ar2021_excerpt.md"}
     hits = prefetch.search(store, "dividend", [ids["di_native_excerpt.md"]], 5)
     assert hits and {h.doc_name for h in hits} == {"di_native_excerpt.md"}
-    assert prefetch.prepare(store, "zzzqqq", None, 5) == ("zzzqqq", [])
-    assert prefetch.prepare(store, "dividend", None, 0) == ("dividend", [])
+    assert prefetch.prepare(store, "zzzqqq", None, 5) == prefetch.Prefetch([], [], "zzzqqq")
+    assert prefetch.prepare(store, "dividend", None, 0) == prefetch.Prefetch([], [], "dividend")
+
+
+def _tool_text(store: Path, doc_name: str, page: int) -> str:
+    """What the agent's get_page_content returns for the page."""
+    from superindex.engine import SuperIndexClient
+    from superindex.engine.agent_tools import call_tool
+
+    client = SuperIndexClient(chat_model="openai/offline-test", storage_path=str(store))
+    out, err = call_tool(client, "get_page_content", {"doc_name": doc_name, "pages": str(page)})
+    assert not err
+    return json.loads(out)["content"][0]["text"]
+
+
+MIXED = "dividend 2023 末期股息"                  # three hits over both documents
+
+
+def test_full_pages_by_default(store: Path) -> None:
+    pf = prefetch.prepare(store, MIXED, None, 3)
+    assert len(pf.hits) >= 2 and all(p.injected and not p.truncated for p in pf.pages)
+    assert pf.injected() == [f"{h.doc_name}:{h.page}" for h in pf.hits]
+    head = pf.message.split("\n\n问题：")[0]
+    lines = head.splitlines()
+    assert lines[1] == prefetch.PAGE_NOTE and lines[-1] == prefetch.FOOTER
+    for i, (h, p) in enumerate(zip(pf.hits, pf.pages), start=1):
+        assert p.text == _tool_text(store, h.doc_name, h.page) and p.text
+        assert f"<<<候选页 {i} 原文开始>>>\n{p.text}\n<<<候选页 {i} 原文结束>>>" in head
+    assert prefetch.TRUNCATED not in head and prefetch.OVER_BUDGET not in head
+
+
+def test_budget_cuts_then_falls_back_to_snippets(store: Path) -> None:
+    full = prefetch.prepare(store, MIXED, None, 3)
+    assert len(full.pages) == 3
+    first = len(full.pages[0].text)
+    pf = prefetch.prepare(store, MIXED, None, 3, chars=first + 10)
+    one, two, three = pf.pages
+    assert one.injected and not one.truncated and one.text == full.pages[0].text
+    assert two.injected and two.truncated and two.text == full.pages[1].text[:10]
+    assert not three.injected and three.text == ""
+    assert pf.injected() == [one.key, two.key]
+    head = pf.message.split("\n\n问题：")[0]
+    assert f"{two.text}\n{prefetch.TRUNCATED}\n<<<候选页 2 原文结束>>>" in head
+    snippet = prefetch.candidates(pf.hits)[2]["snippet"]
+    assert f"   {snippet}{prefetch.OVER_BUDGET}" in head and "<<<候选页 3" not in head
+    recs = prefetch.candidates(pf.hits, pf.pages)
+    assert [r["injected"] for r in recs] == [True, True, False]
+    assert [r.get("truncated", False) for r in recs] == [False, True, False]
+    for chars in (0, -5):                               # no budget: the old block
+        old = prefetch.prepare(store, MIXED, None, 3, chars=chars)
+        assert old.injected() == [] and old.message.splitlines()[1] == prefetch.NOTE
+        assert prefetch.OVER_BUDGET not in old.message
+
+
+def test_snippet_mode_is_the_old_block(store: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pf = prefetch.prepare(store, "末期股息", None, 3, content="snippet")
+    assert pf.message == prefetch.augment("末期股息", pf.hits) and pf.injected() == []
+    monkeypatch.setenv(prefetch.CONTENT_ENV, "snippet")
+    assert prefetch.prepare(store, "末期股息", None, 3).message == pf.message
+    assert prefetch.NOTE in pf.message and "<<<候选页" not in pf.message
 
 
 # ───────────────────────────────────────────────────────────── ask / serve
@@ -125,8 +206,12 @@ def test_ask_sends_the_block_and_prints_it(store: Path, monkeypatch: pytest.Monk
     base = ["ask", "末期股息", "--store", str(store), "--chat-model", "fake/model"]
     assert cli.cmd_ask(cli.build_parser().parse_args([*base, "-v"])) == 0
     assert fake.messages[-1].startswith(prefetch.HEADER)
+    assert "<<<候选页 1 原文开始>>>" in fake.messages[-1]
     err = capsys.readouterr().err
     assert "[prefetch] " + prefetch.HEADER in err and "[tool] calculate" in err
+    assert cli.cmd_ask(cli.build_parser().parse_args([*base, "--prefetch-content",
+                                                      "snippet"])) == 0
+    assert "<<<候选页" not in fake.messages[-1] and prefetch.NOTE in fake.messages[-1]
     assert cli.cmd_ask(cli.build_parser().parse_args([*base, "--no-prefetch"])) == 0
     assert fake.messages[-1] == "末期股息"
 
@@ -149,7 +234,10 @@ def test_web_answer_emits_prefetch_event(store: Path, monkeypatch: pytest.Monkey
     assert events[0] == "event: prefetch" and events[-1] == "event: done"
     data = json.loads(body.split("\n\n")[0].split("data: ", 1)[1])
     assert {c["doc_name"] for c in data["candidates"]} == {"di_native_excerpt.md"}
+    assert all(c["injected"] is True for c in data["candidates"])
+    assert "<<<候选页" not in body                     # page text never goes to the browser
     assert fake.messages[-1].startswith(prefetch.HEADER)
+    assert "<<<候选页 1 原文开始>>>" in fake.messages[-1]
 
 
 # ───────────────────────────────────────────────────────────── batch
@@ -170,7 +258,11 @@ def test_batch_records_candidates(tmp_path: Path, store: Path,
     assert batch.cmd_batch(args) == 0
     recs = batch.read_results(out)
     assert recs["A"]["prefetch"][0] == {"doc_name": "di_native_excerpt.md", "page": 2,
-                                        "relevant": True}
+                                        "relevant": True, "injected": True}
+    injected = [f"{c['doc_name']}:{c['page']}" for c in recs["A"]["prefetch"] if c["injected"]]
+    assert recs["A"]["pages_injected"] == injected and injected
+    assert recs["A"]["pages_read"] == injected          # FakeStream reads no page itself
+    assert recs["C"]["pages_injected"] == [] and recs["C"]["pages_read"] == []
     assert recs["A"]["prefetch_hit"] is True and recs["A"]["score"]["hit"]
     assert recs["B"]["prefetch_hit"] is False and not recs["B"]["score"]["hit"]
     assert recs["C"]["prefetch"] == [] and recs["C"]["prefetch_hit"] is None
@@ -187,6 +279,38 @@ def test_batch_records_candidates(tmp_path: Path, store: Path,
                                           "fake/model", "--no-prefetch"])
     assert batch.cmd_batch(args) == 0
     assert "prefetch" not in batch.read_results(tmp_path / "off")["A"]
+    assert batch.read_results(tmp_path / "off")["A"]["pages_injected"] == []
     summary = (tmp_path / "off" / batch.SUMMARY_FILE).read_text(encoding="utf-8")
     assert "检索前置：关" in summary and "| 线索 |" not in summary
     assert fake.messages[-1] == "zzzqqq"
+
+    args = cli.build_parser().parse_args(["batch", str(qfile), "--store", str(store),
+                                          "--out", str(tmp_path / "cut"), "--chat-model",
+                                          "fake/model", "--prefetch-k", "3",
+                                          "--prefetch-chars", "1"])
+    assert batch.cmd_batch(args) == 0
+    cut = batch.read_results(tmp_path / "cut")["A"]["prefetch"]
+    assert cut[0]["injected"] and cut[0]["truncated"] is True
+    assert all(not c["injected"] and "truncated" not in c for c in cut[1:])
+
+
+def test_run_question_merges_injected_pages() -> None:
+    class Reader:
+        events = ({"type": "tool_call", "name": "get_page_content",
+                   "arguments": {"doc_name": "a.md", "pages": "2"}},
+                  {"type": "tool_result", "name": "get_page_content", "output": "{}"},
+                  {"type": "tool_call", "name": "get_page_content",
+                   "arguments": {"doc_name": "a.md", "pages": "7"}},
+                  {"type": "tool_result", "name": "get_page_content", "output": "{}"},
+                  {"type": "answer", "delta": "x"})
+
+    class Client:
+        def chat(self, message: str, **_: Any) -> Any:
+            return Reader()
+
+    q = batch.Question("Q1", "q")
+    rec = batch.run_question(Client(), q, None, timeout=5, pages_injected=["b.md:3", "a.md:2"])
+    assert rec["pages_injected"] == ["b.md:3", "a.md:2"]
+    assert rec["pages_read"] == ["b.md:3", "a.md:2", "a.md:7"]
+    rec = batch.run_question(Client(), q, None, timeout=5)
+    assert rec["pages_injected"] == [] and rec["pages_read"] == ["a.md:2", "a.md:7"]

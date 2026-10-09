@@ -14,8 +14,9 @@
 `search`, `ask`, `serve` and `batch` take `--match page|passage` (keyword
 search scoring, SUPERINDEX_BM25_MATCH; see `superindex.bm25`). `ask`, `serve`
 and `batch` put the top keyword-search pages in front of each question
-(`--no-prefetch` / `--prefetch-k N`, SUPERINDEX_PREFETCH[_K]; see
-`superindex.prefetch`). `index --pdf-dir DIR` links each Markdown file to its
+with their full page text (`--no-prefetch` / `--prefetch-k N` /
+`--prefetch-chars N` / `--prefetch-content page|snippet`,
+SUPERINDEX_PREFETCH[_K|_CHARS|_CONTENT]; see `superindex.prefetch`). `index --pdf-dir DIR` links each Markdown file to its
 PDF; `ask`, `serve` and `batch --page-image auto|always` then show a vision
 model screenshots of the PDF pages (SUPERINDEX_PAGE_IMAGE, default off; see
 `superindex.page_images`).
@@ -69,6 +70,12 @@ def _add_prefetch_flags(ap: argparse.ArgumentParser) -> None:
                          "pages as hints (SUPERINDEX_PREFETCH, default on)")
     ap.add_argument("--prefetch-k", type=int,
                     help="pages to prefetch (SUPERINDEX_PREFETCH_K, default 5)")
+    ap.add_argument("--prefetch-chars", type=int,
+                    help="total page text characters sent with the prefetched pages; "
+                         "0 or less = snippets only (SUPERINDEX_PREFETCH_CHARS, default 60000)")
+    ap.add_argument("--prefetch-content", choices=("page", "snippet"),
+                    help="send the prefetched pages' full text or only snippets "
+                         "(SUPERINDEX_PREFETCH_CONTENT, default page)")
 
 
 def _add_page_image_flag(ap: argparse.ArgumentParser) -> None:
@@ -89,6 +96,14 @@ def _prefetch_k(args: argparse.Namespace) -> int:
 
     return prefetch.resolve_k(getattr(args, "prefetch", None),
                               getattr(args, "prefetch_k", None))
+
+
+def _prefetch_text(args: argparse.Namespace) -> tuple[int, str]:
+    """(page text budget, content mode) for prefetch."""
+    from superindex import prefetch
+
+    return (prefetch.resolve_chars(getattr(args, "prefetch_chars", None)),
+            prefetch.resolve_content(getattr(args, "prefetch_content", None)))
 
 
 def _settings(args: argparse.Namespace) -> LLMSettings:
@@ -273,16 +288,18 @@ def cmd_ask(args: argparse.Namespace) -> int:
         scope = ids[0] if len(ids) == 1 else ids
     from superindex import image_chat, page_images, prefetch
 
-    message, hits = prefetch.prepare(_store(args), args.question, scope, _prefetch_k(args))
+    chars, content = _prefetch_text(args)
+    pf = prefetch.prepare(_store(args), args.question, scope, _prefetch_k(args),
+                          chars=chars, content=content)
     session = page_images.new_session(_store(args), _page_image_mode(args))
     if session is not None:
-        session.attach_prefetch(hits)
+        session.attach_prefetch(pf.hits)
     if args.verbose:
-        print(f"[prefetch] {prefetch.block(hits) or 'no candidates'}", file=sys.stderr,
-              flush=True)
+        print(f"[prefetch] {prefetch.block(pf.hits, pf.pages) or 'no candidates'}",
+              file=sys.stderr, flush=True)
         if session is not None:
             _print_images(session, "prefetch")
-    stream = image_chat.chat(client, message, doc_id=scope,
+    stream = image_chat.chat(client, pf.message, doc_id=scope,
                              reasoning_effort=settings.reasoning_effort, session=session)
     for ev in stream.events:
         etype = ev.get("type")
@@ -347,6 +364,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     server.CHAT_MODEL = settings.chat_model
     server.REASONING_EFFORT = settings.reasoning_effort
     server.PREFETCH_K = _prefetch_k(args)
+    server.PREFETCH_CHARS, server.PREFETCH_CONTENT = _prefetch_text(args)
     server.PAGE_IMAGE = _page_image_mode(args)
     print(f"store   : {store}")
     return server.run(args.host, args.port)
