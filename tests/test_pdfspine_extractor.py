@@ -101,6 +101,30 @@ def test_missing_pdfspine_says_how_to_install(monkeypatch: pytest.MonkeyPatch) -
         ext.convert_pdf(Path("any.pdf"))
 
 
+def test_pdfspine_dirs_default_is_sibling_with_suffix(tmp_path: Path) -> None:
+    work, persist = ext.pdfspine_dirs(tmp_path / "nb" / "q", tmp_path / "p" / "q", root=tmp_path, env={})
+    assert work == tmp_path / "nb" / "q_pdfspine"
+    assert persist == tmp_path / "p" / "q_pdfspine"
+
+
+def test_pdfspine_dirs_no_persist(tmp_path: Path) -> None:
+    assert ext.pdfspine_dirs(tmp_path / "q", None, root=tmp_path, env={})[1] is None
+
+
+def test_pdfspine_dirs_explicit_overrides(tmp_path: Path) -> None:
+    env = {"PDFSPINE_WORK_DIR": "out/w", "PDFSPINE_PERSIST_DIR": str(tmp_path / "abs")}
+    work, persist = ext.pdfspine_dirs(tmp_path / "q", None, root=tmp_path, env=env)
+    assert work == (tmp_path / "out" / "w").resolve()
+    assert persist == (tmp_path / "abs").resolve()
+
+
+def test_pdfspine_dirs_rejects_text_layer_dirs(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="PDFSPINE_WORK_DIR"):
+        ext.pdfspine_dirs(tmp_path / "q", None, root=tmp_path, env={"PDFSPINE_WORK_DIR": str(tmp_path / "q")})
+    with pytest.raises(ValueError, match="PDFSPINE_PERSIST_DIR"):
+        ext.pdfspine_dirs(tmp_path / "q", tmp_path / "p", root=tmp_path, env={"PDFSPINE_PERSIST_DIR": str(tmp_path / "p")})
+
+
 @pytest.mark.parametrize("name", ["pdfspine_ingest.ipynb", "batch_qa.ipynb"])
 def test_notebook_cells_compile(name: str) -> None:
     nb = json.loads((ROOT / "notebooks" / name).read_text(encoding="utf-8"))
@@ -110,5 +134,5 @@ def test_notebook_cells_compile(name: str) -> None:
             ast.parse("".join(line for line in cell["source"] if not line.lstrip().startswith("%")))
     setup = [c for c in nb["cells"] if "databricks-setup" in c.get("metadata", {}).get("tags", [])]
     assert setup and "".join(setup[0]["source"]).startswith("%pip install")
-    if name == "pdfspine_ingest.ipynb":
-        assert "pdfspine==0.12.0" in "".join(setup[0]["source"])
+    assert "pdfspine_dirs(" in "".join("".join(c["source"]) for c in nb["cells"] if c["cell_type"] == "code")
+    assert "pdfspine==0.12.0" in "".join(setup[0]["source"])

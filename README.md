@@ -138,7 +138,7 @@ superindex batch questions.jsonl --retrieval-only --match passage
 
 ### Notebook：从原始 PDF 一路跑到答案表
 
-`notebooks/batch_qa.ipynb` 把"一批原始 PDF → Markdown（文字层 + flash 补标题，或 Azure DI）→ 建库 → 用同一条 agent 链路回答 JSON/JSONL 题集 → `summary.md` / `answers.csv` / `answers.xlsx`"串成一次运行；中间产物（`md/`、`store/`、`runs/<时间戳>/`）落在 `<ROOT_DIR>/data/notebook/<题集名>/`（`ROOT_DIR` 是「环境」cell 打印的绝对路径：`ROOT_DIR` > 从当前目录向上找到的仓库根；相对路径配置都以它为基准，不依赖 cwd），重跑时已转换的 PDF、已建好的库、已成功的题都会跳过，`results.jsonl` 与 `superindex batch` 兼容。默认只读 PDF 文字层（绝不调用 Azure，需显式设 `PDF_EXTRACTOR="azure-di"`）；无文字层的扫描件会被标记跳过（`skipped_pdfs.json`），指向它的题不问模型、在结果里标 `skipped_no_text_layer`。
+`notebooks/batch_qa.ipynb` 把"一批原始 PDF → Markdown（文字层 + flash 补标题，或 Azure DI）→ 建库 → 用同一条 agent 链路回答 JSON/JSONL 题集 → `summary.md` / `answers.csv` / `answers.xlsx`"串成一次运行；中间产物（`md/`、`store/`、`runs/<时间戳>/`）落在 `<ROOT_DIR>/data/notebook/<题集名>/`（pdfspine 为同级的 `<题集名>_pdfspine/`；`ROOT_DIR` 是「环境」cell 打印的绝对路径：`ROOT_DIR` > 从当前目录向上找到的仓库根；相对路径配置都以它为基准，不依赖 cwd），重跑时已转换的 PDF、已建好的库、已成功的题都会跳过，`results.jsonl` 与 `superindex batch` 兼容。默认用 pdfspine 离线转换（`PDF_EXTRACTOR="pdfspine"`，直接使用 `notebooks/pdfspine_ingest.ipynb` 生成的 `md/`、`store/`；设 `PDF_EXTRACTOR="text-layer"` 切回只读 PDF 文字层；绝不默认调用 Azure，需显式设 `PDF_EXTRACTOR="azure-di"`）；无文字层的扫描件会被标记跳过（`skipped_pdfs.json`），指向它的题不问模型、在结果里标 `skipped_no_text_layer`。
 
 ```bash
 uv sync --group notebook                  # ipykernel / pandas / openpyxl（不在主依赖里）
@@ -167,7 +167,7 @@ uv run --group notebook jupyter nbconvert --to notebook --execute notebooks/batc
    - 公司只提供非 OpenAI 协议的 Python SDK：把「公司 SDK 适配器」cell 里的 `USE_CUSTOM_LLM` 改 `True`，在 `company_chat(messages, tools)` 里调用 SDK（返回 `{"text", "tool_calls"}`，约定见函数文档），模型名写 `company/<任意名>`。适配器是 litellm 的 `CustomLLM`，问答和建库摘要都能走；流式是整段一次性吐出的假流式。
 3. 在配置 cell 填 `DATASET_PATH`、`PDF_DIR`（如 `/Volumes/<catalog>/<schema>/<volume>/...`）和 `PERSIST_DIR`，其余默认即可。
 
-**工作目录与 `PERSIST_DIR`。** `WORK_DIR`（`md/`、`store/`、`runs/`）在 Databricks 上也与本地一致，默认 `<ROOT_DIR>/data/notebook/<题集名>`；存储层用 `fcntl.flock`、`os.replace` 和逐行追加，`/Workspace`、`/dbfs`、`/Volumes` 这类 FUSE 路径对它们的支持不确定，需要时设环境变量 `NB_WORK_DIR`（可写进 `.env`）为集群本地盘（如 `/local_disk0/...`）上的绝对路径。本地盘随集群消失，此时设 `PERSIST_DIR`（如 `/Volumes/<catalog>/<schema>/<volume>/superindex_nb/<题集名>`）：开始时若里面有上次的 `md/`、`store/`、`runs/`、`skipped_pdfs.json` 而本地没有，就复制回来（集群重启后不必重抽取、重建库，已答的题可续跑）；建库后、全部完成后再把 `WORK_DIR` 复制回去，复制失败只警告不中断。不设则全部跳过。
+**工作目录与 `PERSIST_DIR`。** `WORK_DIR`（`md/`、`store/`、`runs/`）在 Databricks 上也与本地一致，默认 `<ROOT_DIR>/data/notebook/<题集名>`（`PDF_EXTRACTOR=pdfspine` 时再加 `_pdfspine` 后缀，持久目录同理：`PDFSPINE_WORK_DIR` / `PDFSPINE_PERSIST_DIR` 优先，否则 `NB_WORK_DIR` / `PERSIST_DIR` 名后加 `_pdfspine`，与 `pdfspine_ingest.ipynb` 同一规则，见 `pdfspine_dirs`）；存储层用 `fcntl.flock`、`os.replace` 和逐行追加，`/Workspace`、`/dbfs`、`/Volumes` 这类 FUSE 路径对它们的支持不确定，需要时设环境变量 `NB_WORK_DIR`（可写进 `.env`）为集群本地盘（如 `/local_disk0/...`）上的绝对路径。本地盘随集群消失，此时设 `PERSIST_DIR`（如 `/Volumes/<catalog>/<schema>/<volume>/superindex_nb/<题集名>`）：开始时若里面有上次的 `md/`、`store/`、`runs/`、`skipped_pdfs.json` 而本地没有，就复制回来（集群重启后不必重抽取、重建库，已答的题可续跑）；建库后、全部完成后再把 `WORK_DIR` 复制回去，复制失败只警告不中断。不设则全部跳过。
 
 **本机用 nbconvert 执行时**，带上面的跳过参数即可，不会触发 `%pip`。
 
@@ -260,7 +260,7 @@ uv run superindex ask "2021 年的全年股息是多少？" --store results/chec
 | `DATASET_PATH` | `DATASET_PATH`（可写在 `.env`） | `data/questions.jsonl` | 题集（`.json` / `.jsonl`） |
 | `PDF_DIR` | `PDF_DIR` | `data/pdfs` | 原始 PDF 目录（递归） |
 | `FIELD_MAP` | `FIELD_MAP` | `id/question/expected/doc` 同名 | 数据集字段名映射，值为 JSON 对象；支持嵌套路径，见下 |
-| `PDF_EXTRACTOR` | `PDF_EXTRACTOR` | `text-layer` | `text-layer`（离线）或 `azure-di` |
+| `PDF_EXTRACTOR` | `PDF_EXTRACTOR` | `pdfspine` | `pdfspine`（离线）、`text-layer`（离线）或 `azure-di` |
 | `ADD_HEADINGS` | `ADD_HEADINGS` | `True` | 仅 `text-layer`：离线补 `#` 章节标题，不调 LLM |
 | （无） | `PDF_INGEST_PASSWORD` | 空 | 需要密码才能打开的 PDF 的**主密码**，写在 `.env` 里，原样当作一个密码，总是第一个尝试 |
 | `PDF_PASSWORDS` | `PDF_PASSWORDS` | `[]` | 其它候选密码（排在主密码之后按顺序尝试）；环境变量值写 JSON 数组 `'["pw1", "pw,2"]'`，非 JSON 时整串当单个密码 |

@@ -9,8 +9,9 @@ decrypted in memory only; nothing but the returned Markdown leaves this module.
 """
 from __future__ import annotations
 
+import os
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
@@ -111,6 +112,35 @@ def markdown_stats(markdown: str) -> dict[str, int]:
             "chars": sum(len(text.strip()) for text in pages)}
 
 
+def pdfspine_dirs(text_work_dir: Path, text_persist_dir: Path | None, *, root: Path,
+                  env: Mapping[str, str] | None = None) -> tuple[Path, Path | None]:
+    """(work_dir, persist_dir) for pdfspine output, derived from the text-layer dirs.
+
+    Shared by batch_qa and pdfspine_ingest so both notebooks use the same artifacts.
+    ``PDFSPINE_WORK_DIR`` / ``PDFSPINE_PERSIST_DIR`` win (relative paths are taken from
+    ``root``); otherwise the text-layer directory name gets a ``_pdfspine`` suffix (a
+    sibling directory; no persist dir -> None). Raises ValueError if a result equals the
+    text-layer directory, which would mix the two extractors' output.
+    """
+    env = os.environ if env is None else env
+
+    def explicit(name: str) -> Path | None:
+        raw = env.get(name, "").strip()
+        if not raw:
+            return None
+        path = Path(raw).expanduser()
+        return (path if path.is_absolute() else root / path).resolve()
+
+    work = explicit("PDFSPINE_WORK_DIR") or text_work_dir.with_name(text_work_dir.name + "_pdfspine")
+    persist = explicit("PDFSPINE_PERSIST_DIR") or (
+        text_persist_dir.with_name(text_persist_dir.name + "_pdfspine") if text_persist_dir else None)
+    if work.resolve() == text_work_dir.resolve():
+        raise ValueError(f"PDFSPINE_WORK_DIR 与文字层工作目录相同（{work}），会混入文字层产物；请换一个目录")
+    if persist is not None and text_persist_dir is not None and persist.resolve() == text_persist_dir.resolve():
+        raise ValueError(f"PDFSPINE_PERSIST_DIR 与文字层 PERSIST_DIR 相同（{persist}），会混入文字层产物；请换一个目录")
+    return work, persist
+
+
 __all__ = [
     "EXTRACTOR",
     "NO_TEXT_LAYER",
@@ -120,5 +150,6 @@ __all__ = [
     "convert_pdf",
     "markdown_stats",
     "page_markdowns",
+    "pdfspine_dirs",
     "require_pdfspine",
 ]
