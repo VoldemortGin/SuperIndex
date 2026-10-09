@@ -133,12 +133,12 @@ superindex batch questions.jsonl --retrieval-only --match passage
 | `.csv` | UTF-8，表头至少有 `question`，可选 `expected`、`doc`、`id` |
 | `.json` | 题目列表（仓库 `scripts/questions.json` 的格式） |
 
-结果默认写到 `<当前目录>/results/batch/<时间戳>/`（`--out` 可改）：`summary.md`（总览表 + 逐题问答与工具调用）和 `results.jsonl`（逐题完整记录）。"命中"是**粗评分**（期望答案里的数字全部出现在回答中），需要人工复核。
+结果默认写到 `<当前目录>/results/batch/<时间戳>/`（`--out` 可改）：`summary.md`（总览表 + 逐题问答与工具调用）和 `results.jsonl`（逐题完整记录）；答案对错需要人工复核。
 `--retrieval-only` 只跑每题的 BM25 检索，按 top-k（默认 5）页是否含期望答案计算 recall@k、MRR，秒级完成，适合比较 `--match page|passage`。
 
 ### Notebook：从原始 PDF 一路跑到答案表
 
-`notebooks/batch_qa.ipynb` 把"一批原始 PDF → Markdown（文字层 + flash 补标题，或 Azure DI）→ 建库 → 用同一条 agent 链路回答 JSON/JSONL 题集 → `summary.md` / `answers.csv` / `answers.xlsx`"串成一次运行；中间产物（`md/`、`store/`、`runs/<时间戳>/`）落在 `<ROOT_DIR>/data/notebook/<题集名>/`（pdfspine 为同级的 `<题集名>_pdfspine/`；`ROOT_DIR` 是「环境」cell 打印的绝对路径：`ROOT_DIR` > 从当前目录向上找到的仓库根；相对路径配置都以它为基准，不依赖 cwd），重跑时已转换的 PDF、已建好的库、已成功的题都会跳过，`results.jsonl` 与 `superindex batch` 兼容。默认用 pdfspine 离线转换（`PDF_EXTRACTOR="pdfspine"`，直接使用 `notebooks/pdfspine_ingest.ipynb` 生成的 `md/`、`store/`；设 `PDF_EXTRACTOR="text-layer"` 切回只读 PDF 文字层；绝不默认调用 Azure，需显式设 `PDF_EXTRACTOR="azure-di"`）；无文字层的扫描件会被标记跳过（`skipped_pdfs.json`），指向它的题不问模型、在结果里标 `skipped_no_text_layer`。
+`notebooks/batch_qa.ipynb` 把"一批原始 PDF → Markdown（文字层 + flash 补标题，或 Azure DI）→ 建库 → 用同一条 agent 链路回答 JSON/JSONL 题集 → `summary.md` / `answers.csv` / `answers.xlsx`"串成一次运行；中间产物（`md/`、`store/`、`runs/<时间戳>/`）落在 `<ROOT_DIR>/data/notebook/<题集名>/`（pdfspine 为同级的 `<题集名>_pdfspine/`；`ROOT_DIR` 是「环境」cell 打印的绝对路径：`ROOT_DIR` > 从当前目录向上找到的仓库根；相对路径配置都以它为基准，不依赖 cwd），重跑时已转换的 PDF、已建好的库、已成功的题都会跳过，`results.jsonl` 与 `superindex batch` 兼容。默认用 pdfspine 离线转换（`PDF_EXTRACTOR="pdfspine"`，直接使用 `notebooks/pdfspine_ingest.ipynb` 生成的 `md/`、`store/`；设 `PDF_EXTRACTOR="text-layer"` 切回只读 PDF 文字层；绝不默认调用 Azure，需显式设 `PDF_EXTRACTOR="azure-di"`）；无文字层的扫描件会被标记跳过（`skipped_pdfs.json`），指向它的题不问模型、在结果里标 `skipped_no_text_layer`。跑问答（步骤 4）前可先运行「步骤 3b：入库总览」：统计 PDF 转换成功 / 失败 / 跳过、md 与库对账、题目 doc 能否匹配，解析成功率低于 `MIN_PARSED_RATIO`（默认 0.8）时警告，结果写到 `ingest_report.json`。
 
 ```bash
 uv sync --group notebook                  # ipykernel / pandas / openpyxl（不在主依赖里）
@@ -307,7 +307,7 @@ FIELD_MAP = {"id": "id", "question": "question", "expected": "ground_truth",
 - **多模态附图**（默认关，仅适用于能看图的模型）：`--page-image off|auto|always`（`SUPERINDEX_PAGE_IMAGE`）。
   - `auto`：预取候选页中含表格、图或文字很少（扫描页、图表页）的页附截图；`always`：候选页都附。
   - 两种模式下 agent 还能调用 `get_page_image(doc_name, page)` 按需取图。
-  - 每题最多 `SUPERINDEX_PAGE_IMAGE_MAX` 张（默认 3），长边 `SUPERINDEX_PAGE_IMAGE_MAX_SIDE` 像素（默认 1600）。每张约 1–2.5K 输入 token，建议先在题集上对比 `off` 的命中率和成本。
+  - 每题最多 `SUPERINDEX_PAGE_IMAGE_MAX` 张（默认 3），长边 `SUPERINDEX_PAGE_IMAGE_MAX_SIDE` 像素（默认 1600）。每张约 1–2.5K 输入 token，建议先在题集上对比 `off` 的答题效果和成本。
 
 ## 数值计算：`calculate`
 
