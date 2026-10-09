@@ -14,8 +14,8 @@ finish, so `--resume` can skip what is done) and `<out>/summary.md`.
 `--retrieval-only` needs no LLM: each question text goes to the keyword search
 (`superindex.bm25`, `--match`), and a top-k page counts as relevant when it is
 one of the question's `pages` (e.g. ``[12, 13]`` or ``"12-13"``; `page` works
-too), or else when its text holds the expected answer (same rule as the rough
-score). The summary reports recall@1/3/5 and MRR.
+too), or else when its text holds the expected answer (every number in it, or
+the whole text when it has none). The summary reports recall@1/3/5 and MRR.
 
 With prefetch on (the default, `superindex.prefetch`), each question goes to
 the agent behind its top keyword-search pages, with their page text; the
@@ -23,7 +23,7 @@ record keeps them (`prefetch`, each judged like `--retrieval-only` and marked
 `injected` / `truncated`), lists the pages sent in full (`pages_injected`,
 also first in `pages_read`) and `prefetch_hit` says
 whether one of them holds the answer, so the summary can tell "search missed
-it" from "found but not used". The rough score still reads only the answer.
+it" from "found but not used".
 
 A question without `doc` is routed (`route_scope`, `--no-route` to turn it
 off): the years it names pick the documents whose stored metadata
@@ -139,24 +139,18 @@ def _numbers(text: str) -> list[Decimal]:
     return out
 
 
-def score(expected: str | None, answer: str | None) -> dict[str, Any] | None:
-    """Rough score: every number in `expected` must appear in the answer
+def _mentions_expected(expected: str | None, text: str | None) -> bool | None:
+    """Whether `text` holds `expected`: every number in it must appear
     (1,814 == 1814, 38.00 == 38); without numbers, `expected` must appear
     verbatim (case-insensitive). None when there is nothing to compare."""
     if not expected:
         return None
-    answer = answer or ""
-    wanted = list(dict.fromkeys(_numbers(expected)))
+    text = text or ""
+    wanted = set(_numbers(expected))
     if wanted:
-        present = set(_numbers(answer))
-        matched = [str(n) for n in wanted if n in present]
-        return {"method": "numbers", "hit": len(matched) == len(wanted),
-                "matched": len(matched), "total": len(wanted),
-                "missing": [str(n) for n in wanted if n not in present]}
+        return wanted <= set(_numbers(text))
     norm = " ".join(expected.split()).casefold()
-    hit = norm in " ".join(answer.split()).casefold()
-    return {"method": "substring", "hit": hit, "matched": int(hit), "total": 1,
-            "missing": [] if hit else [expected]}
+    return norm in " ".join(text.split()).casefold()
 
 
 # ───────────────────────────────────────────────────────────── running
@@ -264,7 +258,6 @@ def run_question(client: Any, q: Question, scope: str | list[str] | None, *,
         "tool_calls": list(tool_calls),
         "pages_read": list(dict.fromkeys([*(pages_injected or []), *pages_read(tool_calls)])),
         "pages_injected": list(pages_injected or []),
-        "score": score(q.expected, text),
     }
     record.update(calc_diagnostics(record))
     if session is not None:
@@ -312,7 +305,7 @@ def judge_hits(store: Path, q: Question, hits: list[bm25.Hit],
             if h.doc_id not in texts:
                 texts[h.doc_id] = bm25._page_texts(DocStore(str(store)).get_pages(h.doc_id) or [])
             page = texts[h.doc_id][h.page - 1] if h.page <= len(texts[h.doc_id]) else ""
-            relevant.append(bool((score(q.expected, bm25.plain_text(page)) or {}).get("hit")))
+            relevant.append(bool(_mentions_expected(q.expected, bm25.plain_text(page))))
         else:
             relevant.append(False)
     return judge, relevant
@@ -372,7 +365,7 @@ def write_retrieval_summary(records: list[dict[str, Any]], path: Path,
         "| " + " | ".join(f"{metrics[k]:.3f}" for k in names) + " |",
         "",
         ("> 判定：题目给了 `pages`（或 `page`）时，命中页须是其中之一；否则页面文本须包含"
-         "期望答案（规则同粗评分：期望中的数字全部出现，或无数字时整句包含）。"
+         "期望答案（期望中的数字全部出现，或无数字时整句包含）。"
          "名次 = 第一个相关页在结果中的位置，MRR 取其倒数（top-k 外记 0）。"),
         "",
         "| # | ID | 问题 | 判定 | 名次 | 结果页（✓ 相关） | 错误 |",
@@ -406,15 +399,6 @@ def _cell(text: Any, limit: int = 80) -> str:
     return s if len(s) <= limit else s[: limit - 1] + "…"
 
 
-def _hit_mark(rec: dict[str, Any]) -> str:
-    sc = rec.get("score")
-    if rec.get("error"):
-        return "ERR"
-    if not sc:
-        return "-"
-    return f"{'✓' if sc['hit'] else '✗'} {sc['matched']}/{sc['total']}"
-
-
 def _prefetch_mark(rec: dict[str, Any]) -> str:
     found = rec.get("prefetch_hit")
     return "-" if found is None else ("✓" if found else "✗")
@@ -425,17 +409,11 @@ def _prefetch_lines(records: list[dict[str, Any]], meta: dict[str, Any]) -> list
         return ["- 检索前置：关"]
     judged = [r for r in records if r.get("prefetch_hit") is not None and not r.get("error")]
     found = [r for r in judged if r["prefetch_hit"]]
-    unused = sum(1 for r in found if r.get("score") and not r["score"]["hit"])
-    missed = sum(1 for r in judged if not r["prefetch_hit"]
-                 and r.get("score") and not r["score"]["hit"])
     return [(f"- 检索前置：开（k={meta.get('prefetch_k', '')}）　候选含答案页：{len(found)}/"
-             f"{len(judged)}　未命中题中：候选含答案页 {unused} 题（找到了但没用好）、"
-             f"不含 {missed} 题（检索没找到）")]
+             f"{len(judged)}")]
 
 
 def write_summary(records: list[dict[str, Any]], path: Path, meta: dict[str, Any]) -> None:
-    scored = [r for r in records if r.get("score") and not r.get("error")]
-    hits = sum(1 for r in scored if r["score"]["hit"])
     errors = sum(1 for r in records if r.get("error"))
     secs = [float(r.get("seconds") or 0) for r in records]
     with_prefetch = any("prefetch" in r for r in records)
@@ -446,8 +424,6 @@ def write_summary(records: list[dict[str, Any]], path: Path, meta: dict[str, Any
         f"- 题集：`{meta.get('questions', '')}`",
         f"- 模型：`{meta.get('chat_model', '')}`　store：`{meta.get('store', '')}`",
         f"- 题数：{len(records)}　错误：{errors}",
-        f"- 命中率（粗评分）：{hits}/{len(scored)}"
-        + (f"（{hits / len(scored):.0%}）" if scored else ""),
         (f"- 单题耗时合计：{sum(secs):.1f}s　平均：{(sum(secs) / len(secs) if secs else 0):.1f}s"
          f"　本次运行墙钟：{meta.get('wall_seconds', 0):.1f}s"),
         *_prefetch_lines(records, meta),
@@ -457,27 +433,24 @@ def write_summary(records: list[dict[str, Any]], path: Path, meta: dict[str, Any
            f"{sum(int(r.get('image_count') or 0) for r in records)} 张"]
           if with_images else []),
         "",
-        ("> 粗评分：期望答案中的每个数字都出现在回答里（1,814 与 1814、38.00 与 38 视为相同）"
-         "即算命中；期望答案不含数字时按整句（忽略大小写）包含判断。仅供快速筛查，需人工复核。"
-         + ("只看最终回答，不看注入的检索线索。「线索」列：检索前置候选页中是否有答案页"
-            "（判定同纯检索评测：题目给了 `pages` 时按页码，否则按页面文本含期望答案）。"
-            if with_prefetch else "")),
-        "",
-        "| # | ID | 问题 | 命中 | 耗时(s) | 轮次 | 读取页码 | " + ("线索 | " if with_prefetch else "")
+        *([("> 「线索」列：检索前置候选页中是否有答案页"
+             "（判定同纯检索评测：题目给了 `pages` 时按页码，否则按页面文本含期望答案）。"), ""]
+          if with_prefetch else []),
+        "| # | ID | 问题 | 耗时(s) | 轮次 | 读取页码 | " + ("线索 | " if with_prefetch else "")
         + ("附图数 | " if with_images else "") + "错误 |",
-        "|---|---|---|---|---|---|---|" + ("---|" if with_prefetch else "")
+        "|---|---|---|---|---|---|" + ("---|" if with_prefetch else "")
         + ("---|" if with_images else "") + "---|",
     ]
     for i, r in enumerate(records, start=1):
         lines.append(f"| {i} | {_cell(r.get('id'), 20)} | {_cell(r.get('question'), 60)} "
-                     f"| {_hit_mark(r)} | {float(r.get('seconds') or 0):.1f} "
+                     f"| {float(r.get('seconds') or 0):.1f} "
                      f"| {r.get('llm_turns', '')} | {_cell(', '.join(r.get('pages_read') or []), 60)} "
                      + (f"| {_prefetch_mark(r)} " if with_prefetch else "")
                      + (f"| {r.get('image_count', 0)} " if with_images else "")
                      + f"| {_cell(r.get('error'), 60)} |")
     lines += ["", "## 逐题详情", ""]
     for r in records:
-        lines.append(f"### {r.get('id')} {_hit_mark(r)}")
+        lines.append(f"### {r.get('id')}")
         lines.append("")
         lines.append(f"**问题**：{r.get('question')}")
         lines.append("")
@@ -782,8 +755,6 @@ def route_stats(records: list[dict[str, Any]]) -> dict[str, int]:
         **{f"fallback_{k}": sum(1 for r in routed if r["route_reason"] == k)
            for k in ROUTE_FALLBACKS},
         "read_out_of_range": len(out_of_range),
-        "read_out_of_range_wrong": sum(1 for r in out_of_range if not r.get("error")
-                                       and r.get("score") and not r["score"]["hit"]),
     }
 
 
@@ -795,8 +766,7 @@ def route_summary_lines(records: list[dict[str, Any]]) -> list[str]:
     reasons = "、".join(f"{label} {s['fallback_' + k]}" for k, label in ROUTE_FALLBACKS.items())
     return [(f"- 期间路由：命中 {s['routed']}/{s['questions']} 题　回退全库 {s['fallback']} 题"
              f"（{reasons}）　题目指定文档 {s['doc']}　关闭 {s['off']}"),
-            (f"- 读取范围：读到路由范围外/年份不符文档的题 {s['read_out_of_range']} 题，"
-             f"其中粗评分判错 {s['read_out_of_range_wrong']} 题")]
+            f"- 读取范围：读到路由范围外/年份不符文档的题 {s['read_out_of_range']} 题"]
 
 
 def cmd_batch(args: argparse.Namespace) -> int:
@@ -905,8 +875,7 @@ def cmd_batch(args: argparse.Namespace) -> int:
                           "expected": q.expected, **q.extra, "scope": None, "answer": "",
                           "error": error, "seconds": 0.0,
                           "llm_turns": 0, "tool_calls": [], "pages_read": [],
-                          "score": score(q.expected, ""), "calc_calls": 0,
-                          "calc_suspect": False}
+                          "calc_calls": 0, "calc_suspect": False}
         with lock:
             with (out_dir / RESULTS_FILE).open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -918,7 +887,7 @@ def cmd_batch(args: argparse.Namespace) -> int:
                 print(f"[{finished[0]}/{len(todo)}] {q.id}  {status}  pages: {pages or '-'}",
                       flush=True)
                 return
-            status = "ERROR " + record["error"] if record["error"] else _hit_mark(record)
+            status = "ERROR " + record["error"] if record["error"] else "ok"
             print(f"[{finished[0]}/{len(todo)}] {q.id}  {record['seconds']:.1f}s  "
                   f"{status}  pages: {', '.join(record['pages_read']) or '-'}", flush=True)
             if route is not None and route.reason != "doc":

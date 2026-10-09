@@ -263,15 +263,13 @@ def test_batch_records_candidates(tmp_path: Path, store: Path,
     assert recs["A"]["pages_injected"] == injected and injected
     assert recs["A"]["pages_read"] == injected          # FakeStream reads no page itself
     assert recs["C"]["pages_injected"] == [] and recs["C"]["pages_read"] == []
-    assert recs["A"]["prefetch_hit"] is True and recs["A"]["score"]["hit"]
-    assert recs["B"]["prefetch_hit"] is False and not recs["B"]["score"]["hit"]
+    assert recs["A"]["prefetch_hit"] is True and "score" not in recs["A"]
+    assert recs["B"]["prefetch_hit"] is False
     assert recs["C"]["prefetch"] == [] and recs["C"]["prefetch_hit"] is None
     assert [c["name"] for c in recs["A"]["tool_calls"]] == ["calculate"]
-    # the score reads the answer only: "2023" in the block sent for B never counts
     assert prefetch.HEADER in fake.messages[1] and "2023" in fake.messages[1]
     summary = (out / batch.SUMMARY_FILE).read_text(encoding="utf-8")
     assert "检索前置：开（k=3）　候选含答案页：1/2" in summary
-    assert "候选含答案页 0 题（找到了但没用好）、不含 1 题（检索没找到）" in summary
     assert "| 线索 |" in summary and "**检索线索**：di_native_excerpt.md:2 ✓" in summary
 
     args = cli.build_parser().parse_args(["batch", str(qfile), "--store", str(store),

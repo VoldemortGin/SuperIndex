@@ -123,24 +123,23 @@ def test_load_rejects_bad_files(tmp_path: Path) -> None:
         batch.load_questions(tmp_path / "q.xlsx")
 
 
-# ───────────────────────────────────────────────────────────── scoring
-def test_score_numbers() -> None:
-    sc = batch.score("US$1,814 million, up 22 per cent",
-                     "VONB was 1814 million US dollars, 22% higher.")
-    assert sc and sc["hit"] and sc["method"] == "numbers" and sc["total"] == 2
-    sc = batch.score("38.00 Hong Kong cents, up 8.6 per cent", "38 HK cents, up 8.5%")
-    assert sc and not sc["hit"] and sc["matched"] == 1 and sc["missing"] == ["8.6"]
-    assert batch.score(None, "x") is None and batch.score("", "x") is None
+# ───────────────────────────────────────────────────────────── expected-answer match
+def test_mentions_expected_numbers() -> None:
+    assert batch._mentions_expected("US$1,814 million, up 22 per cent",
+                                    "VONB was 1814 million US dollars, 22% higher.") is True
+    assert batch._mentions_expected("38.00 Hong Kong cents, up 8.6 per cent",
+                                    "38 HK cents, up 8.5%") is False
+    assert batch._mentions_expected(None, "x") is None
+    assert batch._mentions_expected("", "x") is None
 
 
-def test_score_numbers_are_whole_tokens() -> None:
-    sc = batch.score("10 per cent", "It grew 2010 and 110.")
-    assert sc and not sc["hit"]
+def test_mentions_expected_numbers_are_whole_tokens() -> None:
+    assert batch._mentions_expected("10 per cent", "It grew 2010 and 110.") is False
 
 
-def test_score_substring_without_numbers() -> None:
-    assert batch.score("Hong  Kong", "based in hong kong.")["hit"]  # type: ignore[index]
-    assert not batch.score("Singapore", "Hong Kong")["hit"]  # type: ignore[index]
+def test_mentions_expected_substring_without_numbers() -> None:
+    assert batch._mentions_expected("Hong  Kong", "based in hong kong.") is True
+    assert batch._mentions_expected("Singapore", "Hong Kong") is False
 
 
 # ───────────────────────────────────────────────────────────── running
@@ -154,7 +153,7 @@ def test_run_question_collects_tools_pages_turns() -> None:
     assert rec["tool_calls"][0]["arguments"] == {"query": "dividend"}   # JSON string parsed
     assert rec["pages_read"] == ["aia_ar2021_excerpt.md:1-2"]
     assert rec["llm_turns"] == 3
-    assert rec["score"]["hit"] and rec["scope"] == "pi-1"
+    assert "score" not in rec and rec["scope"] == "pi-1"
     assert client.calls == [("What dividend?", "pi-1")]
 
 
@@ -239,13 +238,13 @@ def test_cmd_batch_writes_results_and_summary(tmp_path: Path, store: Path,
     lines = (out / batch.RESULTS_FILE).read_text(encoding="utf-8").splitlines()
     recs = {r["id"]: r for r in map(json.loads, lines)}
     assert set(recs) == {"A", "B", "C", "D"}
-    assert recs["A"]["score"]["hit"] and recs["B"]["score"]["hit"]
+    assert "score" not in recs["A"] and "score" not in recs["D"]
     assert isinstance(recs["A"]["scope"], str) and recs["A"]["scope"].startswith("pi-")
     assert "no_such_doc" in recs["C"]["error"]
     assert recs["D"]["error"] == "RuntimeError: down" and recs["D"]["scope"] is None
 
     summary = (out / batch.SUMMARY_FILE).read_text(encoding="utf-8")
-    assert "命中率（粗评分）：2/2" in summary and "错误：2" in summary
+    assert "粗评分" not in summary and "错误：2" in summary
     assert summary.index("| 1 | A |") < summary.index("| 4 | D |")
     assert "aia_ar2021_excerpt.md:1-2" in summary
     assert "调用 calculate 的题 0/4" in summary

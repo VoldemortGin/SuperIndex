@@ -373,21 +373,20 @@ def test_route_diagnostics() -> None:
 
 
 def test_route_stats_and_summary_lines() -> None:
-    def rec(reason: str, out: bool | None, hit: bool | None, error: str | None = None) -> dict:
+    def rec(reason: str, out: bool | None, error: str | None = None) -> dict:
         return {"route_reason": reason, "route_fallback": reason in batch.ROUTE_FALLBACKS,
-                "read_out_of_range": out, "error": error,
-                "score": None if hit is None else {"hit": hit}}
+                "read_out_of_range": out, "error": error}
 
-    records = [rec("routed", False, True), rec("routed", True, False), rec("no_period", None, False),
-               rec("no_match", True, True), rec("doc", True, None), rec("routed", True, False, "x"),
+    records = [rec("routed", False), rec("routed", True), rec("no_period", None),
+               rec("no_match", True), rec("doc", True), rec("routed", True, "x"),
                {"id": "old record"}]
     stats = batch.route_stats(records)
     assert stats == {"questions": 6, "routed": 3, "doc": 1, "off": 0, "fallback": 2,
                      "fallback_no_period": 1, "fallback_no_meta": 0, "fallback_no_match": 1,
-                     "read_out_of_range": 4, "read_out_of_range_wrong": 1}
+                     "read_out_of_range": 4}
     lines = batch.route_summary_lines(records)
     assert "命中 3/6" in lines[0] and "回退全库 2" in lines[0]
-    assert "4 题" in lines[1] and "判错 1 题" in lines[1]
+    assert "4 题" in lines[1] and "判错" not in lines[1]
     assert batch.route_summary_lines([{"id": "x"}]) == []
 
 
@@ -441,7 +440,7 @@ def test_cmd_batch_routes_questions(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert recs["C"]["route_reason"] == "doc" and recs["C"]["routed_docs"] == ["AIA_AR2023.md"]
     assert recs["C"]["read_year_mismatch"] == ["AIA_AR2023.md"]
     summary = (out / batch.SUMMARY_FILE).read_text(encoding="utf-8")
-    assert "期间路由：命中 1/3" in summary and "其中粗评分判错 0 题" in summary
+    assert "期间路由：命中 1/3" in summary and "粗评分" not in summary
 
     args = cli.build_parser().parse_args(["batch", str(qfile), "--store", str(store), "--out",
                                           str(tmp_path / "off"), "--chat-model", "fake/model",

@@ -485,7 +485,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="skip questions already answered in --out (default: the latest run)")
     _add_instructions_flags(p)
     p.add_argument("--retrieval-only", action="store_true",
-                   help="no LLM: only run the keyword search per question and score "
+                   help="no LLM: only run the keyword search per question and check "
                         "whether a top-k page holds the expected answer (recall@k, MRR)")
     p.add_argument("--top-k", type=int, default=5,
                    help="pages searched per question with --retrieval-only (default 5)")
