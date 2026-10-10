@@ -53,7 +53,7 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from superindex import bm25, page_images
+from superindex import bm25, page_images, tree_rules
 from superindex.engine.errors import is_rate_limit_error
 from superindex.engine.local_store import DocStore
 from superindex.engine.naming import sanitize_filename
@@ -76,6 +76,7 @@ TABLE_TAG_RE = re.compile(r"<(/?)(table|thead|tbody|tfoot|tr|th|td|caption)\b[^>
                           re.IGNORECASE)
 DEFAULT_PAGE_CHARS = 4000
 MD_SUFFIXES = {".md", ".markdown"}
+TREE_SOURCES = ("flash", "markdown")   # chapter tree from the PDF layout, or from Markdown headings
 
 
 # ───────────────────────────────────────────────────────────── pages
@@ -417,13 +418,14 @@ def _chapter_node(ch: Chapter, parsed: ParsedMarkdown) -> dict[str, Any]:
     return node
 
 
-def build_tree(parsed: ParsedMarkdown, doc_title: str) -> list[dict[str, Any]]:
+def build_tree(parsed: ParsedMarkdown, doc_title: str, bold: bool = True) -> list[dict[str, Any]]:
     """Heading tree with page ranges. Each node's range covers its whole
     subtree — the heading's page through the last page before the next heading
     of the same or a higher level — as in the engine's PDF trees. Text before
     the first heading becomes a "Preface" node. A document with no headings
-    gets one root node with a child per page."""
-    chapters = markdown_chapters(_heading_lines(parsed.lines))
+    gets one root node with a child per page. `bold`: a ``**bold**`` line
+    counts as a heading."""
+    chapters = markdown_chapters(_heading_lines(parsed.lines), bold=bold)
     tree = [_chapter_node(ch, parsed) for ch in chapters]
     first_heading = chapters[0].start if chapters else len(parsed.lines) + 1
     if chapters and any(s.strip() for s in parsed.lines[:first_heading - 1]):
@@ -453,6 +455,65 @@ def _write_node_ids(tree: list[dict[str, Any]]) -> None:
     """Same ids as `superindex.engine.utils.write_node_id`: preorder, zero-padded."""
     for i, node in enumerate(_preorder(tree)):
         node["node_id"] = str(i).zfill(4)
+
+
+def build_doc_tree(parsed: ParsedMarkdown, doc_title: str, pdf: Path | None,
+                   tree_source: str = "flash", pdf_pages: int | None = None,
+                   complete: Callable[[str], str] | None = None,
+                   ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """The document's chapter tree and how it was built (``tree_source``
+    asked, ``tree_builder`` used, ``tree_fallback`` reason, ``tree_group_llm``
+    whether `complete` was given, and `tree_rules.flash_tree`'s log).
+
+    ``"flash"`` with a linked `pdf`: the PDF layout tree
+    (`tree_rules.flash_tree`), page text from the Markdown. A broken flash
+    tree, flash failing, or a PDF whose page count (`pdf_pages`) differs from
+    the Markdown's falls back to the Markdown headings
+    — bold lines count only when the Markdown has no ``#`` heading, and fake
+    titles are dropped (`tree_rules.drop_fake_titles`). ``"markdown"``, or no
+    PDF: `build_tree` as is. `complete` (prompt -> reply) lets an over-flat
+    flash top level be regrouped by the LLM (`tree_rules.group_top_level`)."""
+    if tree_source not in TREE_SOURCES:
+        raise ValueError(f"tree_source must be one of {TREE_SOURCES}, got {tree_source!r}")
+    info: dict[str, Any] = {"tree_source": tree_source, "tree_builder": "markdown",
+                            "tree_group_llm": complete is not None}
+    if tree_source != "flash" or pdf is None:
+        return build_tree(parsed, doc_title), info
+    try:
+        if pdf_pages is not None and pdf_pages != len(parsed.pages):
+            tree, reason = None, f"page count differs: PDF {pdf_pages}, Markdown {len(parsed.pages)}"
+        else:
+            tree, reason = tree_rules.flash_tree(pdf, parsed.pages, _markdown_headings(parsed),
+                                                 complete, info)
+    except Exception as exc:  # noqa: BLE001 - the Markdown headings still give a tree
+        tree, reason = None, f"flash failed: {type(exc).__name__}: {exc}"
+    if tree is not None:
+        _write_node_ids(tree)
+        return tree, {**info, "tree_builder": "flash"}
+    headings = any(HEADING_RE.match(line.strip()) for line in _heading_lines(parsed.lines))
+    tree = build_tree(parsed, doc_title, bold=not headings)
+    tree_rules.drop_fake_titles(tree)
+    _write_node_ids(tree)
+    return tree, {**info, "tree_fallback": str(reason)[:300]}
+
+
+def _markdown_headings(parsed: ParsedMarkdown) -> list[tuple[int, str]]:
+    """(page, title) of every Markdown heading, in document order."""
+    return [(parsed.line_pages[c.start - 1], c.title)
+            for ch in markdown_chapters(_heading_lines(parsed.lines)) for c, _ in ch.walk()]
+
+
+def _needs_new_tree(info: dict[str, Any], tree_source: str, pdf: Path | None,
+                    group_llm: bool) -> bool:
+    """Whether a stored document's tree is from another `tree_source` setting
+    and rebuilding would change it — to flash needs a PDF, back to Markdown
+    only matters for a tree flash built; documents from before the setting
+    count as "markdown" — or is a flash tree that wanted LLM regrouping
+    (``tree_group_needed``) built with another `group_llm` setting."""
+    if info.get("tree_source", "markdown") != tree_source:
+        return pdf is not None or info.get("tree_builder") == "flash"
+    return bool(info.get("tree_builder") == "flash" and info.get("tree_group_needed")
+                and bool(info.get("tree_group_llm")) != group_llm)
 
 
 def _public_tree(tree: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -506,10 +567,15 @@ def _wait_on_rate_limit(call: Callable[[], Any], policy: RateLimitPolicy | None)
 # ───────────────────────────────────────────────────────────── summaries
 def _own_texts(tree: list[dict[str, Any]], parsed: ParsedMarkdown) -> list[str]:
     """Each node's own text in preorder: from its heading to the next heading
-    of any level (its children excluded). Page nodes use their page text."""
+    of any level (its children excluded). Page nodes use their page text;
+    flash nodes (``_anchor``) their pages cut at the titles (`tree_rules.own_text`)."""
     nodes = _preorder(tree)
     texts = []
     for i, node in enumerate(nodes):
+        if "_anchor" in node:
+            texts.append(tree_rules.own_text(node, nodes[i + 1] if i + 1 < len(nodes) else None,
+                                             parsed.pages))
+            continue
         if "_line" not in node:
             texts.append(parsed.pages[node["start_index"] - 1]
                          if node["start_index"] == node["end_index"] else "")
@@ -1102,7 +1168,8 @@ def index_markdown(md_path: Path, store_path: Path, *, summary_model: str | None
                    force: bool = False, pdf: Path | None = None,
                    doc_meta: bool = True, doc_meta_model: str | None = None,
                    rate_limit: RateLimitPolicy | None = None,
-                   source_path: str | None = None, name: str | None = None) -> IndexResult:
+                   source_path: str | None = None, name: str | None = None,
+                   tree_source: str = "flash", tree_group_llm: bool = True) -> IndexResult:
     """Index one Markdown file into the store. `summary_model=None` builds the
     tree without any LLM call (no summaries, no description). `pdf` is the
     PDF the Markdown was extracted from (see `superindex.page_images`).
@@ -1112,10 +1179,15 @@ def index_markdown(md_path: Path, store_path: Path, *, summary_model: str | None
     `source_path` is the source PDF's path relative to the PDF root (its
     folder gives the report type, `RoutingPolicy.report_type_for`). `name`
     is the document name when not the file name (`clash_names`).
+    `tree_source` (`TREE_SOURCES`) builds the chapter tree from the PDF layout
+    (flash, needs `pdf`) or from the Markdown headings (`build_doc_tree`);
+    `tree_group_llm` lets the summary model regroup an over-flat flash top
+    level — only when summaries are written (`summary_model`).
 
     A document is identified by its name: re-indexing replaces the stored
     copy, and is skipped when the content is unchanged and the stored copy
-    already has what was asked for (summaries), unless `force`. A skipped
+    already has what was asked for (summaries, a tree from `tree_source` —
+    `_needs_new_tree`), unless `force`. A skipped
     document still gets a new or changed `pdf` linked, missing document
     metadata added and outdated rule-based metadata redone (`refresh_doc_meta`,
     no LLM call), and other local copies of the same name deleted. Every LLM call waits and retries on a
@@ -1132,7 +1204,9 @@ def index_markdown(md_path: Path, store_path: Path, *, summary_model: str | None
         for meta in previous:
             info = meta.get("metadata") or {}
             if (meta.get("status") == "completed" and info.get("sha256") == digest
-                    and (info.get("summary") or not want_summary)):
+                    and (info.get("summary") or not want_summary)
+                    and not _needs_new_tree(info, tree_source, pdf,
+                                            tree_group_llm and want_summary)):
                 if extra := [m for m in previous if m["id"] != meta["id"]]:
                     # e.g. a store restored from PERSIST_DIR next to a newer local copy
                     with store.lock():
@@ -1169,7 +1243,17 @@ def index_markdown(md_path: Path, store_path: Path, *, summary_model: str | None
     parsed = parse_pages(markdown, page_chars=page_chars)
     if not any(p.strip() for p in parsed.pages):
         raise ValueError(f"{md_path.name}: document has no content")
-    tree = build_tree(parsed, doc_title=md_path.stem)
+    warnings: list[str] = []
+    linked = _link_pdf(pdf, len(parsed.pages), parsed.page_mode, warnings)
+    complete: Callable[[str], str] | None = None
+    if tree_group_llm and summary_model is not None:
+        model = summary_model
+        complete = lambda prompt: _wait_on_rate_limit(
+            lambda: _complete(model, prompt, backend), rate_limit)
+    tree, tree_info = build_doc_tree(parsed, md_path.stem, pdf if linked else None, tree_source,
+                                     linked.get("pdf_pages"), complete)
+    if tree_info.get("tree_fallback") and not tree_info["tree_fallback"].startswith("page count"):
+        warnings.append(f"tree from Markdown headings, not flash: {tree_info['tree_fallback']}")
     description = None
     if want_summary:
         assert summary_model is not None
@@ -1182,8 +1266,6 @@ def index_markdown(md_path: Path, store_path: Path, *, summary_model: str | None
     pages = [{"page_index": i + 1, "markdown": text}
              for i, text in enumerate(parsed.pages)]
 
-    warnings = []
-    linked = _link_pdf(pdf, len(pages), parsed.page_mode, warnings)
     doc_id = "pi-" + uuid.uuid4().hex
     meta = {
         "id": doc_id,
@@ -1202,6 +1284,7 @@ def index_markdown(md_path: Path, store_path: Path, *, summary_model: str | None
             "page_labels": {str(k): v for k, v in parsed.page_labels.items()},
             "summary": want_summary,
             "node_count": node_count,
+            **tree_info,
             **linked,
         },
         "mode": "markdown",

@@ -203,7 +203,8 @@ def cmd_index(args: argparse.Namespace) -> int:
                                      page_chars=args.page_chars, force=args.force,
                                      pdf=page_images.find_pdf(md, pdfs),
                                      doc_meta=args.doc_meta, doc_meta_model=meta_model,
-                                     source_path=source, name=names.get(source or ""))
+                                     source_path=source, name=names.get(source or ""),
+                                     tree_source=args.tree_source)
         except Exception as exc:  # noqa: BLE001 - keep going with the next file
             failed += 1
             print(f"  FAIL  {md.name}: {type(exc).__name__}: {exc}", flush=True)
@@ -406,6 +407,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="pseudo-page size for Markdown without page markers (default 4000)")
     p.add_argument("--pdf-dir", help="folder of the source PDFs, matched to the Markdown by "
                                      "file name, for page screenshots (SUPERINDEX_PDF_DIR)")
+    p.add_argument("--tree-source", choices=("flash", "markdown"), default="flash",
+                   help="chapter tree from the PDF layout (flash; needs --pdf-dir, else "
+                        "Markdown headings) or from the Markdown headings (default flash)")
     p.add_argument("--doc-meta", action=argparse.BooleanOptionalAction, default=True,
                    help="store document metadata (company, region, period, report type) "
                         "for question routing: one LLM call per document with the index "

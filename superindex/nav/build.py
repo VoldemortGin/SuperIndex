@@ -149,12 +149,12 @@ def page_marker_chapters(lines: list[str]) -> list[Chapter]:
 
 
 # ---------------------------------------------------------------- chapters
-def markdown_chapters(lines: list[str]) -> list[Chapter]:
+def markdown_chapters(lines: list[str], bold: bool = True) -> list[Chapter]:
     """Headings -> a Chapter tree with 1-based inclusive line ranges.
 
-    Handles ATX headings and the common `**Bold line**` convention. A bold line
-    is kept at its own level rather than promoted to level 1, so mixed documents
-    do not collapse into a flat tree.
+    Handles ATX headings and the common `**Bold line**` convention (`bold`). A
+    bold line is kept at its own level rather than promoted to level 1, so mixed
+    documents do not collapse into a flat tree.
     """
     found: list[tuple[int, int, str]] = []
     in_code = False
@@ -169,7 +169,7 @@ def markdown_chapters(lines: list[str]) -> list[Chapter]:
         if m:
             found.append((i, len(m.group(1)), m.group(2).strip()))
             continue
-        b = BOLD_ONLY_RE.match(s)
+        b = BOLD_ONLY_RE.match(s) if bold else None
         if b and len(b.group(1)) <= 80:
             found.append((i, 9, b.group(1).strip()))   # 9 = "bold" marker
 
